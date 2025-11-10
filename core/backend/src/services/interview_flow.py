@@ -1,0 +1,853 @@
+import asyncio
+from datetime import datetime
+import json
+import os
+from typing import Any, Dict, Optional
+import uuid
+
+import aiohttp
+
+from dotenv import load_dotenv
+
+from src.core.config import Config
+from pipecat.audio.vad.silero import SileroVADAnalyzer, VADParams
+from pipecat.frames.frames import BotInterruptionFrame, LLMMessagesAppendFrame
+from pipecat.observers.base_observer import FramePushed
+from pipecat.pipeline.pipeline import Pipeline
+from pipecat.pipeline.runner import PipelineRunner
+from pipecat.pipeline.task import PipelineParams, PipelineTask
+from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
+from pipecat.processors.filters.stt_mute_filter import (
+    STTMuteConfig,
+    STTMuteFilter,
+    STTMuteStrategy,
+)
+from pipecat.processors.frame_processor import FrameDirection
+from pipecat.processors.frameworks.rtvi import (
+    RTVI_MESSAGE_LABEL,
+    ActionResult,
+    RTVIAction,
+    RTVIActionArgument,
+    RTVIConfig,
+    RTVIMessageLiteral,
+    RTVIObserver,
+    RTVIProcessor,
+    TransportMessageUrgentFrame,
+)
+from pipecat.services.deepgram.stt import DeepgramSTTService
+from pipecat.transports.services.daily import DailyParams, DailyTransport
+from pipecat_flows import FlowManager
+from pydantic import BaseModel
+
+from src.services.llm_factory import LLMFactory
+from src.services.tts_factory import TTSFactory
+from src.services.analytics import InterviewAnalytics
+from src.utils.logger import logger
+from src.utils.resume_extractor import fetch_and_process_resume
+
+load_dotenv(override=True)
+
+
+class InterviewRTVIProcessor(RTVIProcessor):
+    async def interrupt_bot(self):
+        logger.info("InterviewRTVIProcessor: Interrupting bot...")
+        await super().interrupt_bot()
+        logger.info("InterviewRTVIProcessor: BotInterruptionFrame pushed upstream")
+
+
+class InterviewRTVIObserver(RTVIObserver):
+    async def on_push_frame(self, data: FramePushed):
+        if isinstance(data.frame, BotInterruptionFrame):
+            logger.info(
+                f"Bot interruption frame detected: {data.frame} from {data.source.__class__.__name__} to {data.destination.__class__.__name__}"
+            )
+        await super().on_push_frame(data)
+
+
+rtvi_instance = None
+interview__flow_instance = None
+
+
+async def end_interview_pipeline():
+    logger.info("end_interview_pipeline called - terminating interview session")
+    if interview__flow_instance:
+        logger.info("Calling stop() on interview flow instance")
+        await interview__flow_instance.stop()
+        logger.info("Interview flow instance stopped successfully")
+    else:
+        logger.warning("No interview flow instance found to stop")
+
+
+class RTVISourcesMessage(BaseModel):
+    """Model for sending sources to client via RTVI transport."""
+
+    label: RTVIMessageLiteral = RTVI_MESSAGE_LABEL
+    type: str = "server-message"
+    data: Dict[str, Any]
+
+
+async def send_message_to_client(message):
+    """
+    Send generic message to the client via RTVI transport.
+
+    Args:
+        message: Message data to send to client
+    """
+    if not rtvi_instance:
+        logger.warning("Cannot send message: RTVI instance not set")
+        return
+
+    try:
+        message_model = RTVISourcesMessage(data=message)
+        logger.info("Sending message to client using model approach")
+        await rtvi_instance.push_frame(
+            TransportMessageUrgentFrame(message=message_model.model_dump()),
+            FrameDirection.DOWNSTREAM,
+        )
+        logger.info("Message sent to client via RTVI")
+    except Exception as e:
+        logger.error(f"Error sending message to client: {str(e)}")
+
+
+class InterviewFlow:
+    def __init__(
+        self,
+        url,
+        bot_token,
+        session_id,
+        db_manager,
+        job_id=None,
+        candidate_id=None,
+        bot_name="Sia",
+        linkedin_profile=None,
+        additional_links=None,
+    ):
+        self.url = url
+        self.token = bot_token
+        self.session_id = session_id
+        self.job_id = job_id
+        self.candidate_id = candidate_id
+        self.bot_name = bot_name
+        self.task: Optional[PipelineTask] = None
+        self.runner: Optional[PipelineRunner] = None
+        self.task_running = False
+        self.db = db_manager
+        # Remove time tracking functionality
+
+        # TODO: here call linkedin api to get the profile
+        # also get the additional links and their important information
+
+        self.additional_links = additional_links or []
+        self.additional_links_info = []
+        if self.additional_links:
+            # Scrape all links concurrently for better performance
+            from src.utils.link_scraper import scrape_multiple_links_sync
+            self.additional_links_info = scrape_multiple_links_sync(self.additional_links)
+
+        if self.job_id:
+            self.job = self.db.fetch_one("jobs", {"id": self.job_id})
+            self.job_description = self.job.get("description")
+            self.interview = self.db.fetch_one("interviews", {"job_id": self.job_id})
+            self.interview_flow = self.db.fetch_one(
+                "interview_flows", {"id": self.job.get("flow_id")}
+            )
+            self.flow_config = self.interview_flow["flow_json"]
+            self.duration = self.interview_flow["duration"]
+            self.skills = self.job.get("skills")
+            logger.info(f"Skills: {self.skills}")
+            self.candidate = self.db.fetch_one("candidates", {"id": candidate_id})
+            self.candidate_name = self.candidate.get("name")
+            self.job_title = self.job.get("title")
+            self.resume_url = self.candidate.get("resume_url")
+            self.db.update("candidate_interviews", {"room_url": self.url, "bot_token": self.token}, {"candidate_id": self.candidate_id, "interview_id": self.interview.get("id")})
+        else:
+            # this is just for testing
+            with open("src/services/flows/default.json", "r") as f:
+                self.flow_config = json.load(f)
+            self.candidate_name = "Mithra"
+            self.job_title = "Google AI Platform, Cloud Engineer"
+            self.resume_url = "https://glttawcpverjawfrbohm.supabase.co/storage/v1/object/sign/resumes/mithra_1751825465503.pdf?token=eyJraWQiOiJzdG9yYWdlLXVybC1zaWduaW5nLWtleV8wMTYzZjAwNS0xZDVlLTQ3NDEtYjJhYi0yNjQ0MWYwYTg4MzYiLCJhbGciOiJIUzI1NiJ9.eyJ1cmwiOiJyZXN1bWVzL21pdGhyYV8xNzUxODI1NDY1NTAzLnBkZiIsImlhdCI6MTc1MTg4NjIzNiwiZXhwIjoxNzgzNDIyMjM2fQ.2v2JMRGbAMVKAecynxbjC3oHsMDcQpYWZjBl6Tw6jig"
+            self.skills = ["Java", "Python", "Langchain", "RabbitMQ", "AWS"]
+            self.duration = 20
+
+        # Ensure flow_config is always set
+        if not hasattr(self, 'flow_config') or self.flow_config is None:
+            logger.warning("flow_config not set, using default configuration")
+            try:
+                with open("src/services/flows/default.json", "r") as f:
+                    self.flow_config = json.load(f)
+                logger.info("Loaded default flow configuration successfully")
+            except FileNotFoundError:
+                logger.error("Default flow configuration file not found")
+                # Create a minimal default flow config
+                self.flow_config = {
+                    "nodes": [],
+                    "edges": [],
+                    "start_node": None
+                }
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON in default flow configuration: {e}")
+                # Create a minimal default flow config
+                self.flow_config = {
+                    "nodes": [],
+                    "edges": [],
+                    "start_node": None
+                }
+        
+        # Log flow_config status
+        logger.info(f"Flow config type: {type(self.flow_config)}")
+        logger.info(f"Flow config keys: {list(self.flow_config.keys()) if isinstance(self.flow_config, dict) else 'Not a dict'}")
+
+        # Fetch resume content during initialization
+        self.resume = fetch_and_process_resume(self.resume_url, self.candidate_name)
+
+        self.stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
+        self.tts = TTSFactory.create_tts_service()
+        
+        # Map provider names to configuration keys
+        provider_config_map = {
+            "elevenlabs": "elevenlabs",
+            "cartesia": "cartesia", 
+            "rime": "rime",
+            "google": "google",
+            "aws": "aws_polly"  # Map "aws" provider to "aws_polly" config key
+        }
+        
+        provider = Config.TTS_CONFIG.get("provider", "elevenlabs")
+        config_key = provider_config_map.get(provider, provider)
+        tts_instructions = Config.TTS_CONFIG[config_key]["instructions"]
+        
+        self.llm = LLMFactory.create_llm_service()
+        
+        # Register cleanup handlers for proper resource management
+        import atexit
+        atexit.register(self._cleanup_resources)
+        
+        # Suppress nanobind warnings if configured
+        if Config.SUPPRESS_NANOBIND_WARNINGS:
+            import warnings
+            warnings.filterwarnings("ignore", message="nanobind: leaked")
+            logger.info("Nanobind warnings suppressed")
+
+        # Get formatted links information
+        links_info = self.get_formatted_links_info()
+    
+        # TODO: fetch the total time for this
+        system_prompt = f"""Your name is {self.bot_name}. You are an interviewer conducting an interview for the position of {self.job_title}.
+        Your responses should be clear, concise, and professional.
+        Keep your replies very short, as they will be read aloud. Make them conversational, without using any special characters or formatting.
+
+        IMPORTANT:
+        Follow the instructions for giving the replies, as they will be read aloud:
+        {tts_instructions}
+
+        You are allowed to ask follow-up questions.
+        You will be speaking with {self.candidate_name}.
+
+        IMPORTANT:
+        - You do not need to be kind or friendly. You are not the candidate's friend, mentor, or coach. You are an interviewer.
+        - Don't expect the candidate to be extremely detailed in their responses. You can expect them to sometimes skip over some details.
+        - Your job is to assess the candidate’s skills and experience. Be strict and critical in your evaluation.
+        - Spend time asking questions based on the skills required for the job, ensure all the skills are assessed in the given time.
+        - If the candidate absolutely doesn't know something or asks for help, offer only a very subtle hint.
+        - Focus on assessing the candidate's skills and experience thoroughly for each required skill area.
+
+        Begin by greeting the candidate by name. i.e "Hey {self.candidate_name}" and introduce yourself as {self.bot_name} then proceed with the interview.
+        You will be asking question based on the skills required for the job, which are: {self.skills}
+
+        Information about the candidate:
+            Candidate Name: {self.candidate_name}
+            Job Title: {self.job_title}
+            Resume: {self.resume}
+            Additional Links: {self.additional_links}
+            Additional Links Information: {links_info}
+        """
+
+        self._inject_dynamic_content_into_flow(system_prompt)
+
+        context = OpenAILLMContext(
+            messages=[
+                {
+                    "role": "system",
+                    "content": system_prompt.strip(),
+                },
+            ]
+        )
+        self.context_aggregator = self.llm.create_context_aggregator(context)
+        self.stt_mute_filter = STTMuteFilter(
+            stt_service=self.stt,
+            config=STTMuteConfig(strategies={STTMuteStrategy.MUTE_UNTIL_FIRST_BOT_COMPLETE}),
+        )
+        self.rtvi_config = RTVIConfig(
+            config=[
+                {"type": "speaking", "service": "rtvi", "options": []},
+                {"type": "user_transcription", "service": "rtvi", "options": []},
+                {"type": "bot_transcription", "service": "rtvi", "options": []},
+                {"type": "bot_tts", "service": "rtvi", "options": []},
+            ]
+        )
+        self.rtvi = InterviewRTVIProcessor(config=self.rtvi_config)
+        globals()["rtvi_instance"] = self.rtvi
+        globals()["interview__flow_instance"] = self
+        self.rtvi_observer = InterviewRTVIObserver(rtvi=self.rtvi)
+
+    @classmethod
+    async def create(cls, url, bot_token, session_id, db_manager, job_id, bot_name="Sia"):
+        return cls(url, bot_token, session_id, db_manager, job_id, bot_name)
+
+    # Timer functionality removed to improve bot response time
+
+    async def create_transport(self):
+        self.aiohttp_session = aiohttp.ClientSession()
+
+        self.transport = DailyTransport(
+            room_url=self.url,
+            token=self.token,
+            bot_name=self.bot_name,
+            params=DailyParams(
+                # TODO: I don't see this contributing that much, or might need to finetune params.
+                # turn_analyzer=FalSmartTurnAnalyzer(
+                #     api_key=os.getenv("FAL_API_KEY"),
+                #     aiohttp_session=self.aiohttp_session,
+                #     params=SmartTurnParams(
+                #         stop_secs=2,  # Time to wait after speech ends before considering turn complete
+                #         pre_speech_ms=0.3,  # No delay before starting to process speech
+                #         max_duration_secs=8.0,  # Maximum length of a single turn to maintain natural conversation
+                #     ),
+                # ),
+                audio_out_enabled=True,
+                audio_out_sample_rate=48000,
+                audio_out_channels=1,
+                audio_in_enabled=True,
+                camera_out_enabled=True,
+                camera_out_width=1024,
+                camera_out_height=768,
+                camera_out_framerate=30,
+                vad_analyzer=SileroVADAnalyzer(
+                    params=VADParams(
+                        stop_secs=0.1,
+                    ),
+                ),
+                audio_in_passthrough=True,
+            ),
+        )
+
+        @self.transport.event_handler("on_joined")
+        async def on_joined(_transport, _participant):
+            logger.info(f"Bot joined the session: {self.session_id}")
+
+        @self.transport.event_handler("on_call_state_updated")
+        async def on_call_state_updated(_transport, state):
+            logger.info(f"Call state updated: {state}")
+
+        @self.transport.event_handler("on_first_participant_joined")
+        async def on_first_participant_joined(_transport, participant):
+            if not self.task:
+                return
+
+            if not self.flow_manager:
+                logger.error("Flow manager not initialized")
+                return
+
+            logger.info(f"First participant joined: {participant}")
+            await self.flow_manager.initialize()
+            pass
+
+        @self.transport.event_handler("on_participant_left")
+        async def on_participant_left(_transport, participant, reason):
+            logger.info(f"Participant left: {participant}, reason: {reason}")
+            await self.stop()
+
+        @self.transport.event_handler("on_app_message")
+        async def on_app_message(_transport, participant, message):
+            try:
+                if isinstance(participant, dict) and isinstance(message, str):
+                    logger.info(f"Received app message from {message}: {participant}")
+                    return
+
+                if isinstance(message, dict):
+                    if message.get("type") == "end_session":
+                        logger.info("Received end_session command")
+
+                        await self.stop()
+                    elif message.get("msg") == "interrupt":
+                        logger.info("Interrupt message received, triggering bot interruption")
+                        try:
+                            await self.rtvi.interrupt_bot()
+                            logger.info("Bot interruption triggered successfully")
+                        except Exception as e:
+                            logger.error(f"Failed to interrupt bot: {e}")
+                    elif message.get("event") == "request-chat-history":
+                        logger.info("Chat history request received")
+                    else:
+                        logger.info(f"Unhandled message type: {message}")
+            except Exception as e:
+                logger.error(f"Error handling app message: {e}")
+
+    async def create_pipeline(self):
+        if not hasattr(self, "transport") or not self.transport:
+            raise Exception("Transport not initialized")
+
+        pipeline = Pipeline(
+            [
+                self.transport.input(),
+                self.rtvi,
+                self.stt_mute_filter,
+                self.stt,
+                self.context_aggregator.user(),
+                self.llm,
+                self.tts,
+                self.transport.output(),
+                self.context_aggregator.assistant(),
+            ]
+        )
+
+        self.task = PipelineTask(
+            pipeline=pipeline,
+            params=PipelineParams(
+                allow_interruptions=True,  # Enable bot interruption for more natural conversation
+                auto_enable_processors=True,  # Automatically enable all processors
+                stream_processing=True,  # Process audio in real-time streams
+                parallel_processing=True,  # Enable parallel processing of frames
+                buffer_size=2048,  # Larger buffer for smoother audio processing
+                max_queue_size=50,  # Smaller queue for faster processing of frames
+                processing_timeout=5.0,  # Overall timeout for processing pipeline
+                error_handling="retry",  # Automatically retry on processing errors
+            ),
+            observers=[self.rtvi_observer],
+            cancel_timeout_secs=30,  # Allow 30 seconds for graceful cancellation
+        )
+
+        # Ensure flow_config is available before creating FlowManager
+        if not hasattr(self, 'flow_config') or self.flow_config is None:
+            logger.error("flow_config is not available, cannot create FlowManager")
+            raise ValueError("flow_config is required for FlowManager initialization")
+        
+        logger.info(f"Creating FlowManager with flow_config: {type(self.flow_config)}")
+        
+        self.flow_manager = FlowManager(
+            task=self.task,
+            llm=self.llm,
+            context_aggregator=self.context_aggregator,
+            tts=self.tts,
+            flow_config=self.flow_config,
+        )
+
+        async def handle_append_to_messages(
+            _rtvi: RTVIProcessor, _service: str, arguments: Dict[str, Any]
+        ) -> ActionResult:
+            if "messages" in arguments and arguments["messages"]:
+                for msg in arguments["messages"]:
+                    self.context_aggregator.user()._context.messages.append(msg)
+                print("Current context:", self.flow_manager.get_current_context())
+                return True
+            else:
+                return False
+
+        self.append_to_messages_action = RTVIAction(
+            service="llm",
+            action="append_to_messages",
+            arguments=[
+                RTVIActionArgument(name="messages", type="array"),
+            ],
+            result="bool",
+            handler=handle_append_to_messages,
+        )
+        self.rtvi.register_action(self.append_to_messages_action)
+        return self.task
+
+    async def start(self):
+        if self.runner and self.task_running:
+            logger.warning("Runner is already running")
+            return
+
+        await self.create_transport()
+        await self.create_pipeline()
+
+        self.runner = PipelineRunner()
+
+        try:
+            logger.info("Starting interview flow pipeline...")
+            logger.info(f"- Allow interruptions: {self.task.params.allow_interruptions}")
+            logger.info(f"- STT mute strategy: {self.stt_mute_filter._config.strategies}")
+
+            logger.info(f"Starting interview flow for session {self.session_id}")
+
+            await self.runner.run(self.task)
+            self.task_running = True
+
+            logger.info(f"Interview flow pipeline running for session {self.session_id}")
+
+        except Exception as e:
+            logger.error(f"Failed to start interview flow: {e}")
+            if self.runner:
+                self.task_running = False
+
+            logger.info("Attempting to restart pipeline after error...")
+
+            try:
+                self.task = PipelineTask(
+                    pipeline=self.task.pipeline,
+                    params=self.task.params,
+                    observers=[self.rtvi_observer],
+                    cancel_timeout_secs=30,  # Allow 30 seconds for graceful cancellation
+                )
+                await self.runner.run(self.task)
+                self.task_running = True
+            except Exception as recovery_error:
+                logger.error(f"Failed to recover pipeline: {recovery_error}")
+                raise RuntimeError(f"Failed to start interview flow: {e}") from None
+
+    async def stop(self):
+        try:
+            interview_end_time = datetime.now()
+            logger.info("Stopping interview session")
+
+            # Save chat history when pipeline is canceled
+            if hasattr(self, "flow_manager") and self.flow_manager and hasattr(self.flow_manager, 'get_current_context'):
+                try:
+                    message_history = self.flow_manager.get_current_context()
+                    logger.info(f"Raw message history structure: {type(message_history)}")
+                    if message_history:
+                        logger.info(f"First message example: {message_history[0] if isinstance(message_history, list) and len(message_history) > 0 else 'N/A'}")
+                    
+                    filtered_messages = []
+                    for msg in message_history:
+                        # Handle different message structures
+                        if isinstance(msg, dict):
+                            role = msg.get("role")
+                            if role in ["user", "assistant"]:
+                                # Ensure the message has content field
+                                if "content" not in msg and "text" in msg:
+                                    msg["content"] = msg["text"]
+                                elif "content" not in msg:
+                                    msg["content"] = str(msg)
+                                filtered_messages.append(msg)
+                        else:
+                            logger.warning(f"Unexpected message type: {type(msg)}, content: {msg}")
+                    
+                    logger.info(f"Filtered {len(filtered_messages)} messages from {len(message_history) if message_history else 0} total messages")
+
+                    merged_messages = []
+                    current_user_message = ""
+                    current_role = None
+
+                    for msg in filtered_messages:
+                        if msg["role"] == "user":
+                            if current_role == "user":
+                                current_user_message += msg["content"]
+                            else:
+                                if current_role is not None:
+                                    merged_messages.append({"role": current_role, "content": current_user_message})
+                                current_user_message = msg["content"]
+                            current_role = "user"
+                        else:
+                            if current_role == "user":
+                                merged_messages.append({"role": current_role, "content": current_user_message})
+                                current_user_message = ""
+                            merged_messages.append(msg)
+                            current_role = "assistant"
+
+                    if current_role == "user" and current_user_message:
+                        merged_messages.append({"role": current_role, "content": current_user_message})
+
+                    filtered_messages = merged_messages
+
+                    session_data = {
+                        "id": str(uuid.uuid4()),
+                        "chat_history": json.dumps(filtered_messages),
+                        "call_type": "web_interview",
+                        "call_id": self.session_id,
+                    }
+                    self.db.execute_query("session_history", session_data)
+                    logger.info(
+                        f"Chat history saved to session_history table for session {self.session_id}"
+                    )
+
+                    # Also save analytics if we have candidate and interview data
+                    if (
+                        hasattr(self, "candidate_id")
+                        and hasattr(self, "interview")
+                    ):
+                        try:
+                            self.db.update("candidate_interviews", {
+                                "status": "Completed",
+                                "updated_at": datetime.now().isoformat(),
+                                "completed_at": interview_end_time.isoformat(),
+                            }, {
+                                "candidate_id": self.candidate_id,
+                                "interview_id": self.interview.get("id")
+                            })
+                            logger.info(
+                                f"Candidate interview updated for candidate {self.candidate_id} and interview {self.interview.get('id')}"
+                            )
+
+                            self.db.update("candidates", {
+                                "status": "Interviewed",
+                                "updated_at": datetime.now().isoformat(),
+                            }, {
+                                "id": self.candidate_id
+                            })
+                            logger.info(
+                                f"Candidate updated for candidate {self.candidate_id}"
+                            )
+
+                            candidate_interview_id = self.db.fetch_one(
+                                "candidate_interviews",
+                                {
+                                    "candidate_id": self.candidate_id,
+                                    "interview_id": self.interview.get("id")
+                                },
+                            )
+                            if candidate_interview_id:
+                                try:
+                                    # Validate data before analytics
+                                    logger.info(f"Preparing analytics with {len(filtered_messages)} messages")
+                                    logger.info(f"Job title: {getattr(self, 'job_title', 'N/A')}")
+                                    logger.info(f"Job description: {getattr(self, 'job_description', 'N/A')}")
+                                    logger.info(f"Resume: {getattr(self, 'resume', 'N/A')[:100]}...")
+                                    logger.info(f"Additional links: {getattr(self, 'additional_links_info', 'N/A')}")
+                                    
+                                    # Ensure we have valid data for analytics
+                                    if not filtered_messages:
+                                        logger.warning("No chat messages available for analytics")
+                                        analytics = {"error": "No chat messages available for analysis"}
+                                    elif not getattr(self, 'job_title', None):
+                                        logger.warning("No job title available for analytics")
+                                        analytics = {"error": "No job title available for analysis"}
+                                    else:
+                                        analytics_service = InterviewAnalytics()
+                                        analytics = await analytics_service.analyze_interview(
+                                            job_title=self.job_title,
+                                            job_description=self.job_description,
+                                            candidate_name=self.candidate_name,
+                                            resume=self.resume,
+                                            additional_links_info=self.additional_links_info,
+                                            chat_history=filtered_messages
+                                        )
+
+                                        logger.info(
+                                            f"Interview analytics calculated for candidate {self.candidate_id} and interview {self.interview.get('id')}"
+                                        )
+                                        logger.info(f"Analytics keys: {list(analytics.keys()) if isinstance(analytics, dict) else 'Not a dict'}")
+                                except Exception as analytics_error:
+                                    logger.error(f"Failed to generate analytics: {analytics_error}")
+                                    logger.error(f"Analytics error details: {type(analytics_error).__name__}: {str(analytics_error)}")
+                                    analytics = {"error": f"Analytics generation failed: {str(analytics_error)}"}
+
+                                ix = str(uuid.uuid4())
+                                self.db.execute_query("interview_analytics", {
+                                    "id": ix,
+                                    "interview_id": self.interview.get("id"),
+                                    "organization_id": self.job.get("organization_id"),
+                                    "candidate_id": self.candidate_id,
+                                    "candidate_interview_id": candidate_interview_id.get("id"),
+                                    "data": analytics,
+                                })
+
+                                self.db.execute_query(
+                                    "interview_sessions",
+                                    {
+                                        "candidate_interview_id": candidate_interview_id.get("id"),
+                                        "session_history": session_data.get("id"),
+                                        "created_at": datetime.now().isoformat(),
+                                        "updated_at": interview_end_time.isoformat(),
+                                        "analytics": ix,
+                                        "status": "Completed",
+                                    },
+                                )
+                                logger.info("Analytics saved during stop()")
+                        except Exception as e:
+                            logger.error(f"Failed to save analytics during stop(): {e}")
+
+                except Exception as e:
+                    logger.error(f"Failed to save chat history during pipeline cancellation: {e}")
+
+            if self.task:
+                logger.info("Canceling pipeline task")
+                try:
+                    await self.task.cancel()
+                    logger.info("Pipeline task cancelled successfully")
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    logger.error(f"Error cancelling pipeline task: {e}")
+                finally:
+                    self.task = None
+                    self.task_running = False
+
+            if hasattr(self, "aiohttp_session"):
+                await self.aiohttp_session.close()
+
+            # Clean up audio resources to prevent nanobind memory leaks
+            if hasattr(self, "tts") and self.tts:
+                try:
+                    if hasattr(self.tts, "close"):
+                        await self.tts.close()
+                    elif hasattr(self.tts, "__del__"):
+                        del self.tts
+                    logger.info("TTS service cleaned up")
+                except Exception as e:
+                    logger.warning(f"Error cleaning up TTS service: {e}")
+
+            if hasattr(self, "stt") and self.stt:
+                try:
+                    if hasattr(self.stt, "close"):
+                        await self.stt.close()
+                    elif hasattr(self.stt, "__del__"):
+                        del self.stt
+                    logger.info("STT service cleaned up")
+                except Exception as e:
+                    logger.warning(f"Error cleaning up STT service: {e}")
+
+            # Clean up pipeline runner
+            if hasattr(self, "runner") and self.runner:
+                try:
+                    if hasattr(self.runner, "close"):
+                        await self.runner.close()
+                    elif hasattr(self.runner, "__del__"):
+                        del self.runner
+                    logger.info("Pipeline runner cleaned up")
+                except Exception as e:
+                    logger.warning(f"Error cleaning up pipeline runner: {e}")
+
+            # Force garbage collection to clean up any remaining references
+            import gc
+            gc.collect()
+
+        except Exception as e:
+            logger.error(f"Error stopping interview flow: {e}")
+
+    def _cleanup_resources(self):
+        """
+        Cleanup method called by atexit to ensure resources are properly released.
+        This helps prevent nanobind memory leaks.
+        """
+        try:
+            # Clean up TTS service
+            if hasattr(self, "tts") and self.tts:
+                try:
+                    if hasattr(self.tts, "__del__"):
+                        del self.tts
+                    self.tts = None
+                except Exception as e:
+                    logger.warning(f"Error in TTS cleanup: {e}")
+
+            # Clean up STT service
+            if hasattr(self, "stt") and self.stt:
+                try:
+                    if hasattr(self.stt, "__del__"):
+                        del self.stt
+                    self.stt = None
+                except Exception as e:
+                    logger.warning(f"Error in STT cleanup: {e}")
+
+            # Clean up pipeline runner
+            if hasattr(self, "runner") and self.runner:
+                try:
+                    if hasattr(self.runner, "__del__"):
+                        del self.runner
+                    self.runner = None
+                except Exception as e:
+                    logger.warning(f"Error in runner cleanup: {e}")
+
+            # Force garbage collection
+            import gc
+            gc.collect()
+            
+        except Exception as e:
+            logger.warning(f"Error in resource cleanup: {e}")
+
+    def _inject_dynamic_content_into_flow(self, context):
+        """
+        Inject dynamic content (candidate name, job title, resume) into flow config role_messages.
+        """
+        if not self.flow_config or not isinstance(self.flow_config, dict):
+            return
+
+        # Iterate through all nodes in the flow config
+        nodes = self.flow_config.get("nodes", {})
+        for node_name, node_config in nodes.items():
+            role_messages = node_config.get("role_messages", [])
+
+            for message in role_messages:
+                if message.get("role") == "system":
+                    # Append candidate context to existing system message
+                    original_content = message.get("content", "")
+                    message["content"] = original_content + context
+
+        logger.info("Dynamic content injected into flow config")
+
+    def _scrape_link(self, link: str) -> Dict[str, Any]:
+        """
+        Scrape a single link for comprehensive information.
+        Uses the link_scraper utility for the actual scraping logic.
+        
+        Args:
+            link: The URL to scrape
+            
+        Returns:
+            Dictionary containing scraped information
+        """
+        from src.utils.link_scraper import scrape_link_sync
+        
+        try:
+            logger.info(f"Scraping link: {link}")
+            result = scrape_link_sync(link)
+            logger.info(f"Successfully scraped link: {link} - Type: {result.get('type', 'unknown')}")
+            return result
+        except Exception as e:
+            logger.error(f"Error scraping link {link}: {e}")
+            return {"error": str(e), "url": link}
+
+    def get_formatted_links_info(self) -> str:
+        """
+        Get formatted string representation of all scraped links information.
+        This can be used to include in the system prompt or for analysis.
+        
+        Returns:
+            Formatted string containing all scraped links information
+        """
+        if not self.additional_links_info:
+            return ""
+        
+        formatted_info = []
+        for i, info in enumerate(self.additional_links_info, 1):
+            if "error" in info:
+                formatted_info.append(f"Link {i}: {info['url']} - Error: {info['error']}")
+                continue
+            
+            link_type = info.get("type", "unknown")
+            url = info.get("url", "")
+            title = info.get("title", "")
+            description = info.get("description", "")
+            
+            section = f"Link {i} ({link_type.upper()}): {url}"
+            if title:
+                section += f"\nTitle: {title}"
+            if description:
+                section += f"\nDescription: {description}"
+            
+            # Add type-specific information
+            if link_type == "github":
+                if info.get("languages"):
+                    section += f"\nLanguages: {', '.join(info['languages'])}"
+                if info.get("topics"):
+                    section += f"\nTopics: {', '.join(info['topics'])}"
+                if info.get("readme"):
+                    section += f"\nREADME: {info['readme'][:200]}..."
+                    
+            elif link_type == "portfolio":
+                if info.get("skills"):
+                    section += f"\nSkills: {', '.join(info['skills'])}"
+                if info.get("projects"):
+                    projects = [p.get("title", "") for p in info["projects"]]
+                    section += f"\nProjects: {', '.join(projects)}"
+                    
+            elif link_type == "document":
+                if info.get("summary"):
+                    section += f"\nSummary: {info['summary']}"
+                    
+            formatted_info.append(section)
+        
+        return "\n\n".join(formatted_info)

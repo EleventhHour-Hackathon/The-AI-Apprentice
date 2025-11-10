@@ -1,0 +1,515 @@
+"use client";
+
+import { supabase } from "./supabase";
+import { config } from "./config";
+
+// Only keep auth store import for session management
+let useAuthStore: any = null;
+
+// Lazy loading function for auth store to avoid circular dependencies
+const getAuthStore = async () => {
+  if (!useAuthStore) {
+    const authModule = await import("../../store/authStore");
+    useAuthStore = authModule.useAuthStore;
+  }
+  return { useAuthStore };
+};
+
+// Cache invalidation helper using TanStack Query
+const invalidateRelevantCaches = async (url: string, method: string) => {
+  try {
+    // Import query client and invalidation helper
+    const { invalidateRelatedQueries } = await import("./query-client");
+    
+    // Get query client instance
+    const { getQueryClient } = await import("./query-client");
+    const queryClient = getQueryClient();
+
+    // Determine entity type based on URL
+    let entityType: string | null = null;
+    
+    if (url.includes("/candidates")) {
+      entityType = "candidates";
+    } else if (url.includes("/interviews")) {
+      entityType = "interviews";
+    } else if (url.includes("/jobs")) {
+      entityType = "jobs";
+    } else if (url.includes("/users") || url.includes("/organizations")) {
+      entityType = "auth";
+    }
+
+    // Use the proper invalidation helper
+    if (entityType) {
+      await invalidateRelatedQueries(queryClient, method.toLowerCase(), entityType);
+    } else {
+      // Fallback: invalidate all queries for unknown endpoints
+      await queryClient.invalidateQueries();
+    }
+
+  } catch (error) {
+    // Failed to invalidate caches - this is not critical, so we don't throw
+    console.warn("Cache invalidation failed:", error);
+  }
+};
+
+// Cookie utility functions
+export const setCookie = (name: string, value: string, days: number = 7) => {
+  const expires = new Date();
+  expires.setTime(expires.getTime() + days * 24 * 60 * 60 * 1000);
+
+  let cookieString = `${name}=${value};expires=${expires.toUTCString()};path=/;SameSite=${
+    config.auth.cookieSameSite
+  }`;
+
+  if (config.auth.cookieSecure) {
+    cookieString += ";Secure";
+  }
+
+  if (config.auth.cookieDomain) {
+    cookieString += `;Domain=${config.auth.cookieDomain}`;
+  }
+
+  document.cookie = cookieString;
+};
+
+export const getCookie = (name: string): string | null => {
+  const nameEQ = name + "=";
+  const ca = document.cookie.split(";");
+  for (let i = 0; i < ca.length; i++) {
+    let c = ca[i];
+    while (c.charAt(0) === " ") c = c.substring(1, c.length);
+    if (c.indexOf(nameEQ) === 0) return c.substring(nameEQ.length, c.length);
+  }
+  return null;
+};
+
+export const deleteCookie = (name: string) => {
+  if (typeof window === "undefined") return;
+
+  // Multiple attempts to ensure cookie is deleted across different configurations
+  const expiredDate = "Thu, 01 Jan 1970 00:00:01 GMT";
+
+  // Delete without domain
+  document.cookie = `${name}=;expires=${expiredDate};path=/`;
+
+  // Delete with current hostname
+  document.cookie = `${name}=;expires=${expiredDate};path=/;domain=${window.location.hostname}`;
+
+  // Delete with dot-prefixed hostname
+  document.cookie = `${name}=;expires=${expiredDate};path=/;domain=.${window.location.hostname}`;
+
+  // Delete with production domain if applicable
+  if (config.auth.cookieDomain) {
+    document.cookie = `${name}=;expires=${expiredDate};path=/;domain=${config.auth.cookieDomain}`;
+  }
+
+  // Extra cleanup for stubborn cookies
+  const cookieVariations = [
+    `${name}=; path=/; expires=${expiredDate}`,
+    `${name}=; path=/; domain=${window.location.hostname}; expires=${expiredDate}`,
+    `${name}=; path=/; domain=.${window.location.hostname}; expires=${expiredDate}`,
+  ];
+
+  if (config.auth.cookieDomain) {
+    cookieVariations.push(
+      `${name}=; path=/; domain=${config.auth.cookieDomain}; expires=${expiredDate}`
+    );
+  }
+
+  cookieVariations.forEach((cookieString) => {
+    document.cookie = cookieString;
+  });
+};
+
+// User context interface
+export interface UserContext {
+  user_id: string;
+  email: string;
+  organization_id: string | null;
+}
+
+// Set user context in cookies
+export const setUserContext = async (
+  user_id: string,
+  email: string
+): Promise<UserContext> => {
+  // Fetch organization_id from backend using regular fetch (no auth needed for org lookup)
+  let organization_id: string | null = null;
+
+  try {
+    const response = await authenticatedFetch(
+      `${
+        process.env.NEXT_PUBLIC_SIVERA_BACKEND_URL
+      }/api/v1/organizations/by-user-email/${encodeURIComponent(email)}`,
+      {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+      },
+      false
+    );
+    if (response.ok) {
+      const data = await response.json();
+      organization_id = data.id;
+    } else {
+      // Failed to fetch organization
+    }
+  } catch (error) {
+    // Failed to fetch organization_id
+  }
+
+  const userContext: UserContext = {
+    user_id,
+    email,
+    organization_id,
+  };
+
+  // Store in cookies
+  setCookie("user_id", user_id);
+  setCookie("user_email", email);
+  if (organization_id) {
+    setCookie("organization_id", organization_id);
+  }
+
+  // Store as JSON for easy retrieval
+  setCookie("user_context", JSON.stringify(userContext));
+
+  return userContext;
+};
+
+// Get user context from cookies
+export const getUserContext = (): UserContext | null => {
+  try {
+    const contextStr = getCookie("user_context");
+    if (contextStr) {
+      return JSON.parse(contextStr);
+    }
+
+    // Fallback to individual cookies
+    const user_id = getCookie("user_id");
+    const email = getCookie("user_email");
+    const organization_id = getCookie("organization_id");
+
+    if (user_id && email) {
+      return { user_id, email, organization_id };
+    }
+  } catch (error) {
+    // Failed to parse user context from cookies
+  }
+
+  return null;
+};
+
+// Clear user context from cookies
+export const clearUserContext = () => {
+  if (typeof window === "undefined") {
+    // Cannot clear cookies on server side
+    return;
+  }
+
+  // Delete our custom cookies
+  deleteCookie("user_id");
+  deleteCookie("user_email");
+  deleteCookie("organization_id");
+  deleteCookie("user_context");
+
+  // Get all existing cookies and delete them
+  const allCookies = document.cookie.split(";");
+
+  allCookies.forEach((cookie) => {
+    const cookieName = cookie.split("=")[0].trim();
+    if (cookieName) {
+      // Delete all cookies, especially Supabase ones
+      deleteCookie(cookieName);
+
+      // Extra aggressive deletion for Supabase cookies
+      if (cookieName.startsWith("sb-")) {
+        // Try multiple deletion methods for stubborn Supabase cookies
+        document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; domain=${window.location.hostname}`;
+        document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; domain=.${window.location.hostname}`;
+        document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
+        if (config.auth.cookieDomain) {
+          document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; domain=${config.auth.cookieDomain}`;
+        }
+      }
+    }
+  });
+
+  // Clear all storage
+  try {
+    localStorage.clear();
+    sessionStorage.clear();
+  } catch (error) {
+    // Storage clear error
+  }
+
+  // Verify cookies are cleared
+  const remainingCookies = document.cookie
+    .split(";")
+    .filter((c) => c.trim()).length;
+
+  if (remainingCookies > 0) {
+    // Some cookies may not have been cleared
+  }
+};
+
+// Enhanced API fetch function that includes authentication headers
+export const authenticatedFetch = async (
+  url: string,
+  options: RequestInit = {},
+  reload: boolean = false
+): Promise<Response> => {
+  const userContext = getUserContext();
+
+  // Only log for critical auth issues to reduce noise
+  if (!userContext) {
+    // No user context found for authenticated request
+  }
+
+  const headers = new Headers(options.headers || {});
+
+  if (userContext) {
+    headers.set("X-User-ID", userContext.user_id);
+    headers.set("X-User-Email", userContext.email);
+    if (userContext.organization_id) {
+      headers.set("X-Organization-ID", userContext.organization_id);
+    }
+  }
+
+  // Get session from Zustand store instead of calling getSession()
+  try {
+    // Dynamically import to avoid circular dependency
+    const { useAuthStore } = await import("../../store/authStore");
+    const session = useAuthStore.getState().session;
+
+    if (session?.access_token) {
+      headers.set("Authorization", `Bearer ${session.access_token}`);
+    } else if (!userContext) {
+      // No session token or user context available
+    }
+  } catch (error) {
+    // Failed to get session from store
+    // Continue without session token - user context headers should be sufficient
+  }
+
+  const response = await fetch(url, {
+    ...options,
+    headers,
+    credentials: "include", // Include cookies in requests
+  });
+
+  // Log errors or empty responses for debugging
+  if (!response.ok) {
+    // API Error
+  }
+
+  // Invalidate relevant caches after successful POST, PUT, or PATCH requests
+  const method = (options.method || "GET").toUpperCase();
+  if (
+    response.ok &&
+    (method === "POST" || method === "PUT" || method === "PATCH") &&
+    reload
+  ) {
+    // Run cache invalidation asynchronously to avoid blocking the response
+    invalidateRelevantCaches(url, method).catch((error) => {
+      // Cache invalidation failed
+    });
+  }
+
+  return response;
+};
+
+// Simple login function
+export const login = async (email: string, password: string) => {
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email,
+    password,
+  });
+
+  if (data?.user && data?.session && !error) {
+    await setUserContext(data.user.id, data.user.email!);
+
+    // Store session in Zustand store
+    try {
+      const { useAuthStore } = await import("../../store/authStore");
+      useAuthStore.getState().setSession(data.session);
+    } catch (storeError) {
+      // Failed to store session in Zustand
+    }
+  }
+
+  return { data, error };
+};
+
+// Helper function to get the correct site URL for production environments
+const getSiteURL = () => {
+  // In production, use the environment variable
+  if (process.env.NEXT_PUBLIC_SITE_URL) {
+    return process.env.NEXT_PUBLIC_SITE_URL;
+  }
+
+  // Fallback to window.location.origin for development
+  if (typeof window !== "undefined") {
+    return window.location.origin;
+  }
+
+  // Default fallback
+  return "https://recruiter.sivera.io";
+};
+
+// Magic link login
+export const sendMagicLink = async (email: string) => {
+  const { data, error } = await supabase.auth.signInWithOtp({
+    email,
+    options: {
+      emailRedirectTo: `${getSiteURL()}/auth/callback`,
+    },
+  });
+
+  return { data, error };
+};
+
+// Simple signup function
+export const signup = async (email: string, password: string) => {
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password,
+  });
+
+  if (data?.user && data?.session && !error) {
+    await setUserContext(data.user.id, data.user.email!);
+
+    // Store session in Zustand store
+    try {
+      const { useAuthStore } = await import("../../store/authStore");
+      useAuthStore.getState().setSession(data.session);
+    } catch (storeError) {
+      // Failed to store session in Zustand
+    }
+  }
+
+  return { data, error };
+};
+
+export const logout = async () => {
+  try {
+    // 1. Supabase logout (this should clear all sb-* localStorage)
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      // Supabase logout error
+    }
+
+    // 2. Clear our custom cookies
+    clearUserContext();
+
+    // 3. Clear all localStorage data
+    if (typeof window !== "undefined") {
+      // Clear all localStorage
+      localStorage.clear();
+
+      // Clear sessionStorage
+      sessionStorage.clear();
+    }
+
+    // 4. Clear session from Zustand store and reset all stores
+    try {
+      const [
+        { useAuthStore },
+        { resetInitialization }
+      ] = await Promise.all([
+        import("../../store/authStore"),
+        import("../../store").then(m => ({ resetInitialization: m.resetInitialization }))
+      ]);
+
+      // Clear all store states
+      useAuthStore.getState().logout();
+      
+      // Clear TanStack Query cache instead of invalidating UI stores
+      try {
+        const { getQueryClient } = await import("./query-client");
+        const queryClient = getQueryClient();
+        queryClient.clear(); // Clear all cached data
+      } catch (error) {
+        // Query client not available, continue with logout
+      }
+      
+      // Reset store initialization
+      resetInitialization();
+    } catch (storeError) {
+      // Failed to clear stores
+    }
+
+    return { error: null };
+  } catch (logoutError) {
+    // Even if logout fails, clear what we can
+    clearUserContext();
+    if (typeof window !== "undefined") {
+      localStorage.clear();
+      sessionStorage.clear();
+    }
+
+    return { error: logoutError };
+  }
+};
+
+// Get current user
+export const getCurrentUser = async () => {
+  const { data } = await supabase.auth.getUser();
+  return data?.user;
+};
+
+// Get and refresh session
+export const getSession = async () => {
+  const { data, error } = await supabase.auth.getSession();
+  return { session: data.session, error };
+};
+
+export const setSessionFromTokens = async (
+  accessToken: string,
+  refreshToken?: string
+) => {
+  const result = await supabase.auth.setSession({
+    access_token: accessToken,
+    refresh_token: refreshToken || "",
+  });
+
+  if (result.data?.user && result.data?.session && !result.error) {
+    await setUserContext(result.data.user.id, result.data.user.email!);
+
+    // Store session in Zustand store
+    try {
+      const { useAuthStore } = await import("../../store/authStore");
+      useAuthStore.getState().setSession(result.data.session);
+    } catch (storeError) {
+      // Failed to store session in Zustand
+    }
+  }
+
+  return result;
+};
+
+export const initializeUserContext = async () => {
+  try {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (session?.user) {
+      await setUserContext(session.user.id, session.user.email!);
+
+      // Store session in Zustand store
+      try {
+        const { useAuthStore } = await import("../../store/authStore");
+        useAuthStore.getState().setSession(session);
+      } catch (storeError) {
+        // Failed to store session in Zustand
+      }
+
+      return getUserContext();
+    }
+  } catch (error) {
+    // Failed to initialize user context
+  }
+  return null;
+};

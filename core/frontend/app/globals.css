@@ -1,0 +1,298 @@
+@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Fira+Code&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+  font-family: "KyivType Sans";
+  src: url("/fonts/KyivType Sans.woff2") format("opentype");
+  font-weight: normal;
+  font-style: normal;
+}
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+    --primary: 240 5.9% 10%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+    --accent: 240 4.8% 98%;
+    --accent-foreground: 240 5.9% 10%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 240 5.9% 10%;
+    --radius: 0.5rem;
+
+    /* Custom Meet Variables */
+    --accent-primary: 72, 138, 181;
+    --secondary-dark: 0, 43, 69;
+    --dark-blue: 14, 28, 41;
+    --ui-blue: 50, 61, 104;
+    --light-gray: 216, 223, 229;
+    --meet-background: #f0f8ff;
+    --meet-surface: #ffffff;
+    --meet-surface-light: #d8dfe5;
+    --meet-primary: #488ab5;
+    --meet-primary-rgb: var(--accent-primary);
+    --meet-secondary: #002b45;
+    --meet-secondary-rgb: var(--secondary-dark);
+    --meet-error: #ea4335;
+    --meet-success: #34a853;
+    --meet-warning: #fbbc04;
+    --meet-text-primary: #0e1c29;
+    --meet-text-secondary: #002b45;
+    --meet-border: rgba(72, 138, 181, 0.3);
+    --meet-hover: rgba(72, 138, 181, 0.1);
+  }
+
+  .dark {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 240 5.9% 10%;
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+    --accent: 240 3.7% 18%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 240 4.9% 83.9%;
+
+    /* Custom Dark Mode Meet Variables */
+    --meet-background: #0a1426;
+    --meet-surface: #1a2742;
+    --meet-surface-light: #243757;
+    --meet-primary: #5ba4c7;
+    --meet-primary-rgb: 91, 164, 199;
+    --meet-secondary: #1a4961;
+    --meet-secondary-rgb: 26, 73, 97;
+    --meet-text-primary: #e8f4f8;
+    --meet-text-secondary: #a3d2e3;
+    --meet-border: rgba(91, 164, 199, 0.3);
+    --meet-hover: rgba(91, 164, 199, 0.15);
+  }
+}
+
+body {
+  font-family:
+    "Plus Jakarta Sans",
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+}
+
+html {
+  height: 100%;
+  background: linear-gradient(180deg, var(--meet-background) 0%, #d8dfe5 100%);
+  color: var(--meet-text-primary);
+  overflow-x: hidden;
+  letter-spacing: 0.2px;
+}
+
+html.dark {
+  background: linear-gradient(180deg, var(--meet-background) 0%, #1a2742 100%);
+  color: var(--meet-text-primary);
+}
+
+body.dark {
+  background: var(--meet-background);
+  color: var(--meet-text-primary);
+}
+
+.meet-dropdown {
+  @apply bg-[--meet-surface] rounded-lg shadow-lg border border-[--meet-border] p-2;
+}
+
+.meet-card {
+  @apply bg-[--meet-surface] rounded-lg shadow-md;
+  border: 1px solid rgba(72, 138, 181, 0.2);
+  box-shadow:
+    0 4px 15px rgba(0, 0, 0, 0.05),
+    0 0 1px rgba(72, 138, 181, 0.1);
+  backdrop-filter: blur(10px);
+}
+
+.meet-input {
+  @apply bg-[--meet-surface-light] border border-[--meet-border] rounded-md px-3 py-2 text-[--meet-text-primary] focus:outline-none focus:ring-2 focus:ring-[--meet-primary];
+}
+
+/* Define Meet-style shadows */
+.meet-shadow-sm {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.meet-shadow {
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+}
+
+.meet-shadow-lg {
+  box-shadow: 0 10px 15px rgba(0, 0, 0, 0.3);
+}
+
+/* Google Meet grid layout */
+.meet-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 8px;
+  width: 100%;
+  height: 100%;
+}
+
+/* Participant video container */
+.participant-video {
+  background-color: var(--meet-surface);
+  border-radius: 8px;
+  overflow: hidden;
+  position: relative;
+  aspect-ratio: 16/9;
+}
+
+/* Bottom controls bar */
+.meet-controls-bar {
+  @apply flex items-center justify-center gap-2 px-4 py-3 bg-[--meet-surface] border-t border-[--meet-border];
+}
+
+/* Layout for main content */
+.meet-layout {
+  @apply flex flex-col h-full;
+}
+
+.meet-main-content {
+  @apply flex-grow overflow-hidden relative;
+}
+
+/* Blue Speaker Highlight */
+.active-speaker {
+  @apply ring ring-[--meet-primary] ring-offset-0 ring-opacity-100;
+  --tw-ring-offset-width: 0px;
+  --tw-ring-width: 3px;
+  box-shadow: 0 0 15px rgba(72, 138, 181, 0.5);
+  animation: pulse-blue 2s infinite;
+}
+
+@keyframes pulse-blue {
+  0% {
+    box-shadow: 0 0 0 0 rgba(72, 138, 181, 0.4);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(72, 138, 181, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(72, 138, 181, 0);
+  }
+}
+
+@layer utilities {
+  .glow-circle {
+    background: transparent;
+    border: 1px solid rgba(72, 138, 181, 0.4);
+    box-shadow: 0 0 20px 1px rgba(72, 138, 181, 0.15);
+    mix-blend-mode: soft-light;
+  }
+
+  .blur-overlay {
+    backdrop-filter: blur(8px);
+    background: rgba(240, 248, 255, 0.8);
+    border-radius: 16px;
+    border: 1px solid rgba(72, 138, 181, 0.1);
+  }
+
+  .dark .blur-overlay {
+    background: rgba(26, 39, 66, 0.8);
+    border: 1px solid rgba(91, 164, 199, 0.2);
+  }
+
+  .blue-glow {
+    box-shadow: 0 0 15px rgba(72, 138, 181, 0.4);
+  }
+
+  .blue-text {
+    background: linear-gradient(90deg, #488ab5, #002b45);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    font-weight: 600;
+  }
+
+  .golden-border {
+    border: 1px solid rgba(255, 165, 0, 0.3);
+  }
+
+  .animate-fade-in {
+    animation: fadeIn 0.5s ease-in-out;
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .glass-effect {
+    background: rgba(42, 42, 42, 0.7);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 165, 0, 0.1);
+  }
+
+  .dark .glass-effect {
+    background: rgba(26, 39, 66, 0.7);
+    border: 1px solid rgba(91, 164, 199, 0.2);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+    box-sizing: border-box;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: Arial, Helvetica, sans-serif;
+  }
+
+  /* Hide scrollbars but maintain scrolling functionality */
+  .hide-scrollbar {
+    -ms-overflow-style: none; /* Internet Explorer 10+ */
+    scrollbar-width: none; /* Firefox */
+  }
+
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none; /* Safari and Chrome */
+  }
+
+  /* Apply to Radix ScrollArea components */
+  .hide-scrollbar [data-radix-scroll-area-scrollbar] {
+    display: none !important;
+  }
+
+  .hide-scrollbar [data-radix-scroll-area-corner] {
+    display: none !important;
+  }
+}
