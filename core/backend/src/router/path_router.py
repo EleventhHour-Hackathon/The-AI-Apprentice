@@ -8,6 +8,7 @@ from fastapi import APIRouter, Body, HTTPException, Request
 from src.core.config import Config
 from src.services.screen_vision import get_backend as get_vision_backend, log_frame
 from src.utils.logger import logger
+from storage import work_maps as work_map_store
 
 UPLOAD_DIR = Config.UPLOAD_DIR
 
@@ -110,3 +111,52 @@ async def screen_event(payload: dict = Body(...)):
 
     log_frame(frame, result, type(backend).__name__)
     return result
+
+
+
+def _work_map_id(work_map_id: str) -> str:
+    # Work Map ids are session UUIDs; reject anything else before it reaches the database.
+    try:
+        return str(uuid.UUID(work_map_id))
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Work Map not found")
+
+
+def _store_unavailable(e: Exception) -> HTTPException:
+    logger.error(f"Work Map store failed: {e}")
+    return HTTPException(status_code=503, detail="Work Map storage is unavailable")
+
+
+# Plain `def`: psycopg is synchronous, so FastAPI runs these in its threadpool.
+@router.get("/work_maps")
+def list_work_maps():
+    """Every saved Work Map, newest first, without the transcript."""
+    try:
+        return work_map_store.list_summaries()
+    except Exception as e:
+        raise _store_unavailable(e)
+
+
+@router.get("/work_maps/{work_map_id}")
+def get_work_map(work_map_id: str):
+    """One saved Work Map, including the transcript its reasons were quoted from."""
+    work_map_id = _work_map_id(work_map_id)
+    try:
+        work_map = work_map_store.get(work_map_id)
+    except Exception as e:
+        raise _store_unavailable(e)
+    if work_map is None:
+        raise HTTPException(status_code=404, detail="Work Map not found")
+    return work_map
+
+
+@router.delete("/work_maps/{work_map_id}")
+def delete_work_map(work_map_id: str):
+    work_map_id = _work_map_id(work_map_id)
+    try:
+        deleted = work_map_store.delete(work_map_id)
+    except Exception as e:
+        raise _store_unavailable(e)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Work Map not found")
+    return {"deleted": work_map_id}

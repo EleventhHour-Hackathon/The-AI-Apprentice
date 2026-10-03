@@ -9,6 +9,7 @@ from .handler_functions import (  # noqa: F401  (resolved by name from the flow)
     begin_observation,
     confirm_work_map,
     note_open_question,
+    ready_to_teach_back,
     record_correction,
     record_guardrail,
     record_step,
@@ -41,8 +42,6 @@ async def main():
         job_id=args.job_id,
         candidate_id=args.candidate_id,
     )
-    await bot.create_transport()
-    await bot.create_pipeline()
     await bot.start()
 
 

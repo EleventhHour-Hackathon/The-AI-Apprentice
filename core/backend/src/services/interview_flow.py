@@ -43,6 +43,7 @@ from pydantic import BaseModel
 from src.services.llm_factory import LLMFactory
 from src.services.tts_factory import TTSFactory
 from src.utils.logger import logger
+from storage import work_maps as work_map_store
 
 load_dotenv(override=True)
 
@@ -193,6 +194,12 @@ class InterviewFlow:
           from them, not assessing them.
         - Never invent a reason or a rule they did not actually give you.
           If you are unsure, ask, or say that you are unsure.
+        - Never talk about yourself or how you work: not what you can or
+          cannot see, not screen sharing, the app, the session, AI or any
+          other technology behind you. If the expert asks, answer in a few
+          words and go straight back to their work.
+        - Never pad a turn with filler, thanks, recaps or offers like
+          "let me know if". Say the one thing that matters, then stop.
         """
 
         self._inject_dynamic_content_into_flow(system_prompt)
@@ -210,24 +217,79 @@ class InterviewFlow:
             stt_service=self.stt,
             config=STTMuteConfig(strategies={STTMuteStrategy.MUTE_UNTIL_FIRST_BOT_COMPLETE}),
         )
-        self.rtvi_config = RTVIConfig(
-            config=[
-                {"type": "speaking", "service": "rtvi", "options": []},
-                {"type": "user_transcription", "service": "rtvi", "options": []},
-                {"type": "bot_transcription", "service": "rtvi", "options": []},
-                {"type": "bot_tts", "service": "rtvi", "options": []},
-            ]
-        )
-        self.rtvi = InterviewRTVIProcessor(config=self.rtvi_config)
+        self.rtvi = InterviewRTVIProcessor(config=RTVIConfig(config=[]))
         globals()["rtvi_instance"] = self.rtvi
         globals()["interview__flow_instance"] = self
         self.rtvi_observer = InterviewRTVIObserver(rtvi=self.rtvi)
+        self.flow_manager: Optional[FlowManager] = None
+
+        @self.rtvi.event_handler("on_client_ready")
+        async def on_client_ready(rtvi):
+            await rtvi.set_bot_ready()
+            if self.flow_manager and self.flow_manager.current_node:
+                await send_message_to_client(
+                    {"type": "flow.node", "node": self.flow_manager.current_node}
+                )
+
+        @self.rtvi.event_handler("on_client_message")
+        async def on_client_message(_rtvi, message):
+            try:
+                await self._handle_client_message(message.type, message.data or {})
+            except Exception as e:
+                logger.error(f"Error handling client message {message.type}: {e}")
 
     @classmethod
     async def create(cls, url, bot_token, session_id, db_manager, job_id, bot_name="Sia"):
         return cls(url, bot_token, session_id, db_manager, job_id, bot_name)
 
     # Timer functionality removed to improve bot response time
+
+    async def _handle_client_message(self, kind: str, data: Dict[str, Any]):
+        """Act on the controls the expert presses in the voice pill.
+
+        These move the flow directly instead of asking the LLM to, so pressing
+        End or Later always does what it says.
+        """
+        if not self.flow_manager:
+            return
+        node = self.flow_manager.current_node
+
+        if kind == "work.end" and node in ("session_start", "observing"):
+            logger.info("Expert ended the work session, moving to the debrief")
+            await self.rtvi.interrupt_bot()
+            await self._go_to("debrief")
+
+        elif kind == "question.later" and node in ("session_start", "observing"):
+            from src.services.handler_functions import park_open_question  # noqa: PLC0415
+
+            await self.rtvi.interrupt_bot()
+            question = str(data.get("question") or "").strip()
+            if question:
+                await park_open_question(self.flow_manager, question)
+            await self._append_context(
+                "[EXPERT] Not now, I am busy. Keep that question for the debrief and stay quiet.",
+                run_llm=False,
+            )
+
+        elif kind == "debrief.skip" and node == "debrief":
+            await self._append_context(
+                "[EXPERT] Skip that one. Ask your next question.", run_llm=True
+            )
+
+        else:
+            logger.info(f"Ignoring client message {kind} in node {node}")
+
+    async def _go_to(self, node: str):
+        config = {"name": node, **self.flow_config["nodes"][node]}
+        await self.flow_manager.set_node_from_config(config)
+        await send_message_to_client({"type": "flow.node", "node": node})
+
+    async def _append_context(self, content: str, run_llm: bool):
+        if run_llm:
+            await self.rtvi.interrupt_bot()
+        await self.rtvi.push_frame(
+            LLMMessagesAppendFrame(messages=[{"role": "user", "content": content}], run_llm=run_llm)
+        )
 
     async def create_transport(self):
         self.aiohttp_session = aiohttp.ClientSession()
@@ -408,7 +470,9 @@ class InterviewFlow:
             await self.runner.run(self.task)
             self.task_running = True
 
-            logger.info(f"Interview flow pipeline running for session {self.session_id}")
+            logger.info(f"Interview flow pipeline finished for session {self.session_id}")
+            # The flow can end itself after the teach-back, without stop() ever running.
+            self._save_work_map()
 
         except Exception as e:
             logger.error(f"Failed to start interview flow: {e}")
@@ -435,7 +499,7 @@ class InterviewFlow:
 
         Holds the steps, the judgment behind them and the guardrails, each
         tied back to the screen moment it came from, plus the transcript the
-        reasons were quoted from.
+        reasons were quoted from. Goes to Supabase (storage/work_maps.py).
         """
         try:
             state = getattr(getattr(self, "flow_manager", None), "state", {}) or {}
@@ -458,13 +522,20 @@ class InterviewFlow:
                         )
             work_map["transcript"] = transcript
 
-            out_dir = pathlib.Path("uploads/work_maps")
-            out_dir.mkdir(parents=True, exist_ok=True)
-            out_file = out_dir / f"{self.session_id}.json"
-            out_file.write_text(json.dumps(work_map, indent=2, default=str))
+            try:
+                work_map_store.save(work_map)
+                saved_to = "Supabase"
+            except Exception as e:
+                # Keep the session rather than lose it; this file is not listed in the app.
+                logger.error(f"Couldn't save Work Map to Supabase, writing it locally: {e}")
+                out_dir = pathlib.Path("uploads/work_maps")
+                out_dir.mkdir(parents=True, exist_ok=True)
+                out_file = out_dir / f"{self.session_id}.json"
+                out_file.write_text(json.dumps(work_map, indent=2, default=str))
+                saved_to = str(out_file)
 
             logger.info(
-                f"Work Map saved to {out_file}: {len(work_map.get('steps', []))} steps, "
+                f"Work Map saved to {saved_to}: {len(work_map.get('steps', []))} steps, "
                 f"{len(work_map.get('guardrails', []))} guardrails, "
                 f"confirmed={work_map.get('confirmed', False)}"
             )

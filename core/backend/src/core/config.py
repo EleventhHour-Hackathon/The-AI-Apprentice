@@ -58,6 +58,8 @@ class Config:
     # Environment-specific Supabase configuration
     SUPABASE_URL = os.getenv("SUPABASE_URL", "")
     SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+    # Postgres connection for Work Maps (storage/work_maps.py); server-side only.
+    SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL", "")
 
     # Daily.co Configuration
     DAILY_ROOM_EXPIRY_MINUTES = 30  # Hardcoded instead of env
@@ -98,6 +100,8 @@ class Config:
         "http://127.0.0.1:3000",
         "http://127.0.0.1:8010",
         "http://127.0.0.1:3001",
+        "http://localhost:8080",
+        "http://127.0.0.1:8080",
         "https://recruiter.sivera.io",
         "https://api.sivera.io",
         "https://app.sivera.io",
