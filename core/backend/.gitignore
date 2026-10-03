@@ -192,5 +192,6 @@ examples/
 *.log
 *.log.*
 
-# Debug screenshots of the expert screen (never push)
-uploads/screen_debug/
+# Runtime artefacts: debug screenshots of the expert's screen, and Work Map
+# fallbacks written when Supabase is unreachable. Never push these.
+uploads/
