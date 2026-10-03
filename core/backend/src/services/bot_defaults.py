@@ -5,30 +5,9 @@ import sys
 
 from storage.db_manager import DatabaseManager
 
-from .handler_functions import (
+from .handler_functions import (  # noqa: F401  (resolved by name from the flow)
     begin_observation,
-    collect_candidate_info,
     confirm_work_map,
-
-    conclude_interview,
-    end_interview,
-    evaluate_aws_knowledge,
-    evaluate_behavioral_response,
-    evaluate_kubernetes_knowledge,
-    evaluate_problem_solving,
-    evaluate_python_skills,
-    evaluate_troubleshooting_skills,
-    handle_candidate_questions,
-    present_aws_scenario,
-    present_coding_problem,
-    present_incident_scenario,
-    present_kubernetes_challenge,
-    present_python_challenge,
-    present_system_design,
-    process_background_info,
-    process_devops_experience,
-    present_assessment,
-    evaluate_and_proceed,
     note_open_question,
     record_correction,
     record_guardrail,
@@ -50,12 +29,6 @@ async def main():
     parser.add_argument("-s", "--session_id", type=str, help="Session ID", required=True)
     parser.add_argument("-j", "--job_id", type=str, help="Job ID", required=False)
     parser.add_argument("-c", "--candidate_id", type=str, help="Candidate ID", required=False)
-    parser.add_argument(
-        "-l", "--linkedin_profile", type=str, help="Linkedin profile", required=False
-    )
-    parser.add_argument(
-        "-a", "--additional_links", type=str, help="Additional links", required=False
-    )
 
     args = parser.parse_args()
     db_manager = DatabaseManager()
@@ -67,8 +40,6 @@ async def main():
         db_manager=db_manager,
         job_id=args.job_id,
         candidate_id=args.candidate_id,
-        linkedin_profile=args.linkedin_profile,
-        additional_links=args.additional_links,
     )
     await bot.create_transport()
     await bot.create_pipeline()
