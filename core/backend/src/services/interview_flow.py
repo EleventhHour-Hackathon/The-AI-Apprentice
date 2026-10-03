@@ -110,6 +110,18 @@ async def send_message_to_client(message):
 
 
 class InterviewFlow:
+    def _load_default_profile(self):
+        """Load the local default interview flow, used when no job is
+        specified or when the interview data cannot be fetched."""
+        with open("src/services/flows/default.json", "r") as f:
+            self.flow_config = json.load(f)
+        self.candidate_name = "Mithra"
+        self.job_title = "Google AI Platform, Cloud Engineer"
+        self.job_description = None
+        self.resume_url = None
+        self.skills = ["Java", "Python", "Langchain", "RabbitMQ", "AWS"]
+        self.duration = 20
+
     def __init__(
         self,
         url,
@@ -145,30 +157,28 @@ class InterviewFlow:
             self.additional_links_info = scrape_multiple_links_sync(self.additional_links)
 
         if self.job_id:
-            self.job = self.db.fetch_one("jobs", {"id": self.job_id})
-            self.job_description = self.job.get("description")
-            self.interview = self.db.fetch_one("interviews", {"job_id": self.job_id})
-            self.interview_flow = self.db.fetch_one(
-                "interview_flows", {"id": self.job.get("flow_id")}
-            )
-            self.flow_config = self.interview_flow["flow_json"]
-            self.duration = self.interview_flow["duration"]
-            self.skills = self.job.get("skills")
-            logger.info(f"Skills: {self.skills}")
-            self.candidate = self.db.fetch_one("candidates", {"id": candidate_id})
-            self.candidate_name = self.candidate.get("name")
-            self.job_title = self.job.get("title")
-            self.resume_url = self.candidate.get("resume_url")
-            self.db.update("candidate_interviews", {"room_url": self.url, "bot_token": self.token}, {"candidate_id": self.candidate_id, "interview_id": self.interview.get("id")})
+            try:
+                self.job = self.db.fetch_one("jobs", {"id": self.job_id})
+                self.job_description = self.job.get("description")
+                self.interview = self.db.fetch_one("interviews", {"job_id": self.job_id})
+                self.interview_flow = self.db.fetch_one(
+                    "interview_flows", {"id": self.job.get("flow_id")}
+                )
+                self.flow_config = self.interview_flow["flow_json"]
+                self.duration = self.interview_flow["duration"]
+                self.skills = self.job.get("skills")
+                logger.info(f"Skills: {self.skills}")
+                self.candidate = self.db.fetch_one("candidates", {"id": candidate_id})
+                self.candidate_name = self.candidate.get("name")
+                self.job_title = self.job.get("title")
+                self.resume_url = self.candidate.get("resume_url")
+                self.db.update("candidate_interviews", {"room_url": self.url, "bot_token": self.token}, {"candidate_id": self.candidate_id, "interview_id": self.interview.get("id")})
+            except Exception as e:
+                logger.error(f"Failed to load interview data from database: {e}")
+                logger.warning("Falling back to the local default interview flow")
+                self._load_default_profile()
         else:
-            # this is just for testing
-            with open("src/services/flows/default.json", "r") as f:
-                self.flow_config = json.load(f)
-            self.candidate_name = "Mithra"
-            self.job_title = "Google AI Platform, Cloud Engineer"
-            self.resume_url = "https://glttawcpverjawfrbohm.supabase.co/storage/v1/object/sign/resumes/mithra_1751825465503.pdf?token=eyJraWQiOiJzdG9yYWdlLXVybC1zaWduaW5nLWtleV8wMTYzZjAwNS0xZDVlLTQ3NDEtYjJhYi0yNjQ0MWYwYTg4MzYiLCJhbGciOiJIUzI1NiJ9.eyJ1cmwiOiJyZXN1bWVzL21pdGhyYV8xNzUxODI1NDY1NTAzLnBkZiIsImlhdCI6MTc1MTg4NjIzNiwiZXhwIjoxNzgzNDIyMjM2fQ.2v2JMRGbAMVKAecynxbjC3oHsMDcQpYWZjBl6Tw6jig"
-            self.skills = ["Java", "Python", "Langchain", "RabbitMQ", "AWS"]
-            self.duration = 20
+            self._load_default_profile()
 
         # Ensure flow_config is always set
         if not hasattr(self, 'flow_config') or self.flow_config is None:

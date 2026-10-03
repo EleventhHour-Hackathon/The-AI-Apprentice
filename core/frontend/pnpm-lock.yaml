@@ -15,11 +15,11 @@ importers:
         specifier: ^4.7.0
         version: 4.7.0(monaco-editor@0.52.2)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       '@pipecat-ai/client-js':
-        specifier: ^1.0.0
-        version: 1.0.0
+        specifier: ^1.13.1
+        version: 1.13.1
       '@pipecat-ai/daily-transport':
-        specifier: ^1.0.0
-        version: 1.0.0(@pipecat-ai/client-js@1.0.0)
+        specifier: ^1.6.9
+        version: 1.6.9(@pipecat-ai/client-js@1.13.1)
       '@radix-ui/react-dialog':
         specifier: ^1.1.6
         version: 1.1.14(@types/react-dom@19.0.4(@types/react@19.0.10))(@types/react@19.0.10)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
@@ -155,9 +155,9 @@ packages:
   '@codemirror/state@6.5.2':
     resolution: {integrity: sha512-FVqsPqtPWKVVL3dPSxy8wEF/ymIEuVzF1PK3VbUgrxXpJUSHQWWZz4JMToquRxnkw+36LTamCZG2iua2Ptq0fA==}
 
-  '@daily-co/daily-js@0.77.0':
-    resolution: {integrity: sha512-icNXKieKAkRR/C5dcPjrCkL1jQGFp5C5WtLHy5uHAdTztm+mo9wlPJuehbWaGOM3TV24mgWHZ/+8jOys1G0I4w==}
-    engines: {node: '>=10.0.0'}
+  '@daily-co/daily-js@0.90.0':
+    resolution: {integrity: sha512-XnuuNIxLt8GOv+rFYoU+OPTSmVj+Mg9hRPK2EM6WYVY62F6rcw7vwzZBOSCisVuu1VnTIF/2J9V0VEBa83lDzw==}
+    engines: {node: '>=22.14.0'}
 
   '@emnapi/core@1.4.3':
     resolution: {integrity: sha512-4m62DuCE07lw01soJwPiBGC0nAww0Q+RY70VZ+n49yDIO13yyinhbWCeNnaob0lakDtWQzSdtNWzJeOJt2ma+g==}
@@ -580,13 +580,13 @@ packages:
     resolution: {integrity: sha512-3giAOQvZiH5F9bMlMiv8+GSPMeqg0dbaeo58/0SlA9sxSqZhnUtxzX9/2FzyhS9sWQf5S0GJE0AKBrFqjpeYcg==}
     engines: {node: '>=8.0.0'}
 
-  '@pipecat-ai/client-js@1.0.0':
-    resolution: {integrity: sha512-c+LtwyG7KlEPxDImXnxlNrFIlq0I3nd6R3gmLHfDr3fAq5zmlOrzZCeOPWWRhPFvBO+MNSoVrmNeDv6DJWsMPA==}
+  '@pipecat-ai/client-js@1.13.1':
+    resolution: {integrity: sha512-kRzNWBouHrYyoc6iN60RO97kBhB+uAPSXzf3M1tL//w59X8lkPGCL1onM0crh28C64nxP4hJ0+v6Spf5amJKIg==}
 
-  '@pipecat-ai/daily-transport@1.0.0':
-    resolution: {integrity: sha512-iXmv9Et/TGPvJoeOY+ZBPv+a3pbqT502jco2MBHl8l2VrtztkidjDwiOkPfPdD191CCwaSbV5laSYALsD0AyxA==}
+  '@pipecat-ai/daily-transport@1.6.9':
+    resolution: {integrity: sha512-Ovm+pP08d9B+VYpiTJc2SfhJURe2PowIStb65vTDlBvgnubBWmUTJImJfFymHJTEatRTk3yhH5iaRDhGxahmWA==}
     peerDependencies:
-      '@pipecat-ai/client-js': ~1.0.0
+      '@pipecat-ai/client-js': ~1.13.0
 
   '@pkgjs/parseargs@0.11.0':
     resolution: {integrity: sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg==}
@@ -3221,8 +3221,8 @@ packages:
   util-deprecate@1.0.2:
     resolution: {integrity: sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==}
 
-  uuid@10.0.0:
-    resolution: {integrity: sha512-8XkAphELsDnEGrDxUOHB3RGvXz6TeuYSGEZBOjtTtPm2lwhGBjLgOzLHB63IUWfBpNucQjND6d3AOudO+H3RWQ==}
+  uuid@11.1.1:
+    resolution: {integrity: sha512-vIYxrBCC/N/K+Js3qSN88go7kIfNPssr/hHCesKCQNAjmgvYS2oqr69kIufEG+O4+PfezOH4EbIeHCfFov8ZgQ==}
     hasBin: true
 
   validate.io-array@1.0.6:
@@ -3379,7 +3379,7 @@ snapshots:
     dependencies:
       '@marijn/find-cluster-break': 1.0.2
 
-  '@daily-co/daily-js@0.77.0':
+  '@daily-co/daily-js@0.90.0':
     dependencies:
       '@babel/runtime': 7.26.9
       '@sentry/browser': 8.55.0
@@ -4089,19 +4089,19 @@ snapshots:
   '@opentelemetry/api@1.9.0':
     optional: true
 
-  '@pipecat-ai/client-js@1.0.0':
+  '@pipecat-ai/client-js@1.13.1':
     dependencies:
       '@types/events': 3.0.3
       bowser: 2.11.0
       clone-deep: 4.0.1
       events: 3.3.0
       typed-emitter: 2.1.0
-      uuid: 10.0.0
+      uuid: 11.1.1
 
-  '@pipecat-ai/daily-transport@1.0.0(@pipecat-ai/client-js@1.0.0)':
+  '@pipecat-ai/daily-transport@1.6.9(@pipecat-ai/client-js@1.13.1)':
     dependencies:
-      '@daily-co/daily-js': 0.77.0
-      '@pipecat-ai/client-js': 1.0.0
+      '@daily-co/daily-js': 0.90.0
+      '@pipecat-ai/client-js': 1.13.1
 
   '@pkgjs/parseargs@0.11.0':
     optional: true
@@ -7046,7 +7046,7 @@ snapshots:
 
   util-deprecate@1.0.2: {}
 
-  uuid@10.0.0: {}
+  uuid@11.1.1: {}
 
   validate.io-array@1.0.6: {}
 
