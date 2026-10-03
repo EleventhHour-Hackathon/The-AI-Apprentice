@@ -297,23 +297,14 @@ class Config:
     @classmethod
     def validate_config(cls) -> bool:
         """Validate required configuration variables"""
+        # Only what the apprentice actually uses. Daily, Deepgram, Gemini and the
+        # Supabase client went with the Pipecat stack; demanding them here stopped
+        # the app booting on a correct .env.
         required_vars = [
-            "DAILY_API_KEY",
-            "ELEVENLABS_API_KEY",
-            "DEEPGRAM_API_KEY",
-            "LLM_PROVIDER",
-            "LLM_MODEL",
-            "OPENAI_API_KEY",
-            "GEMINI_API_KEY",
-            "SUPABASE_URL",
-            "SUPABASE_KEY",
+            "ELEVENLABS_API_KEY",  # the apprentice and tutor agents, and their voice
+            "OPENAI_API_KEY",  # screen understanding, the Work Map merge, tutor checks
+            "SUPABASE_DB_URL",  # Work Maps, screen moments and lessons
         ]
-
-        if cls.TTS_CONFIG["provider"] == "aws_polly":
-            required_vars.extend([
-                "AWS_ACCESS_KEY_ID",
-                "AWS_SECRET_ACCESS_KEY",
-            ])
 
         missing = [var for var in required_vars if not getattr(cls, var)]
         if missing:
