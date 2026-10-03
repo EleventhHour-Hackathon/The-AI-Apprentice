@@ -8,6 +8,7 @@ from fastapi import APIRouter, Body, HTTPException, Request
 
 from src.core.config import Config
 from src.llm_handler.flow_generator import generate_interview_flow_from_jd
+from src.services.screen_vision import get_backend as get_vision_backend, log_frame
 from src.utils.logger import logger
 
 UPLOAD_DIR = Config.UPLOAD_DIR
@@ -275,3 +276,30 @@ async def handle_daily_dialout_webhook(request: Request):
     except Exception as e:
         logger.error(f"Unexpected error in Daily dialout webhook: {e}")
         raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
+
+
+@router.post("/screen_event")
+async def screen_event(payload: dict = Body(...)):
+    """Describe what changed on the expert's screen since the last frame.
+
+    The client samples its screen share every couple of seconds and posts
+    the frame here; we hand back an event it can drop into the live
+    conversation so the agent knows what the expert is doing.
+    """
+    frame = payload.get("frame")
+    if not frame:
+        raise HTTPException(status_code=400, detail="Missing 'frame'")
+
+    # Accept either a bare base64 payload or a full data: URL.
+    if frame.startswith("data:"):
+        frame = frame.split(",", 1)[-1]
+
+    backend = get_vision_backend()
+    try:
+        result = await backend.describe(frame, payload.get("previous"))
+    except Exception as e:
+        logger.error(f"Screen understanding failed: {e}")
+        raise HTTPException(status_code=502, detail="Screen understanding failed")
+
+    log_frame(frame, result, type(backend).__name__)
+    return result

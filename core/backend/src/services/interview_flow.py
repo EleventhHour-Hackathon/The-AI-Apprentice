@@ -113,8 +113,9 @@ class InterviewFlow:
     def _load_default_profile(self):
         """Load the local default interview flow, used when no job is
         specified or when the interview data cannot be fetched."""
-        with open("src/services/flows/default.json", "r") as f:
+        with open("src/services/flows/apprentice.json", "r") as f:
             self.flow_config = json.load(f)
+        self.mode = "apprentice"
         self.candidate_name = "Mithra"
         self.job_title = "Google AI Platform, Cloud Engineer"
         self.job_description = None
@@ -155,6 +156,8 @@ class InterviewFlow:
             # Scrape all links concurrently for better performance
             from src.utils.link_scraper import scrape_multiple_links_sync
             self.additional_links_info = scrape_multiple_links_sync(self.additional_links)
+
+        self.mode = "interview"
 
         if self.job_id:
             try:
@@ -243,7 +246,33 @@ class InterviewFlow:
         links_info = self.get_formatted_links_info()
     
         # TODO: fetch the total time for this
-        system_prompt = f"""Your name is {self.bot_name}. You are an interviewer conducting an interview for the position of {self.job_title}.
+        if getattr(self, "mode", "interview") == "apprentice":
+            system_prompt = f"""
+
+        IMPORTANT:
+        Follow these instructions when speaking, as your replies are read aloud:
+        {tts_instructions}
+
+        HOW YOU SEE THE SCREEN:
+        Messages that begin with [SCREEN] describe what is happening on the
+        expert's screen right now. They are your own eyes, not speech from the
+        expert. Never read one aloud, never repeat one back, and never tell the
+        expert what you can see. Use them only to decide what is worth asking
+        about, and to know whether the expert is busy or at a pause.
+
+        A burst of [SCREEN] messages means they are mid-task, so stay silent.
+        A gap in them, or the expert finishing a sentence, is your opening.
+
+        NEVER:
+        - Never interrupt the expert while they are typing, reading or talking.
+        - Never ask something the screen has already told you.
+        - Never evaluate, grade, score or praise their work. You are learning
+          from them, not assessing them.
+        - Never invent a reason or a rule they did not actually give you.
+          If you are unsure, ask, or say that you are unsure.
+        """
+        else:
+            system_prompt = f"""Your name is {self.bot_name}. You are an interviewer conducting an interview for the position of {self.job_title}.
         Your responses should be clear, concise, and professional.
         Keep your replies very short, as they will be read aloud. Make them conversational, without using any special characters or formatting.
 

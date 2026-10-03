@@ -6,7 +6,10 @@ import sys
 from storage.db_manager import DatabaseManager
 
 from .handler_functions import (
+    begin_observation,
     collect_candidate_info,
+    confirm_work_map,
+
     conclude_interview,
     end_interview,
     evaluate_aws_knowledge,
@@ -26,6 +29,11 @@ from .handler_functions import (
     process_devops_experience,
     present_assessment,
     evaluate_and_proceed,
+    note_open_question,
+    record_correction,
+    record_guardrail,
+    record_step,
+    start_debrief,
 )
 
 from .interview_flow import InterviewFlow

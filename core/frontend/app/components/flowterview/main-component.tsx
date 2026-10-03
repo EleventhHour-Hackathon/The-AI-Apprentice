@@ -4,6 +4,7 @@ import AudioClient from "./audio-client";
 import Presentation from "./presentation-layer";
 import ScreenRecorderOptimized from "./screen-recorder-optimized";
 import RecordingPermission from "./recording-permission";
+import useScreenEvents from "@/hooks/useScreenEvents";
 import usePathStore from "@/app/store/PathStore";
 import useEnhancedS3Upload from "@/app/hooks/useEnhancedS3Upload";
 import { useResilientUpload } from "@/app/hooks/useResilientUpload";
@@ -153,6 +154,9 @@ export default function FlowterviewComponent() {
   const handlePermissionDenied = useCallback(() => {
     // Log but don't show UI
   }, []);
+
+  // Let the agent see what the expert is doing on screen.
+  useScreenEvents(activeScreenStream);
 
   // Only skip recording entirely if explicitly set
   const shouldSkipRecording =
