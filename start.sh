@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Start Tacit: the backend (core/backend, :8000), the UI (pixel-perfect-capture, :8080)
+# Start Tacit: the backend (core/backend, :8000), the UI (pixel-perfect-capture, :8081)
 # and the Electron app. Ctrl-C stops everything.
 #
 #   ./start.sh               backend + desktop app
-#   ./start.sh --web         backend + UI in the browser (http://localhost:8080)
+#   ./start.sh --web         backend + UI in the browser (http://localhost:8081)
 #   ./start.sh --sync-agents push the ElevenLabs agents first (after editing apprentice_agent.py)
 set -euo pipefail
 
@@ -22,7 +22,8 @@ done
 
 say() { printf '\033[1m▸ %s\033[0m\n' "$*"; }
 need() { command -v "$1" >/dev/null || { echo "Missing $1. $2" >&2; exit 1; }; }
-up() { curl -s -o /dev/null "$1"; }
+up() { curl --fail --silent --max-time 2 -o /dev/null "$1"; }
+ui_up() { curl --fail --silent --max-time 2 http://localhost:8081/ | grep '<title>Studio · Tacit</title>' >/dev/null; }
 
 need uv "Install it: curl -LsSf https://astral.sh/uv/install.sh | sh"
 need node "Install Node 20+ (e.g. nvm install 24)."
@@ -60,19 +61,20 @@ else
   up http://localhost:8000/health || { echo "Backend did not start, see core/backend/app.log" >&2; exit 1; }
 fi
 
-if up http://localhost:8080; then
-  say "UI already running on :8080"
+if ui_up; then
+  say "UI already running on :8081"
 else
-  say "Starting UI on :8080"
+  say "Starting UI on :8081"
   (cd "$UI" && exec $PM run dev) &
   PIDS+=($!)
-  for _ in $(seq 60); do up http://localhost:8080 && break; sleep 0.5; done
+  for _ in $(seq 60); do ui_up && break; sleep 0.5; done
+  ui_up || { echo "UI did not start on :8081. Check the server output above." >&2; exit 1; }
 fi
 
 if [ "$MODE" = desktop ]; then
   say "Opening Tacit"
   (cd "$UI" && npx electron .)
 else
-  say "Open http://localhost:8080 (Ctrl-C to stop)"
+  say "Open http://localhost:8081 (Ctrl-C to stop)"
   wait
 fi

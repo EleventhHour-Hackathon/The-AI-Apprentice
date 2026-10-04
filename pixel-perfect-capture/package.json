@@ -13,7 +13,7 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "desktop": "concurrently -k -n ui,app \"vite dev\" \"wait-on http-get://localhost:8080 && electron .\""
+    "desktop": "concurrently -k -n ui,app \"vite dev\" \"wait-on http-get://localhost:8081 && electron .\""
   },
   "overrides": {
     "rolldown": "1.2.1"

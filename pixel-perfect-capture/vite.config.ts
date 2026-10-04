@@ -7,6 +7,10 @@
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
 export default defineConfig({
+  vite: {
+    // allowedHosts lets a second laptop load the UI by name (mithras-mbp.lan), not just by IP.
+    server: { port: 8081, strictPort: true, allowedHosts: [".lan", ".local"] },
+  },
   tanstackStart: {
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
     // nitro/vite builds from this

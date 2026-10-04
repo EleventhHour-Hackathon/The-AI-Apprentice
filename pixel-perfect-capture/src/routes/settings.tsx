@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import {
   AppWindow,
@@ -31,6 +31,7 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
+import { languageOptions, storeLanguage, storedLanguage, type LanguageChoice } from "@/lib/languages";
 
 export const Route = createFileRoute("/settings")({
   head: () => ({ meta: [{ title: "Settings · Tacit" }] }),
@@ -49,8 +50,11 @@ const SECTIONS = [
   { id: "diagnostics", label: "Diagnostics", icon: Stethoscope },
 ] as const;
 
-// A mockup: every control keeps its own state and nothing is saved.
+// Apprentice language is saved; the remaining controls are a preview.
 function Settings() {
+  const [language, setLanguage] = useState<LanguageChoice>("auto");
+  useEffect(() => setLanguage(storedLanguage("apprentice")), []);
+
   return (
     <main className="flex min-h-screen flex-col bg-background">
       <AppHeader />
@@ -80,7 +84,7 @@ function Settings() {
               </Badge>
             </div>
             <p className="mt-1.5 text-sm text-muted-foreground">
-              How Tacit watches, asks, remembers and teaches. Changes here aren’t saved yet.
+              How Tacit watches, asks, remembers and teaches. Apprentice language is saved on this machine; other settings are a preview.
             </p>
           </div>
 
@@ -131,17 +135,27 @@ function Settings() {
             <Row label="Debrief" hint="How deep it goes once you end the session.">
               <Segmented options={["Short", "Standard", "Thorough"]} initial="Standard" />
             </Row>
-            <Row label="Language">
-              <Choice
-                value="en"
-                options={[
-                  ["en", "English"],
-                  ["es", "Español"],
-                  ["de", "Deutsch"],
-                  ["fr", "Français"],
-                  ["hi", "हिन्दी"],
-                ]}
-              />
+            <Row
+              label="Language"
+              hint="The language the apprentice speaks in new sessions. The Work Map is written in English, with your own words kept as you said them."
+            >
+              <Select
+                value={language}
+                onValueChange={(value) => {
+                  const next = value as LanguageChoice;
+                  setLanguage(next);
+                  storeLanguage("apprentice", next);
+                }}
+              >
+                <SelectTrigger aria-label="Apprentice language" className="w-48">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {languageOptions(true).map(({ value, label }) => (
+                    <SelectItem key={value} value={value}>{label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </Row>
             <Row
               label="Domain vocabulary"

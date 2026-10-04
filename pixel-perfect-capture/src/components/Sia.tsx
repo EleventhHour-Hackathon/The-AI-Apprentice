@@ -7,10 +7,10 @@ import { useApprentice, type Capture, type FlowNode } from "@/hooks/use-apprenti
 import { useScreenEvents } from "@/hooks/use-screen-events";
 import { useScreenRecording } from "@/hooks/use-screen-recording";
 import { usePrivacyShield } from "@/hooks/use-privacy-shield";
-import { MIN_LIVE_QUESTIONS, type Floor } from "@/lib/floor";
+import type { Floor } from "@/lib/floor";
 import { count } from "@/lib/work-maps";
 import { desktop } from "@/lib/desktop";
-import { languageOptions, storeLanguage, storedLanguage, type LanguageChoice } from "@/lib/languages";
+import { storedLanguage } from "@/lib/languages";
 
 export type SiaState = "idle" | "connecting" | "watching" | "raised" | "gotit" | "debriefing" | "debrief";
 const fmt = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
@@ -41,10 +41,6 @@ export function Sia({ onOpenApp, onLesson }: { onOpenApp?: () => void; onLesson?
   const [quiet, setQuiet] = useState(true);
   const [dismissed, setDismissed] = useState(-1);
   const [minimized, setMinimized] = useState(false);
-  // The language the apprentice speaks with the expert; the Work Map is kept in English.
-  const [language, setLanguage] = useState<LanguageChoice>("auto");
-  useEffect(() => setLanguage(storedLanguage("apprentice")), []);
-  const chooseLanguage = (next: LanguageChoice) => { setLanguage(next); storeLanguage("apprentice", next); };
   const secondsRef = useRef(0);
   secondsRef.current = seconds;
   const snapshot = useRef<() => string | null>(() => null);
@@ -66,10 +62,8 @@ export function Sia({ onOpenApp, onLesson }: { onOpenApp?: () => void; onLesson?
   const steps = voice.captures.filter(c => c.kind === "step").length;
   const rules = voice.captures.filter(c => c.kind === "guardrail").length;
   const parked = voice.captures.filter(c => c.kind === "open_question").length;
-  const asked = voice.liveQuestions.filter(q => !q.deferred).length;
-  const missing = Math.max(MIN_LIVE_QUESTIONS - asked, 0);
   const raised = work && Boolean(current) && dismissed !== currentIndex && (voice.botSpeaking || voice.userSpeaking || !quiet);
-  const state: SiaState = voice.status === "idle" ? "idle" : voice.status === "connecting" ? "connecting" : voice.status === "closed" ? "debrief" : !isWork(voice.node) ? "debriefing" : gotit ? "gotit" : raised ? "raised" : "watching";
+  const state: SiaState = voice.status === "idle" ? "idle" : voice.status === "connecting" ? "connecting" : voice.status === "closed" ? "debrief" : !isWork(voice.node) ? "debriefing" : raised ? "raised" : gotit ? "gotit" : "watching";
   const recording = state === "connecting" || state === "watching" || state === "raised" || state === "gotit";
 
   const stopScreen = useCallback(() => {
@@ -77,7 +71,7 @@ export function Sia({ onOpenApp, onLesson }: { onOpenApp?: () => void; onLesson?
   }, []);
   const startSession = async () => {
     if (voice.status === "connecting" || voice.status === "connected") return;
-    setSeconds(0); setPaused(false); setOffRecord(false); setGotit(null); setDismissed(-1); setScreenError("");
+    setMinimized(false); setSeconds(0); setPaused(false); setOffRecord(false); setGotit(null); setDismissed(-1); setScreenError("");
     let display: MediaStream;
     try {
       display = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 10, width: { max: 1920 }, height: { max: 1200 } }, audio: false });
@@ -90,11 +84,12 @@ export function Sia({ onOpenApp, onLesson }: { onOpenApp?: () => void; onLesson?
       setScreenError("Screen sharing stopped. The apprentice can no longer see your work.");
     });
     setScreen(display);
-    void voice.start(language);
+    // Read Settings at session start so changes apply even while the pill stays mounted.
+    void voice.start(storedLanguage("apprentice"));
   };
   const endWork = () => { stopScreen(); setGotit(null); voice.send("work.end"); };
   const endSession = () => { stopScreen(); voice.stop(); };
-  const close = () => { stopScreen(); voice.reset(); setScreenError(""); setSeconds(0); };
+  const close = () => { stopScreen(); voice.reset(); setMinimized(false); setScreenError(""); setSeconds(0); };
   const navigate = useNavigate();
   /** Open the new Work Map (or the list, if nothing was saved) in the app, and put the pill away. */
   const goToWorkMaps = () => {
@@ -173,20 +168,20 @@ export function Sia({ onOpenApp, onLesson }: { onOpenApp?: () => void; onLesson?
   }, []);
 
   const expanded = state === "raised" || state === "gotit" || state === "debriefing" || state === "debrief";
-  const width = state === "idle" ? 400 : expanded && state !== "debrief" ? 440 : 380;
+  const width = state === "idle" ? 310 : expanded ? 440 : 380;
   const color = offRecord || paused ? "text-pill-muted" : colors[state];
   const statusLabel = offRecord ? "Off the record" : paused ? "Paused" : state === "raised" && voice.node === "session_start" ? "Getting started" : state === "watching" ? (voice.wrapUp ? "Before the debrief" : floorLabels[voice.floor]) : labels[state];
   const answer = (current?.answer ? `${current.answer} ${voice.partial}` : voice.partial).trim();
   const speechLabel = offRecord ? "Off the record" : paused ? "Paused" : current?.captured && !voice.botSpeaking ? "Answer captured" : voice.botSpeaking ? "Asking" : level > .08 ? "Listening to you" : "Ready for your voice";
   const error = voice.error ?? (screenError || (recording && shield.status === "failed" ? "The privacy shield couldn’t start (it needs to download text recognition once), so your screen isn’t being shared. Check the connection and start again." : ""));
   // Folded away is fine while it just watches; anything that needs the expert opens it again.
-  useEffect(() => { if (state === "raised" || state === "debriefing" || state === "debrief" || error) setMinimized(false); }, [state, error]);
+  useEffect(() => { if (state === "idle" || state === "raised" || state === "gotit" || state === "debriefing" || state === "debrief" || error) setMinimized(false); }, [state, error]);
 
   return <>
     <div className="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex justify-center px-4">
       <section aria-label="Voice assistant" className={`voice-shell pointer-events-auto ${expanded && !minimized ? "voice-shell-expanded" : ""} ${state === "raised" ? "voice-shell-raised" : ""}`} style={{ "--voice-width": `${minimized ? 64 : width}px` } as CSSProperties}>
         {minimized ? <button type="button" className={`${color} flex h-12 w-full items-center justify-center`} title={`${statusLabel} · Expand`} aria-label={`${statusLabel}. Expand`} onClick={() => setMinimized(false)}>{state === "watching" && !paused && !offRecord ? <VoiceWave level={level} active /> : <span className="h-2 w-2 rounded-full bg-current" />}</button> : <>
-        <div className="flex min-h-12 items-center gap-3 py-2 pl-4 pr-2">
+        <div className="flex min-h-12 flex-wrap items-center gap-x-3 gap-y-2 py-2 pl-4 pr-2">
           <span className={`${color} flex shrink-0 items-center gap-2 text-xs font-medium`} aria-live="polite">
             {offRecord ? <span className="h-2 w-2 rounded-full bg-pill-muted" /> : state === "idle" || state === "connecting" ? <span className="h-1.5 w-1.5 rounded-full bg-pill-muted" /> : state === "raised" ? <Hand size={17} /> : state === "gotit" ? <Check size={17} /> : state === "debrief" || state === "debriefing" ? <CheckCheck size={17} /> : <VoiceWave level={level} active={!paused} />}
             {statusLabel}
@@ -194,22 +189,15 @@ export function Sia({ onOpenApp, onLesson }: { onOpenApp?: () => void; onLesson?
           <div className="ml-auto flex shrink-0 items-center gap-1">
             {screen && recording && <span className={`mr-1 flex items-center gap-0.5 ${shield.status === "failed" ? "text-voice-raised" : "text-pill-muted"}`} title={shield.status === "on" ? `Privacy shield on: ${shield.hidden ? `${count(shield.hidden, "item")} of personal data hidden` : "no personal data on screen right now"}. Nothing leaves this machine unshielded.` : shield.status === "starting" ? "Privacy shield starting: the screen isn't shared until it has checked it" : "Privacy shield couldn't start, so the screen isn't being shared"}>{shield.status === "on" ? <ShieldCheck size={12} /> : <Monitor size={12} />}{shield.status === "on" && shield.hidden > 0 && <span className="font-mono text-[10px]">{shield.hidden}</span>}</span>}
             {recording && <span className="mr-1 font-mono text-[11px] tabular-nums text-pill-muted">{fmt(seconds)}</span>}
-            {state === "idle" ? <><select value={language} onChange={e => chooseLanguage(e.target.value as LanguageChoice)} title="The language the apprentice speaks with you. The Work Map is written in English, with your own words kept as you said them." aria-label="Language" className="voice-select mr-1 h-8 w-28 truncate rounded-full border border-pill-border bg-pill-raised px-2.5 text-xs text-pill-foreground outline-none hover:border-pill-muted focus-visible:border-voice-debrief">{languageOptions(true).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select><Button className="voice-cta" onClick={() => void startSession()} title="Start session (S)"><Mic size={13} />Start session<Kbd>S</Kbd></Button></> : state === "debrief" ? <Icon title="Close (Esc)" onClick={close}><X /></Icon> : <><Icon title={paused ? "Resume (R)" : "Pause (R)"} onClick={toggleMute}>{paused ? <Play /> : <Pause />}</Icon><Icon title="Off the record (O)" pressed={offRecord} onClick={toggleOffRecord}>{offRecord ? <MicOff /> : <Mic />}</Icon>{recording && <Icon title="End session (S)" onClick={state === "connecting" ? endSession : endWork}><Square size={12} /></Icon>}</>}
+            {state === "idle" ? <Button className="voice-cta" onClick={() => void startSession()} title="Start session (S)"><Mic size={13} />Start session<Kbd>S</Kbd></Button> : state === "debrief" ? <Icon title="Close (Esc)" onClick={close}><X /></Icon> : <><Icon title={paused ? "Resume (R)" : "Pause (R)"} onClick={toggleMute}>{paused ? <Play /> : <Pause />}</Icon><Icon title="Off the record (O)" pressed={offRecord} onClick={toggleOffRecord}>{offRecord ? <MicOff /> : <Mic />}</Icon>{recording && <Icon title="End session (S)" onClick={state === "connecting" ? endSession : endWork}><Square size={12} /></Icon>}</>}
             <Icon title="Minimize" onClick={() => setMinimized(true)}><Minus /></Icon>
             {onOpenApp && <Icon title="Open app" onClick={onOpenApp}><AppWindow /></Icon>}
           </div>
         </div>
-        {state === "watching" && voice.node === "observing" && <div className="pb-3 text-center text-[11px] text-pill-muted">
-          <span title={`The apprentice asks at least ${MIN_LIVE_QUESTIONS} questions while you work, one about a limit, an exception or when to stop and ask`}>
-            <span className={asked >= MIN_LIVE_QUESTIONS ? "text-voice-listening" : ""}>Questions {asked}/{MIN_LIVE_QUESTIONS}</span>{" · "}
-            <span className={voice.guardrailAsked ? "text-voice-listening" : ""}>Guardrail {voice.guardrailAsked ? "✓" : "–"}</span>
-          </span>
-          {[steps && count(steps, "step"), rules && count(rules, "rule"), parked && `${parked} saved for later`].filter(Boolean).map(part => ` · ${part}`)}
-          {voice.wrapUp && <p className="mt-1.5 text-pill-foreground/80">{missing > 0 ? `${missing} more question${missing === 1 ? "" : "s"}` : "One more question"}{voice.guardrailAsked ? "" : ", one about a rule"}, then the debrief. Press End again to skip.</p>}
-        </div>}
+        {state === "watching" && (steps + rules + parked > 0) && <div className="pb-3 text-center text-[11px] text-pill-muted">{[steps && count(steps, "step"), rules && count(rules, "rule"), parked && `${parked} saved for later`].filter(Boolean).join(" · ")}</div>}
         {state === "raised" && current && <div className="border-t border-pill-border px-4 pb-4 pt-3 sia-fade">
-          <p className="text-sm leading-snug">{current.question}</p>
-          <div className="mt-3 flex gap-2"><span className="mt-0.5 text-[10px] text-pill-muted">YOU</span><p className="voice-caption text-[13px] leading-relaxed text-pill-foreground/80">{answer || "Listening…"}</p></div>
+          <p className="break-words text-sm leading-relaxed">{current.question}</p>
+          <div className="mt-3 flex gap-2"><span className="mt-0.5 shrink-0 text-[10px] text-pill-muted">YOU</span><p className="voice-caption min-w-0 flex-1 break-words text-[13px] leading-relaxed text-pill-foreground/85" tabIndex={0} aria-label="Your answer">{answer || "Listening…"}</p></div>
           {voice.node === "observing" && <div className="mt-2 flex justify-end"><Button variant="ghost" className="h-8 rounded-full text-xs text-pill-muted" title="Save for the debrief (L)" onClick={later}><Clock size={13} />Later<Kbd>L</Kbd></Button></div>}
         </div>}
         {state === "gotit" && gotit && <div className="border-t border-pill-border px-4 pb-4 pt-3 sia-fade">
@@ -218,7 +206,7 @@ export function Sia({ onOpenApp, onLesson }: { onOpenApp?: () => void; onLesson?
           {gotit.detail && <p className="mt-1 text-xs leading-relaxed text-pill-muted">{gotit.detail}</p>}
           <div className="mt-2 flex"><Button variant="ghost" className="ml-auto h-7 text-xs text-pill-muted" title="Continue (Enter)" onClick={() => setGotit(null)}>Continue<Kbd>↵</Kbd></Button></div>
         </div>}
-        {state === "debrief" && <div className="border-t border-pill-border px-4 pb-4 pt-3 sia-fade" role="status">
+        {state === "debrief" && <div className="border-t border-pill-border px-5 pb-5 pt-4 sia-fade" role="status">
           <div className="flex items-start gap-3">
             <span className={`mt-0.5 shrink-0 ${voice.saved === "failed" ? "text-voice-raised" : "text-voice-debrief"}`}>{voice.saved === "saving" ? <Loader2 size={16} className="animate-spin" /> : voice.saved === "failed" ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}</span>
             <div className="min-w-0 flex-1">
@@ -227,19 +215,19 @@ export function Sia({ onOpenApp, onLesson }: { onOpenApp?: () => void; onLesson?
             </div>
             <span className="shrink-0 font-mono text-[11px] text-pill-muted">{fmt(seconds)}</span>
           </div>
-          <div className="mt-3 flex justify-end gap-2">
+          <div className="mt-4 flex flex-wrap justify-end gap-2">
             <Button variant="ghost" className="h-8 rounded-full px-3 text-xs text-pill-muted" title="Ignore (Esc)" onClick={close}>Ignore<Kbd>Esc</Kbd></Button>
             <Button className="voice-cta" title="Go to Work Maps (Enter)" disabled={voice.saved === "saving"} onClick={goToWorkMaps}>Go to Work Maps<Kbd>↵</Kbd></Button>
           </div>
         </div>}
-        {state === "debriefing" && <div className="border-t border-pill-border px-5 pb-4 pt-4 sia-fade">
+        {state === "debriefing" && <div className="border-t border-pill-border px-5 pb-5 pt-4 sia-fade">
           <div className="flex items-center justify-between text-[11px] text-pill-muted"><span>{stages[voice.node] ?? "DEBRIEF"}</span><span>{count(steps, "step")} · {count(rules, "rule")}</span></div>
           {current?.thumb && <div className="mt-3"><ScreenMoment thumb={current.thumb} time={current.time} label="Screen when this was asked" /></div>}
-          <h2 className="mt-3 min-h-16 text-[18px] font-medium leading-snug">{voice.merging ? "Looking back over what I saw…" : current?.question || "One moment…"}</h2>
+          <h2 className="mt-3 min-h-16 break-words text-[18px] font-medium leading-relaxed">{voice.merging ? "Looking back over what I saw…" : current?.question || "One moment…"}</h2>
           {voice.node === "teach_back" && <p className="mt-2 text-xs leading-relaxed text-pill-muted">Say if that’s right, or correct anything I got wrong.</p>}
           <div className="mt-4 border-t border-pill-border pt-3">
             <div className={`flex items-center gap-2 text-xs ${current?.captured ? "text-voice-listening" : "text-voice-debrief"}`} role="status">{current?.captured && !voice.botSpeaking ? <Check size={17} /> : <VoiceWave level={level} active={!offRecord && !paused} />}{speechLabel}</div>
-            <p className="voice-caption mt-2 text-[13px] leading-relaxed text-pill-foreground/85">{answer || "Take your time. I’m listening."}</p>
+            <p className="voice-caption mt-3 min-h-24 break-words text-[13px] leading-relaxed text-pill-foreground/85" tabIndex={0} aria-label="Your answer">{answer || "Take your time. I’m listening."}</p>
           </div>
           <div className="mt-4 flex items-center justify-between border-t border-pill-border pt-3">
             <Button variant="ghost" className="h-8 rounded-full px-2 text-xs text-pill-muted" title="End debrief (Esc)" onClick={endSession}>End<Kbd>Esc</Kbd></Button>

@@ -15,7 +15,10 @@ const path = require("node:path");
 app.setName("Tacit");
 
 // The UI is served by the Vite dev server (`bun run desktop` starts both).
-const APP_URL = (process.env.APP_URL || "http://localhost:8080").replace(/\/+$/, "");
+const APP_URL = (process.env.APP_URL || "http://localhost:8081").replace(/\/+$/, "");
+// Chromium only allows the mic and screen capture on https or localhost. Treat APP_URL as
+// secure too, so the app works when its UI is served from another laptop over plain http.
+app.commandLine.appendSwitch("unsafely-treat-insecure-origin-as-secure", APP_URL);
 const PILL_WIDTH = 480;
 const PILL_MIN_HEIGHT = 96;
 const BOTTOM_GAP = 12;
@@ -197,11 +200,6 @@ function showMain() {
 }
 
 app.whenReady().then(async () => {
-  if (process.platform === "darwin") {
-    // Ask up front; macOS only lists screen recording in System Settings once the app has asked.
-    await systemPreferences.askForMediaAccess("microphone").catch(() => false);
-  }
-
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
     callback(permission === "media" || permission === "display-capture");
   });
@@ -222,6 +220,10 @@ app.whenReady().then(async () => {
   screen.on("display-removed", placePill);
   createMain();
   createPill();
+  // Show the interface before a permission prompt can delay startup.
+  if (process.platform === "darwin") {
+    void systemPreferences.askForMediaAccess("microphone").catch(() => false);
+  }
 });
 
 app.on("window-all-closed", () => app.quit());

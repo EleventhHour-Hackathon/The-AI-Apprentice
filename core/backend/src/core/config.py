@@ -105,6 +105,10 @@ class Config:
         "http://127.0.0.1:3001",
         "http://localhost:8080",
         "http://127.0.0.1:8080",
+        "http://localhost:8081",
+        "http://127.0.0.1:8081",
+        # The UI served to a second laptop on the network (DEV.md, USE.md).
+        "http://mithras-mbp.lan:8081",
         "https://recruiter.sivera.io",
         "https://api.sivera.io",
         "https://app.sivera.io",
