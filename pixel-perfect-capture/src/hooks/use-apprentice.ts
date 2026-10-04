@@ -279,6 +279,8 @@ export function useApprentice(options: {
 
   const setNode = useCallback((node: FlowNode) => {
     s.current.node = node;
+    // Leaving the watching phase ends any pending "Go ahead." skip.
+    if (node !== "observing" && s.current.grant === "start") s.current.grant = null;
     setState((st) => ({ ...st, node }));
   }, []);
 
@@ -707,7 +709,12 @@ export function useApprentice(options: {
                 // Asking again (after a correction): the expert's earlier answer no longer counts.
                 if (isQuestion(text)) x.teachBackReply = null;
               }
-              if (x.grant === "start") return; // "Go ahead." is not a question
+              if (x.grant === "start") {
+                // One-shot: only the "Go ahead." right after begin_observation is skipped, so later
+                // lines (live questions, the debrief, the teach-back) still reach the pill.
+                x.grant = null;
+                if (x.node === "observing" && !isQuestion(text)) return;
+              }
               if (x.pauseReply) {
                 x.pauseReply = false;
                 // Only a question counts: "Got it." at a pause is not one.
