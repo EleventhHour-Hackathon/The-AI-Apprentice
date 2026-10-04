@@ -4,7 +4,7 @@ import copy
 
 import pytest
 
-from src.services import work_map_edit
+from src.services import tutor, work_map_diff, work_map_edit
 from src.services.work_map_edit import EditError, apply, summary_for_agent
 
 WORK_MAP = {
@@ -264,15 +264,47 @@ def test_a_map_without_ids_gets_them_and_a_title():
     assert change == "Changed step s1 (Open the invoice): decision is now 'Opened'"
 
 
-@pytest.mark.xfail(
-    reason="Bug: work_map_edit._normalize numbers id-less items by position, so a map that mixes "
-    "items with and without ids can end up with two items called s2",
-    strict=True,
-)
 def test_a_map_with_some_ids_missing_keeps_them_unique():
     work_map = {"steps": [{"id": "s2", "title": "Code it"}, {"title": "Approve it"}]}
     apply(work_map, {"action": "change", "item_id": "s2", "title": "Code the account"})
     _assert_unique(work_map)
+    assert _ids(work_map["steps"]) == ["s2", "s3"]
+    assert work_map["steps"][0]["title"] == "Code the account"
+
+
+def test_an_id_less_item_before_one_with_its_id_gets_a_new_one():
+    work_map = {"steps": [{"title": "Open it"}, {"id": "s1", "title": "Code it"}]}
+    apply(work_map, {"action": "change", "item_id": "s1", "decision": "Coded"})
+    _assert_unique(work_map)
+    assert _ids(work_map["steps"]) == ["s2", "s1"]
+    assert work_map["steps"][1]["decision"] == "Coded"
+
+
+def test_guardrails_with_some_ids_missing_keep_them_unique():
+    work_map = {
+        "steps": [{"title": "Code it"}],
+        "guardrails": [{"rule": "Ask first"}, {"id": "g1", "rule": "Over 5,000 is capex"}, {}],
+    }
+    apply(work_map, {"action": "change", "item_id": "g1", "rule": "Over 10,000 is capex"})
+    _assert_unique(work_map)
+    assert _ids(work_map["guardrails"]) == ["g2", "g1", "g3"]
+    assert work_map["guardrails"][1]["rule"] == "Over 10,000 is capex"
+
+
+def test_a_map_with_no_ids_keeps_numbering_by_position():
+    work_map = {
+        "steps": [{"title": "Open it"}, {"title": "Code it"}, {"title": "Approve it"}],
+        "guardrails": [{"rule": "Ask first"}, {"rule": "Over 5,000 is capex"}],
+    }
+    as_saved = copy.deepcopy(work_map)
+    apply(work_map, {"action": "change", "item_id": "s2", "decision": "Coded"})
+    assert _ids(work_map["steps"]) == ["s1", "s2", "s3"]
+    assert _ids(work_map["guardrails"]) == ["g1", "g2"]
+    # The lesson report and the diff fall back to the same ids for a map saved without them.
+    assert work_map_diff._ids(as_saved["steps"], "s") == ["s1", "s2", "s3"]
+    assert work_map_diff._ids(as_saved["guardrails"], "g") == ["g1", "g2"]
+    lesson = tutor.report(as_saved, [])
+    assert [entry["step"] for entry in lesson["not_covered"]] == ["s1", "s2", "s3"]
 
 
 # What the agent reads back
