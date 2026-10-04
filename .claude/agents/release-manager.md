@@ -36,10 +36,8 @@ wrong, you send it back to the coordinator instead of patching it yourself.
      sentence saying what the user can now do, no prefix like `feat:`. Add a short body if it
      needs one, ending with:
      `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`
-4. Once every feature is in, run the full checks on the combined code:
-   - `cd pixel-perfect-capture && bun install && bun run lint && bun run test && bun run build`
-   - `cd core/backend && uv sync && uv run ruff check . && uv run ruff format --check .`
-   If anything fails, don't push. Find which commit broke it (`git bisect` or check out one commit
+4. Once every feature is in, run `.claude/check.sh <commit before this round>` on the combined
+   code. It must print `ALL CHECKS PASSED`. If anything fails, don't push. Find which commit broke it (`git bisect` or check out one commit
    at a time) and report it to the coordinator with the error output.
 5. When everything passes, push: `git push -u hackathon <branch>`. Never force.
 6. If a feature changed `services/apprentice_agent.py`, remind the user that the ElevenLabs agents

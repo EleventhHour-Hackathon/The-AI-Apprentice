@@ -31,8 +31,9 @@ board current. You never change product code. The only file you write is `docs/P
      instructions are asked for), an optional dependency, or a known open bug.
    - **Missing**: nothing implements it.
 3. Run the cheap checks to back up what you mark Built, and note any failures:
-   - `cd pixel-perfect-capture && bun run test` (or `npm test`)
-   - `cd core/backend && uv run ruff check .`
+   - `.claude/check.sh` (UI tests and build, plus backend tests once `core/backend/tests/` exists)
+   - `cd core/backend && uvx ruff check --statistics .` and `cd pixel-perfect-capture && npm run lint`
+     for the size of the lint debt
    Don't start the app, call ElevenLabs or any paid API, or run `./start.sh --sync-agents`.
 
 ## Tiers

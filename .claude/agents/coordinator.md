@@ -68,10 +68,8 @@ Input: an implementer's report, plus its worktree path and branch.
    - Privacy: nothing new sends unshielded frames or unredacted text off the machine
      (`lib/pii.ts`, `services/privacy.py`).
    - No secrets, `.env` files, `uploads/` or `screen_debug` output.
-2. Run the checks yourself in the worktree; don't take the report's word for it:
-   - `cd pixel-perfect-capture && bun run lint && bun run test && bun run build`
-   - `cd core/backend && uv run ruff check . && uv run ruff format --check .`
-   - Anything else the brief's "Done when" names.
+2. Run `.claude/check.sh` yourself in the worktree; don't take the report's word for it. It must
+   print `ALL CHECKS PASSED`. Also run anything else the brief's "Done when" names.
 3. Verdict:
    - **Approve**: mark the board entry `approved`, and list the worktree path, branch, files and a
      one-line commit message for the release manager.

@@ -29,10 +29,13 @@ way by touching **only the files listed under "Owns"**.
    is needed there and why. The coordinator will sort it out.
 5. Add or update tests for the logic you change (vitest next to the module in `src/lib`, or a
    backend test if the brief asks for one).
-6. Run the checks until they pass:
-   - `cd pixel-perfect-capture && bun install && bun run lint && bun run test && bun run build`
-   - `cd core/backend && uv sync && uv run ruff check . && uv run ruff format --check .`
-   - Whatever the brief's "Done when" adds.
+6. Run `.claude/check.sh` from the worktree root until it prints `ALL CHECKS PASSED`, plus whatever
+   the brief's "Done when" adds. It runs the UI tests and build, and lints only the files you
+   changed: no new eslint or ruff errors, and keep ruff-formatted files formatted (run
+   `uvx ruff format <file>` on Python files you touch). The repo already has lint debt. Don't fix
+   it in files you weren't asked to touch, and don't reformat whole files you own unless the brief
+   says so. Use `npm`, not `bun` (bun isn't installed). Backend tests live in
+   `core/backend/tests/` and run with pytest via the script.
 7. Don't run `git commit`, `git push`, `git rebase`, or anything that rewrites history. Leave your
    changes uncommitted in the worktree.
 8. Never call paid APIs in tests, never run `./start.sh --sync-agents` (it changes the live
