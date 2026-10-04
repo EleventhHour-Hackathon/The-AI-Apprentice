@@ -1,3 +1,4 @@
+import { mediaUrl } from "@/lib/backend";
 import {
   useCallback,
   useEffect,
@@ -7,10 +8,13 @@ import {
   type ReactNode,
 } from "react";
 import { AppWindow, Check, CheckCheck, Hand, Lightbulb, Monitor, Square, X } from "lucide-react";
+import { ClipPlayer } from "@/components/ClipPlayer";
 import { Button } from "@/components/ui/button";
 import { Icon, Kbd } from "@/components/Sia";
 import { VoiceWave } from "./VoiceWave";
 import { useScreenEvents } from "@/hooks/use-screen-events";
+import { usePrivacyShield } from "@/hooks/use-privacy-shield";
+import type { LanguageChoice } from "@/lib/languages";
 import { useTutor, type LessonStep } from "@/hooks/use-tutor";
 import { taskTitle } from "@/lib/work-maps";
 
@@ -24,10 +28,13 @@ const fmt = (s: number) =>
  */
 export function Tutor({
   workMapId,
+  language = "en",
   onClose,
   onOpenApp,
 }: {
   workMapId: string;
+  /** The language the tutor speaks with the new hire. */
+  language?: LanguageChoice;
   onClose: () => void;
   onOpenApp?: () => void;
 }) {
@@ -49,7 +56,7 @@ export function Tutor({
     let display: MediaStream;
     try {
       display = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: 2 },
+        video: { frameRate: 5 },
         audio: false,
       });
     } catch {
@@ -61,8 +68,8 @@ export function Tutor({
       setScreenError("Screen sharing stopped. The tutor can no longer see your work.");
     });
     setScreen(display);
-    void startTutor(workMapId);
-  }, [startTutor, workMapId]);
+    void startTutor(workMapId, language);
+  }, [startTutor, workMapId, language]);
 
   // Opened from the app's "Teach a new hire": start straight away.
   useEffect(() => {
@@ -72,12 +79,23 @@ export function Tutor({
   }, [begin]);
 
   const working = tutor.status === "connected" && !tutor.report;
-  useScreenEvents(screen, {
+  // The new hire's screen is shielded the same way: personal data never leaves the machine.
+  const shield = usePrivacyShield(screen);
+  useScreenEvents(shield.stream, {
     enabled: working,
     session: null, // lessons don't keep screen moments; the expert's are what gets replayed
     onEvent: tutor.reportScreen,
     onActivity: tutor.reportActivity,
+    beforeSample: shield.fresh,
+    // A wrong decision has to be caught before the new hire confirms it.
+    sampleIntervalMs: 1000,
   });
+  useEffect(() => {
+    if (shield.status === "failed")
+      setScreenError(
+        "The privacy shield couldn’t start, so your screen isn’t being shared. Check the connection and start again.",
+      );
+  }, [shield.status]);
 
   useEffect(() => {
     if (!working) return;
@@ -201,7 +219,9 @@ export function Tutor({
         )}
 
         {working && !expanded && tutor.task && (
-          <p className="pb-3 text-center text-[11px] text-pill-muted">Learning: {taskTitle(tutor.task)}</p>
+          <p className="pb-3 text-center text-[11px] text-pill-muted">
+            Learning: {taskTitle(tutor.task)}
+          </p>
         )}
 
         {cue?.type === "stop" && !tutor.report && (
@@ -358,20 +378,35 @@ function Answer({ heard }: { heard: string }) {
 function ExpertMoment({ step }: { step: LessonStep }) {
   return (
     <figure className="mt-3 rounded-xl bg-pill-raised p-2.5">
-      {step.thumb && (
-        <img
-          src={step.thumb}
-          alt={`The expert's screen: ${step.title}`}
-          className="w-full rounded-lg border border-pill-border object-cover object-top"
+      {step.clip ? (
+        <ClipPlayer
+          src={mediaUrl(step.clip)}
+          poster={step.thumb}
+          label={`The expert doing it: ${step.title}`}
+          autoPlay
         />
+      ) : (
+        step.thumb && (
+          <img
+            src={step.thumb}
+            alt={`The expert's screen: ${step.title}`}
+            className="w-full rounded-lg border border-pill-border object-cover object-top"
+          />
+        )
       )}
       <figcaption className="mt-2 text-xs leading-relaxed">
         <span className="font-mono text-[10px] text-pill-muted">
           THE EXPERT{step.at !== null ? ` · ${fmt(step.at)}` : ""}
         </span>
         <p className="mt-0.5">{step.decision || step.title}</p>
-        {(step.quote || step.reason) && (
-          <p className="mt-1 italic text-pill-foreground/80">“{step.quote || step.reason}”</p>
+        {/* The expert's reason; what they only said while doing it is not one. */}
+        {((step.quote_kind !== "narration" && step.quote) || step.reason) && (
+          <p className="mt-1 italic text-pill-foreground/80">
+            “{(step.quote_kind !== "narration" && step.quote) || step.reason}”
+          </p>
+        )}
+        {step.quote_kind !== "narration" && step.quote && step.quote_translation && (
+          <p className="mt-0.5 text-pill-foreground/70">{step.quote_translation}</p>
         )}
       </figcaption>
     </figure>

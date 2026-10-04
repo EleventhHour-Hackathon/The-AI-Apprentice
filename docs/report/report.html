@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tacit: the AI Apprentice · Project report</title>
+<style>
+  @page { size: A4; margin: 12mm 13mm; }
+  * { box-sizing: border-box; }
+  body { font: 9.1pt/1.38 -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif; color: #15192a; margin: 0; }
+  h1 { font: 600 19pt/1.1 Georgia, "Times New Roman", serif; margin: 0 0 1mm; letter-spacing: -0.2px; }
+  .sub { color: #4a5068; margin: 0 0 3mm; font-size: 9.6pt; }
+  h2 { font-size: 9.6pt; text-transform: uppercase; letter-spacing: 0.6px; color: #2e3a8c; margin: 3.2mm 0 1.2mm; border-bottom: 0.6px solid #d6d9e6; padding-bottom: 0.8mm; }
+  p { margin: 0 0 1.4mm; }
+  ul { margin: 0 0 1.4mm; padding-left: 4.2mm; }
+  li { margin: 0 0 0.6mm; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 6mm; }
+  table { width: 100%; border-collapse: collapse; font-size: 8.6pt; margin: 0 0 1.4mm; }
+  td { padding: 0.7mm 1.2mm; vertical-align: top; border-bottom: 0.4px solid #e4e6ef; }
+  td:first-child { font-weight: 600; white-space: nowrap; width: 31%; }
+  .links { font-size: 8.4pt; color: #2e3a8c; }
+  .links a { color: #2e3a8c; text-decoration: none; }
+  b { font-weight: 600; }
+</style>
+</head>
+<body>
+<h1>Tacit: the AI Apprentice</h1>
+<p class="sub">An apprentice that learns a desk job by watching an expert do it, asks why at the right moments, maps it into a Work Map, and teaches the next person. Hack-Nation × ElevenLabs, 7th Global AI Hackathon, Challenge 01.</p>
+
+<h2>The problem</h2>
+<p>Experienced people retire with decades of judgment that was never written down. Screen recordings show <i>what</i> was clicked, not <i>why</i>; the limits, exceptions and moments to stop and ask live only in people's heads. New hires learn them by breaking them.</p>
+
+<div class="cols">
+<div>
+<h2>What we built</h2>
+<ul>
+  <li><b>Capture.</b> The expert shares their screen in a floating pill. A vision model turns frames into events ("cost center 4711 → 0400"). An ElevenLabs voice agent stays quiet while they type, read or talk, and asks short questions at natural pauses. At least three, one about a guardrail, checked in code.</li>
+  <li><b>Map.</b> A spoken debrief closes the gaps, then a short teach-back the expert confirms. The result is a clickable Work Map: every step and guardrail linked to its screen moment, a clip, and the expert's own words.</li>
+  <li><b>Teach.</b> A voice tutor watches a new hire work a case the expert never showed, locks the practice ERP's save before a wrong decision is posted, and explains it with the expert's reasoning. It ends with mastered / practice next.</li>
+  <li><b>Sia on the Work Map.</b> A guide agent walks a learner (or reviews with the expert) step by step, focusing nodes as it talks.</li>
+</ul>
+<h2>Beyond the brief</h2>
+<ul>
+  <li><b>Two experts, one task:</b> compare two sessions, see what differs, and ask each expert why in their next session.</li>
+  <li><b>Any language:</b> 72 languages; the Work Map stays in English with the original quotes.</li>
+  <li><b>Agent-ready export</b> with every guardrail as a stop rule, and an <b>autopilot</b> that posts routine invoices and hands every judgment call to a person.</li>
+  <li><b>Living Work Map:</b> a repeat session asks only about what changed. <b>Coverage check:</b> notices a case no map covers.</li>
+</ul>
+</div>
+<div>
+<h2>The Apprentice Test</h2>
+<table>
+  <tr><td>When to ask</td><td>A floor in the pill: voice activity, pixel motion and reading time hold the floor; only a pause after an action lets the agent speak. Pace follows Settings, never below three.</td></tr>
+  <tr><td>What to ask</td><td>Each pause carries the latest screen events; a fast model skips what the screen or common practice already answers (≥ 90% sure).</td></tr>
+  <tr><td>When it has understood</td><td>The draft map's open questions drive the debrief; the teach-back is the proof, and only the expert's "yes" saves the map.</td></tr>
+  <tr><td>Whether the new hire learned</td><td>A case the expert never showed; the report is computed from what the learner did, not by an LLM.</td></tr>
+  <tr><td>Trust</td><td>Off the record (O); an on-device privacy shield paints over personal data before frames leave the machine; names redacted with Presidio.</td></tr>
+</table>
+<h2>How it's built</h2>
+<p><b>Desktop app</b> (Electron, React, TanStack, @xyflow) for macOS, Windows and Linux. <b>Backend</b> (FastAPI, Python) on Render behind an access key, with Postgres and Storage on Supabase. <b>Voice:</b> ElevenLabs Agents (apprentice, tutor, guide) with Scribe realtime and client tools; vision and merging with OpenAI. <b>Quality:</b> 482 backend and 262 UI tests, run on every change.</p>
+<h2>Data</h2>
+<p>No external datasets. Demos run on <b>Ledgerly</b>, a built-in practice ERP with synthetic supplier invoices (no real people or companies).</p>
+<h2>Moonshot</h2>
+<p>A living company memory: every expert and workflow in one map that stays current, asking only about what's new, so people keep the judgment calls and agents take the routine steps safely.</p>
+</div>
+</div>
+
+<p class="links"><b>Website &amp; downloads:</b> <a href="https://gsnmithra.github.io/tacit-app/">gsnmithra.github.io/tacit-app</a> · <b>Code:</b> <a href="https://github.com/EleventhHour-Hackathon/The-AI-Apprentice">github.com/EleventhHour-Hackathon/The-AI-Apprentice</a> · <b>Videos:</b> <a href="https://youtu.be/CDk9xKfkDSE">pitch</a>, <a href="https://youtu.be/VZDgWwMC0fk">team</a>, <a href="https://youtu.be/EOa8bZaofmk">demo</a></p>
+</body>
+</html>

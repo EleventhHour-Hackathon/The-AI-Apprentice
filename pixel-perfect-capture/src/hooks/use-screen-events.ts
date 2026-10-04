@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
-import { BACKEND_URL } from "@/lib/backend";
+import { backendFetch } from "@/lib/backend";
 import type { ScreenKind } from "@/lib/floor";
 
 /** How often we look at the screen with the vision model. */
@@ -25,7 +25,12 @@ const DIFF_THRESHOLD = 2.0;
 const ACTIVITY_PIXELS = 3;
 const ACTIVITY_DELTA = 28;
 
-export type ScreenEvent = { event: string; kind: ScreenKind };
+export type ScreenEvent = {
+  event: string;
+  kind: ScreenKind;
+  /** Date.now() when the frame was grabbed, before the vision call. */
+  capturedAt?: number;
+};
 type VisionResult = {
   description: string;
   event: string | null;
@@ -62,6 +67,13 @@ export function useScreenEvents(
     session: { id: string; clock: () => number } | null;
     onEvent: (event: ScreenEvent) => void;
     onActivity: () => void;
+    /**
+     * Awaited before a frame is taken; false skips the sample. The privacy shield uses it
+     * to make sure what is on screen now has been scanned (see use-privacy-shield).
+     */
+    beforeSample?: () => Promise<boolean>;
+    /** How often to look with the vision model; the tutor looks more often, to step in in time. */
+    sampleIntervalMs?: number;
   },
 ) {
   const latest = useRef(options);
@@ -127,13 +139,16 @@ export function useScreenEvents(
       if (previous && luminanceDiff(current, previous).mean <= DIFF_THRESHOLD) return;
 
       inFlightRef.current = true;
-      const session = latest.current.session;
-      const t = session?.clock() ?? 0;
       try {
+        const ready = (await latest.current.beforeSample?.()) ?? true;
+        if (!ready || cancelled || !latest.current.enabled) return;
+        const session = latest.current.session;
+        const t = session?.clock() ?? 0;
         frameCanvas.width = FRAME_WIDTH;
         frameCanvas.height = Math.round(element.videoHeight * (FRAME_WIDTH / element.videoWidth));
+        const capturedAt = Date.now();
         frameCtx.drawImage(element, 0, 0, frameCanvas.width, frameCanvas.height);
-        const response = await fetch(`${BACKEND_URL}/api/v1/screen_event`, {
+        const response = await backendFetch("/api/v1/screen_event", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -153,7 +168,7 @@ export function useScreenEvents(
             : `[screen] sees: ${result.description}`,
         );
         if (cancelled || !latest.current.enabled || !result.changed || !result.event) return;
-        latest.current.onEvent({ event: result.event, kind: result.kind ?? "action" });
+        latest.current.onEvent({ event: result.event, kind: result.kind ?? "action", capturedAt });
       } catch {
         // A dropped frame is not worth interrupting the session over.
       } finally {
@@ -162,7 +177,10 @@ export function useScreenEvents(
     };
 
     const activityTimer = setInterval(watchActivity, ACTIVITY_INTERVAL_MS);
-    const sampleTimer = setInterval(() => void sample(), SAMPLE_INTERVAL_MS);
+    const sampleTimer = setInterval(
+      () => void sample(),
+      latest.current.sampleIntervalMs ?? SAMPLE_INTERVAL_MS,
+    );
     return () => {
       cancelled = true;
       clearInterval(activityTimer);

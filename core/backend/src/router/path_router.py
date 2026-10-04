@@ -1,13 +1,21 @@
+import math
 import uuid
-from typing import Any, Dict, List
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 
-from src.services import apprentice_agent, brain, tutor
+from src.services import agent_export, apprentice_agent, brain, recordings, tutor
 from src.services.screen_vision import get_backend as get_vision_backend, log_frame
+from src.services import follow_ups, live_questions, living_map, work_map_edit, work_map_links
+from src.services import infer as infer_service, work_map_update
+from src.services.privacy import redact, redact_deep
 from src.services.work_map_merge import brief_for_agent, merge
 from src.utils.logger import logger
 from storage import lessons as lesson_store
+from storage import media as media_store
 from storage import work_maps as work_map_store
 
 router = APIRouter(
@@ -35,7 +43,7 @@ def _store_unavailable(e: Exception) -> HTTPException:
 
 @router.get("/agent/token")
 def agent_token(role: str = "apprentice"):
-    """A WebRTC token for one conversation with an agent on ElevenLabs: the apprentice or the tutor."""
+    """A WebRTC token for one conversation with an ElevenLabs agent: apprentice, tutor or guide."""
     if role not in apprentice_agent.ROLES:
         raise HTTPException(status_code=404, detail="No such agent")
     try:
@@ -75,6 +83,9 @@ async def screen_event(payload: dict = Body(...)):
         logger.error(f"Screen understanding failed: {e}")
         raise HTTPException(status_code=502, detail="Screen understanding failed")
 
+    # The shield already hid personal data in the frame; this catches anything the model still wrote.
+    result = {**result, "event": redact(result["event"]) if result.get("event") else result.get("event"),
+              "description": redact(result.get("description") or "")}
     log_frame(frame, result, type(backend).__name__)
 
     session_id = payload.get("session_id")
@@ -100,13 +111,54 @@ async def screen_event(payload: dict = Body(...)):
 
 @router.post("/sessions/{session_id}/start")
 def start_session(session_id: str, payload: dict = Body(default={})):
+    """Open a session. With parent_work_map_id ("Record again"), the debrief first asks the
+    questions kept for the expert on that Work Map; the first parent given is the one kept."""
+    session_id = _uuid(session_id)
+    parent = payload.get("parent_work_map_id")
+    if parent:
+        parent = _uuid(parent, "Work Map")
+        if parent == session_id:
+            detail = "A session can't be recorded again from itself"
+            raise HTTPException(status_code=422, detail=detail)
     try:
-        work_map_store.start_session(_uuid(session_id), payload.get("conversation_id"))
+        if parent:
+            parent_row = work_map_store.get(parent)
+            if parent_row is None or parent_row.get("status") == "recording":
+                raise HTTPException(status_code=404, detail="Work Map not found")
+        work_map_store.start_session(session_id, payload.get("conversation_id"))
+        if parent:
+            row = work_map_store.get(session_id) or {}
+            # The pill posts start twice (before and after connecting): one parent capture only.
+            if follow_ups.parent_of(row.get("captures") or []) is None:
+                capture = {"kind": follow_ups.PARENT, "work_map_id": parent}
+                work_map_store.add_capture(session_id, capture)
     except HTTPException:
         raise
     except Exception as e:
         raise _store_unavailable(e)
     return {"ok": True}
+
+
+@router.delete("/sessions/{session_id}")
+def discard_session(session_id: str):
+    """Drop a session that ended with nothing to save: its row, screen moments and recording.
+
+    Only sessions still 'recording' (never merged into a Work Map) can be discarded this way.
+    """
+    session_id = _uuid(session_id)
+    try:
+        session = work_map_store.get(session_id)
+        if session is None:
+            return {"deleted": None}
+        if session.get("status") != "recording":
+            raise HTTPException(status_code=409, detail="This session already has a Work Map")
+        recordings.delete(session_id)
+        work_map_store.delete(session_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _store_unavailable(e)
+    return {"deleted": session_id}
 
 
 @router.post("/sessions/{session_id}/task")
@@ -125,8 +177,20 @@ def set_task(session_id: str, payload: dict = Body(...)):
 @router.post("/sessions/{session_id}/capture")
 def add_capture(session_id: str, payload: dict = Body(...)):
     """Something the agent recorded live through a client tool (record_step, record_guardrail, ...)."""
+    # Follow-up questions and living updates have their own endpoints, so a client tool can't
+    # forge them.
+    reserved = (
+        follow_ups.QUESTION,
+        follow_ups.WITHDRAWN,
+        follow_ups.DELIVERED,
+        follow_ups.PARENT,
+        follow_ups.LIVING_UPDATE,
+        follow_ups.LIVING_APPLIED,
+    )
+    if payload.get("kind") in reserved:
+        raise HTTPException(status_code=422, detail="That kind of capture can't be recorded here")
     try:
-        found = work_map_store.add_capture(_uuid(session_id), payload)
+        found = work_map_store.add_capture(_uuid(session_id), redact_deep(payload))
     except HTTPException:
         raise
     except Exception as e:
@@ -136,17 +200,94 @@ def add_capture(session_id: str, payload: dict = Body(...)):
     return {"ok": True}
 
 
+@router.post("/sessions/{session_id}/live_question")
+async def add_live_question(session_id: str, payload: dict = Body(...)):
+    """A question the apprentice asked at a pause while the expert worked.
+
+    Body: {"text", "t"}. Returns {"kind": "guardrail"|"reason"|"other"}, so the pill knows
+    whether the guardrail question has been asked yet.
+    """
+    session_id = _uuid(session_id)
+    text = redact(str(payload.get("text") or "").strip())
+    t = payload.get("t")
+    if not text or not isinstance(t, (int, float)):
+        raise HTTPException(status_code=422, detail="A live question needs its text and time")
+    kind = await live_questions.classify(text)
+    capture = {"kind": "live_question", "text": text, "t": round(float(t), 2), "question_kind": kind, "phase": "live"}
+    try:
+        found = await run_in_threadpool(work_map_store.add_capture, session_id, capture)
+    except Exception as e:
+        raise _store_unavailable(e)
+    if not found:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"kind": kind}
+
+
+@router.post("/sessions/{session_id}/live_question/defer")
+def defer_live_question(session_id: str, payload: dict = Body(...)):
+    """The expert put a live question off for the debrief ("Later"): it no longer counts as asked."""
+    t = payload.get("t")
+    if not isinstance(t, (int, float)):
+        raise HTTPException(status_code=422, detail="Which question: give its time t")
+    try:
+        found = work_map_store.defer_live_question(_uuid(session_id), round(float(t), 2))
+    except Exception as e:
+        raise _store_unavailable(e)
+    return {"deferred": found}
+
+
+@router.post("/sessions/{session_id}/infer")
+async def infer_reasons(session_id: str, payload: dict = Body(...)):
+    """At a pause: which recent actions' reasons are already clear, so the apprentice doesn't ask.
+
+    Body: {"events": [str], "transcript": [{"role": "expert"|"apprentice", "text"}]}.
+    Returns {"clear": [{"about", "answer", "confidence"}], "unclear": [str], "skip": bool}.
+    """
+    session_id = _uuid(session_id)
+    events = [str(e) for e in payload.get("events") or [] if isinstance(e, str)]
+    transcript = [
+        {"role": line.get("role"), "text": str(line.get("text") or "")}
+        for line in payload.get("transcript") or []
+        if isinstance(line, dict) and line.get("role") in ("expert", "apprentice")
+    ]
+    try:
+        session = await run_in_threadpool(work_map_store.get, session_id)
+    except Exception as e:
+        raise _store_unavailable(e) from e
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    # What the apprentice already learned: its live records, and the map it was recorded
+    # again from, if any.
+    known: Dict[str, Any] = {"captures": follow_ups.for_merge(session.get("captures") or [])}
+    if session.get("steps") or session.get("guardrails"):
+        known.update(steps=session.get("steps") or [], guardrails=session.get("guardrails") or [])
+    else:
+        parent_id = follow_ups.parent_of(session.get("captures") or [])
+        try:
+            parent = await run_in_threadpool(work_map_store.get, parent_id) if parent_id else None
+        except Exception as e:
+            logger.warning(f"Couldn't read Work Map {parent_id} for what is already known: {e}")
+            parent = None
+        if parent:
+            known.update(
+                steps=parent.get("steps") or [], guardrails=parent.get("guardrails") or []
+            )
+    return await infer_service.infer(events, transcript, known)
+
+
 @router.post("/sessions/{session_id}/merge")
 async def merge_session(session_id: str, payload: dict = Body(...)):
     """Merge the session into a Work Map: the draft for the debrief, or the final confirmed map.
 
     Body: {"transcript": [{"role": "expert"|"apprentice", "text", "t", "phase"}],
-           "final": bool, "duration": seconds}
+           "final": bool, "duration": seconds,
+           "confirmation": {"teach_back", "said", "t"}}
+    confirmation (final only): the teach-back and the expert's words confirming it.
     """
     session_id = _uuid(session_id)
     final = bool(payload.get("final"))
     transcript: List[Dict[str, Any]] = [
-        line
+        {**line, "text": redact(line["text"])}
         for line in payload.get("transcript") or []
         if isinstance(line, dict) and line.get("role") in ("expert", "apprentice") and line.get("text")
     ]
@@ -160,12 +301,36 @@ async def merge_session(session_id: str, payload: dict = Body(...)):
     except Exception as e:
         raise _store_unavailable(e)
 
+    # Recorded again from another Work Map ("Record again"): the questions kept there for this
+    # expert lead the debrief, and are marked delivered there once the new map is confirmed.
+    parent_id = follow_ups.parent_of(session.get("captures") or [])
+    parent: Optional[Dict[str, Any]] = None
+    pending: List[Dict[str, Any]] = []
+    if parent_id:
+        # Either way the session still merges and saves, just without the kept questions.
+        try:
+            parent = work_map_store.get(parent_id)
+            if parent is None:
+                logger.warning(f"Work Map {parent_id}, recorded again from, is gone")
+        except Exception as e:
+            logger.warning(f"Couldn't read Work Map {parent_id}, recorded again from: {e}")
+            parent = None
+        if parent is None:
+            parent_id = None
+        else:
+            # Redacted again: these go to the agent and back to the UI.
+            kept = follow_ups.pending(parent.get("captures") or [])
+            pending = [{**q, "text": redact(q["text"])} for q in kept]
+
     try:
         work_map = await merge(
             task=session.get("task"),
             events=events,
             transcript=transcript,
-            captures=session.get("captures") or [],
+            # Live questions are the apprentice's and follow-up questions belong to the expert's
+            # next session, so neither is what the apprentice learned; the transcript has the live
+            # ones.
+            captures=follow_ups.for_merge(session.get("captures") or []),
             final=final,
             # What the apprentice knew going in, so this map extends it rather
             # than replacing it, and answered questions stop coming back.
@@ -176,16 +341,130 @@ async def merge_session(session_id: str, payload: dict = Body(...)):
         raise HTTPException(status_code=502, detail="Couldn't merge the Work Map")
 
     work_map.update(
-        task=session.get("task"),
+        # The merge names the task in English, the Work Map's language; else the expert's words.
+        task=(work_map.get("task") or "").strip() or session.get("task"),
         transcript=transcript,
         duration=payload.get("duration"),
         corrections=[c["correction"] for c in session.get("captures") or [] if c.get("kind") == "correction"],
     )
+    confirmation = payload.get("confirmation")
+    if (
+        final
+        and isinstance(confirmation, dict)
+        and isinstance(confirmation.get("teach_back"), str)
+        and isinstance(confirmation.get("said"), str)
+        and isinstance(confirmation.get("t"), (int, float))
+        and not isinstance(confirmation.get("t"), bool)
+        # JSON allows Infinity and NaN; jsonb doesn't.
+        and math.isfinite(confirmation["t"])
+        and confirmation["t"] >= 0
+    ):
+        # The teach-back the expert confirmed, and their words confirming it.
+        work_map["confirmation"] = {
+            "teach_back": redact(confirmation["teach_back"]),
+            "said": redact(confirmation["said"]),
+            "t": round(float(confirmation["t"]), 2),
+        }
+    # Recorded again from a confirmed map: what would change on it, so the debrief asks only
+    # about that, and the confirmed result is kept for someone to apply to that map.
+    living: Optional[Dict[str, Any]] = None
+    if parent is not None and parent.get("status") == "confirmed":
+        try:
+            living = work_map_update.update(parent, work_map)
+        except Exception as e:
+            logger.warning(f"Couldn't update Work Map {parent_id} from session {session_id}: {e}")
+    if living is not None and not final:
+        # Kept questions first, then what changed, then the draft's own gaps.
+        work_map["open_questions"] = follow_ups.lead_with(pending, living["map"]["open_questions"])
+    elif pending and not final:
+        work_map["open_questions"] = follow_ups.lead_with(pending, work_map["open_questions"])
     try:
         work_map_store.save_map(session_id, work_map, "confirmed" if final else "draft")
     except Exception as e:
         raise _store_unavailable(e)
-    return {**work_map, "brief": brief_for_agent(work_map)}
+    if pending and final:
+        # The debrief asked what its saved draft listed; anything kept later stays pending.
+        asked = session.get("open_questions") or []
+        now = datetime.now(timezone.utc)
+        try:
+            for c in follow_ups.delivered(pending, asked, session_id, now):
+                work_map_store.add_capture(parent_id, c)
+        except Exception as e:
+            # The new map is saved; the questions are asked again next time at worst.
+            logger.error(f"Couldn't mark follow-up questions delivered on {parent_id}: {e}")
+    if living is not None and final:
+        now = datetime.now(timezone.utc)
+        try:
+            kept = living_map.capture(parent_id, parent, living, now)
+            if not work_map_store.add_capture(session_id, kept):
+                raise LookupError("the session is gone")
+        except Exception as e:
+            # The session's own map is saved; there is just no update to apply.
+            logger.error(f"Couldn't keep the update for Work Map {parent_id} on {session_id}: {e}")
+            living = None
+    response = {
+        **work_map,
+        "brief": brief_for_agent(work_map),
+        "summary": work_map_edit.summary_for_agent(work_map),
+    }
+    if living is not None:
+        response["living_update"] = {"parent_work_map_id": parent_id, "changes": living["changes"]}
+    return response
+
+
+def _saved_map(session_id: str) -> Dict[str, Any]:
+    session = work_map_store.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.get("status") == "recording":
+        raise HTTPException(status_code=409, detail="No Work Map saved yet: it is saved when the debrief starts")
+    return session
+
+
+@router.get("/sessions/{session_id}/summary")
+def work_map_summary(session_id: str):
+    """The saved Work Map as the apprentice reads it back, with an id for every step and rule."""
+    try:
+        return {"summary": work_map_edit.summary_for_agent(_saved_map(_uuid(session_id)))}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _store_unavailable(e)
+
+
+@router.post("/sessions/{session_id}/edit")
+def edit_work_map(session_id: str, payload: dict = Body(...)):
+    """Change, remove or add a step or rule because the expert asked to, by voice.
+
+    Body: {"action": "change"|"remove"|"add", "item_id": "s2"|"g1", "what": "step"|"rule" (for add),
+           "title"/"decision"/"reason" or "rule"/"kind"/"applies_when"/"ask_whom", "said", "after_id", "t"}
+    The change is saved over the map and kept as a correction, so a later merge keeps it too.
+    """
+    payload = redact_deep(payload)
+    session_id = _uuid(session_id)
+    try:
+        session = _saved_map(session_id)
+        before = {id(i) for i in [*(session.get("steps") or []), *(session.get("guardrails") or [])]}
+        try:
+            work_map, change, stale = work_map_edit.apply(session, payload)
+        except work_map_edit.EditError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        # Something added by voice borrows the screen moment of the step it is about.
+        for item in [*(work_map.get("steps") or []), *(work_map.get("guardrails") or [])]:
+            if id(item) not in before:
+                work_map_links.link_added(work_map, item, str(payload.get("after_id") or ""))
+        work_map["corrections"] = [*(work_map.get("corrections") or []), change]
+        work_map_store.save_map(session_id, work_map, session["status"])
+        work_map_store.add_capture(
+            session_id,
+            {"kind": "correction", "correction": change, "quote": payload.get("said") or "", "t": payload.get("t"), "phase": "debrief"},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _store_unavailable(e)
+    logger.info(f"Work Map {session_id} edited: {change}")
+    return {"change": change, "stale": stale, "summary": work_map_edit.summary_for_agent(work_map)}
 
 
 @router.get("/work_maps")
@@ -206,31 +485,109 @@ def get_work_map(work_map_id: str):
         if work_map is None:
             raise HTTPException(status_code=404, detail="Work Map not found")
         events = work_map_store.screen_events(work_map_id, with_thumbs=True)
+        segments = media_store.recordings(work_map_id)
     except HTTPException:
         raise
     except Exception as e:
         raise _store_unavailable(e)
 
-    work_map.pop("captures", None)
-    return _with_moments(work_map, events)
+    work_map["live_questions"] = live_questions.from_captures(work_map.pop("captures", None) or [])
+    return _with_moments(work_map_id, work_map, events, segments)
 
 
-def _with_moments(work_map: Dict[str, Any], events: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Attach each step's and guardrail's screen moment (event and thumbnail)."""
+def _stored_map(work_map_id: str) -> Dict[str, Any]:
+    work_map_id = _uuid(work_map_id, "Work Map")
+    try:
+        work_map = work_map_store.get(work_map_id)
+    except Exception as e:
+        raise _store_unavailable(e) from e
+    if work_map is None:
+        raise HTTPException(status_code=404, detail="Work Map not found")
+    return work_map
+
+
+@router.get("/work_maps/{work_map_id}/agent.md")
+def get_agent_markdown(work_map_id: str):
+    """The Work Map as a Markdown system prompt another agent can load, as a download."""
+    work_map = _stored_map(work_map_id)
+    name = agent_export.filename(work_map)
+    return PlainTextResponse(
+        agent_export.to_markdown(work_map),
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )
+
+
+@router.get("/work_maps/{work_map_id}/agent.json")
+def get_agent_json(work_map_id: str):
+    """The same instructions as structured JSON, for tool-using agents."""
+    return agent_export.to_json(_stored_map(work_map_id))
+
+
+def _with_moments(
+    session_id: str,
+    work_map: Dict[str, Any],
+    events: List[Dict[str, Any]],
+    segments: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Attach each step's and guardrail's screen moment (event, thumbnail and, if recorded, a clip)."""
     # Merged times are snapped to screen events, so an exact match finds the moment.
     by_time = {e["t"]: e for e in events}
+    windows = recordings.item_windows(work_map)
     for item in [*(work_map.get("steps") or []), *(work_map.get("guardrails") or [])]:
-        moment = by_time.get(item.get("at")) if isinstance(item, dict) else None
+        if not isinstance(item, dict):
+            continue
+        if item.get("from_session"):
+            # Applied from a repeat session: its "at" is a moment of that recording, not this one.
+            continue
+        moment = by_time.get(item.get("at"))
         if moment:
             item["thumb"] = moment.get("thumb")
             item["event"] = moment.get("event")
+        window = windows.get(id(item))
+        if window and recordings.covering(segments, item.get("at"), *window):
+            begin, stop = window
+            item["clip"] = (
+                f"/api/v1/sessions/{session_id}/clip?at={item['at']:.2f}&start={begin:.2f}&end={stop:.2f}"
+            )
     return work_map
+
+
+@router.post("/sessions/{session_id}/recordings")
+async def upload_recording(session_id: str, start: float, end: float, request: Request):
+    """One segment of the screen recording (webm), from `start` to `end` on the session clock."""
+    session_id = _uuid(session_id)
+    data = await request.body()
+    try:
+        await run_in_threadpool(recordings.save_segment, session_id, start, end, data)
+    except recordings.RecordingError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True}
+
+
+@router.get("/sessions/{session_id}/clip")
+async def get_clip(session_id: str, at: float, start: Optional[float] = None, end: Optional[float] = None):
+    """The screen recording of one subtask (start to end, around the moment at), as mp4:
+    a short-lived Storage link. Without start and end, the few seconds leading up to at."""
+    session_id = _uuid(session_id)
+    if start is None or end is None:
+        start, end = recordings.clip_window(at)
+    try:
+        kind, where = await recordings.clip(session_id, at, start, end)
+    except (recordings.RecordingError, media_store.StorageError) as e:
+        logger.warning(f"No clip at {at} for {session_id}: {e}")
+        raise HTTPException(status_code=404, detail="No recording of this moment")
+    if kind == "url":
+        return RedirectResponse(where, status_code=302)
+    return FileResponse(where, media_type="video/mp4", headers={"Cache-Control": "max-age=3600"})
 
 
 @router.delete("/work_maps/{work_map_id}")
 def delete_work_map(work_map_id: str):
     work_map_id = _uuid(work_map_id, "Work Map")
     try:
+        # Video first: once the row is gone, nothing records where it was.
+        recordings.delete(work_map_id)
         deleted = work_map_store.delete(work_map_id)
     except Exception as e:
         raise _store_unavailable(e)
@@ -269,13 +626,14 @@ def start_lesson(payload: dict = Body(...)):
         if not work_map.get("steps"):
             raise HTTPException(status_code=422, detail="This Work Map has no steps to teach yet")
         events = work_map_store.screen_events(work_map_id, with_thumbs=True)
+        segments = media_store.recordings(work_map_id)
         lesson_store.create(lesson_id, work_map_id)
     except HTTPException:
         raise
     except Exception as e:
         raise _store_unavailable(e)
     _lesson_maps[lesson_id] = work_map
-    with_moments = _with_moments(dict(work_map), events)
+    with_moments = _with_moments(work_map_id, dict(work_map), events, segments)
     return {
         "lesson_id": lesson_id,
         "task": work_map.get("task") or "the task",
@@ -303,7 +661,7 @@ async def check_lesson_event(lesson_id: str, payload: dict = Body(...)):
     Body: {"event": str, "history": [{"t", "event"}], "open_flags": [{"step", "what_happened"}]}
     """
     lesson_id = _uuid(lesson_id, "Lesson")
-    event = str(payload.get("event") or "").strip()
+    event = redact(str(payload.get("event") or "").strip())
     if not event:
         raise HTTPException(status_code=400, detail="Missing 'event'")
     try:
@@ -325,7 +683,7 @@ async def check_lesson_event(lesson_id: str, payload: dict = Body(...)):
 def add_lesson_attempt(lesson_id: str, payload: dict = Body(...)):
     """Something that counts towards mastery: a prediction, an intervention, a fix or a step done right."""
     try:
-        found = lesson_store.add_attempt(_uuid(lesson_id, "Lesson"), payload)
+        found = lesson_store.add_attempt(_uuid(lesson_id, "Lesson"), redact_deep(payload))
     except HTTPException:
         raise
     except Exception as e:
@@ -344,7 +702,7 @@ def finish_lesson(lesson_id: str, payload: dict = Body(default={})):
         if lesson is None:
             raise HTTPException(status_code=404, detail="Lesson not found")
         result = tutor.report(_lesson_map(lesson_id), lesson.get("attempts") or [])
-        lesson_store.finish(lesson_id, payload.get("transcript") or [], result)
+        lesson_store.finish(lesson_id, redact_deep(payload.get("transcript") or []), result)
     except HTTPException:
         raise
     except Exception as e:

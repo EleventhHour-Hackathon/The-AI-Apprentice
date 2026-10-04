@@ -1,21 +1,23 @@
 import { useEffect, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { BookOpen, Eye, EyeOff, Mic, PictureInPicture2, Settings } from "lucide-react";
+import { AppHeader } from "@/components/AppHeader";
 import { Button } from "@/components/ui/button";
 import { Sia } from "@/components/Sia";
 import { Tutor } from "@/components/Tutor";
 import { desktop } from "@/lib/desktop";
+import { lessonRef, parseLessonRef } from "@/lib/languages";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "AI Apprentice" },
+      { title: "Studio · Tacit" },
       {
         name: "description",
         content:
           "An apprentice that watches you work, asks why at the right moments, and writes down what it learned.",
       },
-      { property: "og:title", content: "AI Apprentice" },
+      { property: "og:title", content: "Tacit" },
       {
         property: "og:description",
         content: "Learns a job by watching an expert do it, then debriefs by voice.",
@@ -36,7 +38,9 @@ function Index() {
   const [lesson, setLesson] = useState<string | null>(null);
   useEffect(() => {
     setShell(desktop() ? "desktop" : "web");
-    setLesson(new URLSearchParams(window.location.search).get("lesson"));
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get("lesson");
+    setLesson(id && lessonRef(id, parseLessonRef(`@${params.get("lang") ?? "en"}`).language));
   }, []);
   const endLesson = () => {
     setLesson(null);
@@ -55,51 +59,85 @@ function Index() {
     desktop()?.pill("pill-only");
     setPillShown(true);
   };
-  const comingSoon = (what: string) => setNotice(`${what} is not built yet.`);
 
   return (
     <main className="flex min-h-screen flex-col bg-background">
-      <header className="flex h-12 items-center border-b bg-card px-5 text-sm font-semibold">
-        AI Apprentice
+      <AppHeader>
         {shell === "desktop" && (
-          <Button variant="ghost" size="sm" className="ml-auto" onClick={switchToPill}>
+          <Button variant="ghost" size="sm" className="rounded-full" onClick={switchToPill}>
             <PictureInPicture2 size={14} />
             Switch to pill
           </Button>
         )}
-      </header>
+      </AppHeader>
       <div className="flex flex-1 items-center justify-center px-6 pb-32">
-        <div className="max-w-md text-center">
-          <h1 className="text-2xl font-semibold tracking-tight">Work as you normally would.</h1>
-          <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-            Start a session and the apprentice watches your screen quietly, asks why at natural
-            pauses, then debriefs with you by voice and writes up a Work Map.
+        <div className="max-w-lg text-center">
+          <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+            Studio
           </p>
-          <div className="mt-6 grid grid-cols-2 gap-2">
-            <Button onClick={start}>
+          <h1 className="mt-3 font-display text-5xl leading-[1.05] tracking-tight">
+            Work as you <em>normally</em> would.
+          </h1>
+          <p className="mx-auto mt-4 max-w-md text-[15px] leading-relaxed text-muted-foreground">
+            Start a session and Tacit watches your screen quietly, asks why at natural pauses, then
+            debriefs with you by voice and writes up a Work Map.
+          </p>
+          <div className="mx-auto mt-8 grid max-w-md grid-cols-2 gap-2">
+            <Button size="lg" className="col-span-2 rounded-full" onClick={start}>
               <Mic size={14} />
               Start session
             </Button>
-            <Button variant="outline" disabled={shell !== "desktop"} onClick={togglePill}>
+            <Button
+              variant="outline"
+              className="rounded-full"
+              disabled={shell !== "desktop"}
+              onClick={togglePill}
+            >
               {pillShown ? <EyeOff size={14} /> : <Eye size={14} />}
               {pillShown ? "Hide pill" : "Show pill"}
             </Button>
-            <Button variant="outline" asChild>
+            <Button variant="outline" className="rounded-full" asChild>
               <Link to="/work-maps">
                 <BookOpen size={14} />
                 Work Maps
               </Link>
             </Button>
-            <Button variant="outline" onClick={() => comingSoon("Settings")}>
-              <Settings size={14} />
-              Settings
+            <Button variant="outline" className="rounded-full" asChild>
+              <Link to="/settings">
+                <Settings size={14} />
+                Settings
+              </Link>
             </Button>
           </div>
           {notice && <p className="mt-4 text-xs text-muted-foreground">{notice}</p>}
+          <p className="mt-6 text-xs text-muted-foreground">
+            No workflow of your own?{" "}
+            <button
+              className="underline underline-offset-2 hover:text-foreground"
+              title="A practice ERP with the challenge's invoices; share its window"
+              onClick={() => window.open("/sandbox", "ledgerly", "width=1280,height=860")}
+            >
+              Open the practice ERP
+            </button>{" "}
+            (expert set) or{" "}
+            <button
+              className="underline underline-offset-2 hover:text-foreground"
+              onClick={() =>
+                window.open("/sandbox?set=newhire", "ledgerly", "width=1280,height=860")
+              }
+            >
+              the new hire’s case
+            </button>
+            .
+          </p>
         </div>
       </div>
       {shell === "web" &&
-        (lesson ? <Tutor workMapId={lesson} onClose={endLesson} /> : <Sia onLesson={setLesson} />)}
+        (lesson ? (
+          <Tutor {...parseLessonRef(lesson)} onClose={endLesson} />
+        ) : (
+          <Sia onLesson={setLesson} />
+        ))}
     </main>
   );
 }
