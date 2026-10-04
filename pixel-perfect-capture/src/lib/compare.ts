@@ -6,6 +6,7 @@ import {
   type DiffQuestion,
   type DiffSection,
   type DiffWords,
+  type FollowUp,
   type GuardKind,
   type WorkMapDiff,
   type WorkMapSummary,
@@ -197,3 +198,16 @@ export const questionsFor = (
   response: { questions?: Partial<Record<"a" | "b", DiffQuestion[]>> | null } | null | undefined,
   side: "a" | "b",
 ): DiffQuestion[] => list(response?.questions?.[side]);
+
+export type FollowUpState = "waiting" | "can_ask";
+
+/** Per question id: "waiting" when it is already kept for the expert's next session, else "can_ask". */
+export const followUpState = (
+  questions: DiffQuestion[],
+  pending: FollowUp[] | null | undefined,
+): Record<string, FollowUpState> => {
+  const waiting = new Set((pending ?? []).map((p) => p.question_id));
+  return Object.fromEntries(
+    questions.map((q) => [q.id, waiting.has(q.id) ? "waiting" : "can_ask"]),
+  );
+};

@@ -4,8 +4,14 @@ import {
   agentExportUrl,
   diffError,
   fetchAgentInstructions,
+  fetchFollowUps,
   fetchWorkMapDiff,
   fileSlug,
+  followUpError,
+  postFollowUps,
+  withdrawFollowUp,
+  type DiffQuestion,
+  type FollowUp,
 } from "./work-maps";
 import source from "./work-maps.ts?raw";
 
@@ -136,5 +142,130 @@ describe("fetchWorkMapDiff", () => {
     await expect(fetchWorkMapDiff(id, "b")).rejects.toThrow(
       "Session B no longer exists. Pick another one.",
     );
+  });
+});
+
+describe("followUpError", () => {
+  it("says what went wrong in words", () => {
+    expect(followUpError(404, "No such question waiting")).toBe(
+      "That question is no longer waiting.",
+    );
+    expect(followUpError(404, "Work Map not found")).toBe("That session no longer exists.");
+    expect(followUpError(422, "A question needs its text")).toBe("A question needs its text");
+    expect(followUpError(422, [{ msg: "too long" }])).toBe(
+      "The question couldn’t be kept: it is too long or incomplete.",
+    );
+    expect(followUpError(503, "Work Map storage is unavailable")).toBe(
+      "Work Map storage (Supabase) is unavailable.",
+    );
+    expect(followUpError(500, null)).toBe("The backend answered 500.");
+  });
+});
+
+describe("follow-up questions", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const other = "0a1b2c3d-4e5f-4a5b-8c7d-6e5f4a3b2c1d";
+  const base = `${BACKEND_URL}/api/v1/work_maps/${id}/follow_up_questions`;
+  const pending: FollowUp[] = [
+    {
+      question_id: "guardrails:g1:g1:numbers",
+      text: "Why 10,000?",
+      quote: "",
+      from: other,
+      added_at: "2026-10-04T10:00:00+00:00",
+    },
+  ];
+  const question = (n: number, text = `Why ${n}?`, quote = ""): DiffQuestion => ({
+    id: `steps:-:s${n}:only`,
+    section: "steps",
+    item: `s${n}`,
+    other: null,
+    field: "only",
+    text,
+    quote,
+  });
+
+  it("lists what is waiting", async () => {
+    const fetch = vi.fn().mockResolvedValue(Response.json({ questions: pending }));
+    vi.stubGlobal("fetch", fetch);
+    expect(await fetchFollowUps(id)).toEqual(pending);
+    expect(fetch.mock.calls[0]![0]).toBe(base);
+    expect(fetch.mock.calls[0]![1]?.method ?? "GET").toBe("GET");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({})));
+    expect(await fetchFollowUps(id)).toEqual([]);
+  });
+
+  it("keeps questions with their text and quote cut to 300 characters", async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValue(Response.json({ added: ["steps:-:s1:only"], questions: pending }));
+    vi.stubGlobal("fetch", fetch);
+    const long = "x".repeat(400);
+    const result = await postFollowUps(id, [question(1, `  ${long}`, long)], other);
+    expect(result).toEqual({ added: ["steps:-:s1:only"], questions: pending });
+    const [url, init] = fetch.mock.calls[0]!;
+    expect(url).toBe(base);
+    expect(init.method).toBe("POST");
+    expect(init.headers).toEqual({ "Content-Type": "application/json" });
+    expect(JSON.parse(init.body)).toEqual({
+      questions: [
+        {
+          id: "steps:-:s1:only",
+          text: "x".repeat(300),
+          quote: "x".repeat(300),
+          from_work_map_id: other,
+        },
+      ],
+    });
+  });
+
+  it("sends at most 10, skips empty ones, and never sends none", async () => {
+    const fetch = vi.fn().mockResolvedValue(Response.json({ added: [], questions: [] }));
+    vi.stubGlobal("fetch", fetch);
+    const many = Array.from({ length: 12 }, (_, i) => question(i + 1));
+    await postFollowUps(id, [question(0, "  "), ...many], other);
+    const sent = JSON.parse(fetch.mock.calls[0]![1].body).questions;
+    expect(sent).toHaveLength(10);
+    expect(sent[0].id).toBe("steps:-:s1:only");
+    expect(sent.every((q: { from_work_map_id: string }) => q.from_work_map_id === other)).toBe(
+      true,
+    );
+    await expect(postFollowUps(id, [question(0, " ")], other)).rejects.toThrow("Nothing to ask.");
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("withdraws with the id in the query, not the path", async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValue(Response.json({ withdrawn: "guardrails:g1:g1:numbers", questions: [] }));
+    vi.stubGlobal("fetch", fetch);
+    expect(await withdrawFollowUp(id, "guardrails:g1:g1:numbers")).toEqual({
+      withdrawn: "guardrails:g1:g1:numbers",
+      questions: [],
+    });
+    const [url, init] = fetch.mock.calls[0]!;
+    expect(url).toBe(`${base}?question_id=guardrails%3Ag1%3Ag1%3Anumbers`);
+    expect(init.method).toBe("DELETE");
+  });
+
+  it("explains a network error and a refused request", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+    await expect(fetchFollowUps(id)).rejects.toThrow("Couldn’t reach the apprentice backend.");
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(Response.json({ detail: "No such question waiting" }, { status: 404 })),
+    );
+    await expect(withdrawFollowUp(id, "x")).rejects.toThrow("That question is no longer waiting.");
+  });
+
+  it("passes an abort through", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(new DOMException("The operation was aborted.", "AbortError")),
+    );
+    await expect(fetchFollowUps(id)).rejects.toMatchObject({ name: "AbortError" });
   });
 });

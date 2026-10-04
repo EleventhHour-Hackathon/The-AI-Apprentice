@@ -2,13 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   compareRows,
   fieldValue,
+  followUpState,
   labels,
   pickerGroups,
   questionsFor,
   sameTask,
   words,
 } from "./compare";
-import type { DiffQuestion, WorkMapDiff, WorkMapSummary } from "./work-maps";
+import type { DiffQuestion, FollowUp, WorkMapDiff, WorkMapSummary } from "./work-maps";
 
 // GET /api/v1/work_map_diff's diff and questions for the backend's test maps
 // (core/backend/tests/test_work_map_diff_router.py MAP_A vs MAP_B).
@@ -373,5 +374,37 @@ describe("questionsFor", () => {
     expect(questionsFor({ questions: null }, "b")).toEqual([]);
     expect(questionsFor({ questions: { a: [] } }, "b")).toEqual([]);
     expect(questionsFor(null, "a")).toEqual([]);
+  });
+});
+
+describe("followUpState", () => {
+  const q = (id: string): DiffQuestion => ({
+    id,
+    section: "guardrails",
+    item: "g1",
+    other: "g1",
+    field: "numbers",
+    text: "Why?",
+    quote: "",
+  });
+  const waiting = (question_id: string): FollowUp => ({
+    question_id,
+    text: "Why?",
+    quote: "",
+    from: "b",
+    added_at: "2026-10-04T10:00:00+00:00",
+  });
+
+  it("marks the questions already kept as waiting", () => {
+    expect(followUpState([q("x"), q("y")], [waiting("y"), waiting("gone")])).toEqual({
+      x: "can_ask",
+      y: "waiting",
+    });
+  });
+
+  it("can ask everything while nothing is known to be waiting", () => {
+    expect(followUpState([q("x")], null)).toEqual({ x: "can_ask" });
+    expect(followUpState([q("x")], undefined)).toEqual({ x: "can_ask" });
+    expect(followUpState([], [waiting("x")])).toEqual({});
   });
 });

@@ -306,6 +306,89 @@ export async function fetchWorkMapDiff(
   return { ...result, questions: result.questions ?? { a: [], b: [] } };
 }
 
+// Questions kept for an expert's next session (core/backend/src/router/follow_ups_router.py).
+/** A question waiting for the expert's next session; `from` is the Work Map it came from. */
+export type FollowUp = {
+  question_id: string;
+  text: string;
+  quote: string;
+  from: string;
+  added_at: string;
+};
+/** The endpoint refuses a longer text or quote. */
+export const FOLLOW_UP_MAX_CHARS = 300;
+/** The most questions one request may keep. */
+export const FOLLOW_UP_MAX_BATCH = 10;
+
+/** Why a follow-up question couldn't be listed, kept or withdrawn. */
+export function followUpError(status: number, detail: unknown): string {
+  if (status === 404)
+    return detail === "No such question waiting"
+      ? "That question is no longer waiting."
+      : "That session no longer exists.";
+  if (status === 422)
+    return typeof detail === "string"
+      ? detail
+      : "The question couldn’t be kept: it is too long or incomplete.";
+  if (status === 503) return "Work Map storage (Supabase) is unavailable.";
+  return `The backend answered ${status}.`;
+}
+
+async function followUpRequest<T>(id: string, query: string, init?: RequestInit): Promise<T> {
+  const url = `${BACKEND_URL}/api/v1/work_maps/${encodeURIComponent(id)}/follow_up_questions${query}`;
+  let response: Response;
+  try {
+    response = await fetch(url, init);
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") throw e;
+    throw new Error("Couldn’t reach the apprentice backend.");
+  }
+  const body = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!response.ok) throw new Error(followUpError(response.status, body?.["detail"]));
+  return (body ?? {}) as T;
+}
+
+/** The questions waiting for this Work Map's expert, oldest first. */
+export async function fetchFollowUps(id: string, init?: RequestInit): Promise<FollowUp[]> {
+  const body = await followUpRequest<{ questions?: FollowUp[] }>(id, "", init);
+  return body.questions ?? [];
+}
+
+const cut = (s: string | null | undefined) => (s ?? "").trim().slice(0, FOLLOW_UP_MAX_CHARS);
+
+/** Keep questions (at most 10) for this Work Map's expert; `fromId` is the map it was compared with. */
+export async function postFollowUps(
+  id: string,
+  questions: DiffQuestion[],
+  fromId: string,
+): Promise<{ added: string[]; questions: FollowUp[] }> {
+  const items = questions
+    .filter((q) => cut(q.text))
+    .slice(0, FOLLOW_UP_MAX_BATCH)
+    .map((q) => ({ id: q.id, text: cut(q.text), quote: cut(q.quote), from_work_map_id: fromId }));
+  if (items.length === 0) throw new Error("Nothing to ask.");
+  const body = await followUpRequest<{ added?: string[]; questions?: FollowUp[] }>(id, "", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ questions: items }),
+  });
+  return { added: body.added ?? [], questions: body.questions ?? [] };
+}
+
+/** Withdraw a waiting question. Its id contains ":", so it goes in the query, never the path. */
+export async function withdrawFollowUp(
+  id: string,
+  questionId: string,
+): Promise<{ withdrawn: string; questions: FollowUp[] }> {
+  const params = new URLSearchParams({ question_id: questionId });
+  const body = await followUpRequest<{ withdrawn?: string; questions?: FollowUp[] }>(
+    id,
+    `?${params}`,
+    { method: "DELETE" },
+  );
+  return { withdrawn: body.withdrawn ?? questionId, questions: body.questions ?? [] };
+}
+
 /** A file name from the task: lowercase ASCII words joined by "-", or "work-map". */
 export const fileSlug = (task: string | null) =>
   (task ?? "")

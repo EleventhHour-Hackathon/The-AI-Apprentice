@@ -4,15 +4,27 @@ import { ArrowLeft, Check, CheckCheck, Clock, RotateCcw, TriangleAlert } from "l
 import { AppHeader } from "@/components/AppHeader";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { compareRows, pickerGroups, questionsFor, sameTask, type CompareRow } from "@/lib/compare";
+import {
+  compareRows,
+  followUpState,
+  pickerGroups,
+  questionsFor,
+  sameTask,
+  type CompareRow,
+} from "@/lib/compare";
 import {
   count,
+  fetchFollowUps,
   fetchWorkMapDiff,
   fetchWorkMaps,
+  FOLLOW_UP_MAX_BATCH,
+  postFollowUps,
   recordedAt,
   taskTitle,
+  withdrawFollowUp,
   type DiffQuestion,
   type DiffSide,
+  type FollowUp,
   type WorkMapDiffResponse,
   type WorkMapSummary,
 } from "@/lib/work-maps";
@@ -33,6 +45,18 @@ type DiffState =
   | { status: "error"; message: string }
   | { status: "done"; result: WorkMapDiffResponse };
 
+/** One expert's questions kept for their next session. `pending` is null until it has loaded. */
+type FollowUps = {
+  pending: FollowUp[] | null;
+  /** Why the waiting list couldn't be loaded; the questions then stay plain text. */
+  loadError: string;
+  /** Why the last ask or withdraw failed. */
+  error: string;
+  /** Question ids with a request running. */
+  busy: string[];
+};
+const NO_FOLLOW_UPS: FollowUps = { pending: null, loadError: "", error: "", busy: [] };
+
 /** Two sessions of one task side by side, and what to ask each expert about where they differ. */
 function Compare() {
   const { a, b } = Route.useSearch();
@@ -41,6 +65,14 @@ function Compare() {
   const [error, setError] = useState("");
   const [diff, setDiff] = useState<DiffState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
+  // Keyed by Work Map id, so an answer that lands after the pair changed can't land on the wrong side.
+  const [followUps, setFollowUps] = useState<Record<string, FollowUps>>({});
+
+  const patchFollowUps = useCallback(
+    (mapId: string, f: (s: FollowUps) => FollowUps) =>
+      setFollowUps((prev) => ({ ...prev, [mapId]: f(prev[mapId] ?? NO_FOLLOW_UPS) })),
+    [],
+  );
 
   const load = useCallback(() => {
     setError("");
@@ -54,14 +86,57 @@ function Compare() {
     if (!a || !b || a === b) return;
     const controller = new AbortController();
     setDiff({ status: "loading" });
-    fetchWorkMapDiff(a, b, undefined, { signal: controller.signal }).then(
-      (result) => setDiff({ status: "done", result }),
+    const { signal } = controller;
+    fetchWorkMapDiff(a, b, undefined, { signal }).then(
+      (result) => {
+        setDiff({ status: "done", result });
+        for (const mapId of [result.a.id, result.b.id]) {
+          patchFollowUps(mapId, () => NO_FOLLOW_UPS);
+          fetchFollowUps(mapId, { signal }).then(
+            (pending) => {
+              if (!signal.aborted) patchFollowUps(mapId, (s) => ({ ...s, pending, loadError: "" }));
+            },
+            (e: Error) => {
+              if (!signal.aborted) patchFollowUps(mapId, (s) => ({ ...s, loadError: e.message }));
+            },
+          );
+        }
+      },
       (e: Error) => {
-        if (!controller.signal.aborted) setDiff({ status: "error", message: e.message });
+        if (!signal.aborted) setDiff({ status: "error", message: e.message });
       },
     );
     return () => controller.abort();
-  }, [a, b, attempt]);
+  }, [a, b, attempt, patchFollowUps]);
+
+  // After a POST or DELETE the response's list is the server's truth. After a failure the list
+  // is read again, so a question withdrawn or asked elsewhere shows as it is now.
+  const followUpAction = useCallback(
+    async (mapId: string, ids: string[], request: () => Promise<{ questions: FollowUp[] }>) => {
+      patchFollowUps(mapId, (s) => ({ ...s, error: "", busy: [...s.busy, ...ids] }));
+      try {
+        const { questions } = await request();
+        patchFollowUps(mapId, (s) => ({ ...s, pending: questions }));
+      } catch (e) {
+        patchFollowUps(mapId, (s) => ({ ...s, error: (e as Error).message }));
+        fetchFollowUps(mapId).then(
+          (pending) => patchFollowUps(mapId, (s) => ({ ...s, pending })),
+          () => {},
+        );
+      } finally {
+        patchFollowUps(mapId, (s) => ({ ...s, busy: s.busy.filter((id) => !ids.includes(id)) }));
+      }
+    },
+    [patchFollowUps],
+  );
+  const ask = (mapId: string, fromId: string, questions: DiffQuestion[]) =>
+    void followUpAction(
+      mapId,
+      questions.map((q) => q.id),
+      () => postFollowUps(mapId, questions, fromId),
+    );
+  const withdraw = (mapId: string, questionId: string) =>
+    void followUpAction(mapId, [questionId], () => withdrawFollowUp(mapId, questionId));
 
   const pick = (next: CompareSearch) =>
     void navigate({ search: (prev) => ({ ...prev, ...next }), replace: true });
@@ -107,7 +182,12 @@ function Compare() {
             ) : diff.status === "error" ? (
               <Failed message={diff.message} onRetry={() => setAttempt((n) => n + 1)} />
             ) : (
-              <Result result={diff.result} />
+              <Result
+                result={diff.result}
+                followUps={followUps}
+                onAsk={ask}
+                onWithdraw={withdraw}
+              />
             )}
           </>
         )}
@@ -210,7 +290,16 @@ function Pickers({
   );
 }
 
-function Result({ result }: { result: WorkMapDiffResponse }) {
+type FollowUpActions = {
+  onAsk: (mapId: string, fromId: string, questions: DiffQuestion[]) => void;
+  onWithdraw: (mapId: string, questionId: string) => void;
+};
+
+function Result({
+  result,
+  followUps,
+  ...actions
+}: { result: WorkMapDiffResponse; followUps: Record<string, FollowUps> } & FollowUpActions) {
   const rows = compareRows(result.diff);
   const all = [...rows.steps, ...rows.guardrails];
   const agree = all.every((r) => r.kind === "same");
@@ -244,8 +333,22 @@ function Result({ result }: { result: WorkMapDiffResponse }) {
         <section>
           <h2 className="mb-3 font-display text-2xl tracking-tight">Questions for each expert</h2>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Questions label="Session A" questions={questionsFor(result, "a")} />
-            <Questions label="Session B" questions={questionsFor(result, "b")} />
+            <Questions
+              label="Session A"
+              questions={questionsFor(result, "a")}
+              mapId={result.a.id}
+              fromId={result.b.id}
+              followUps={followUps[result.a.id] ?? NO_FOLLOW_UPS}
+              {...actions}
+            />
+            <Questions
+              label="Session B"
+              questions={questionsFor(result, "b")}
+              mapId={result.b.id}
+              fromId={result.a.id}
+              followUps={followUps[result.b.id] ?? NO_FOLLOW_UPS}
+              {...actions}
+            />
           </div>
         </section>
       )}
@@ -287,10 +390,43 @@ function SideCard({ label, side }: { label: string; side: DiffSide }) {
   );
 }
 
-function Questions({ label, questions }: { label: string; questions: DiffQuestion[] }) {
+/** One expert's questions; each can be kept for their next session or withdrawn again. */
+function Questions({
+  label,
+  questions,
+  mapId,
+  fromId,
+  followUps,
+  onAsk,
+  onWithdraw,
+}: {
+  label: string;
+  questions: DiffQuestion[];
+  mapId: string;
+  fromId: string;
+  followUps: FollowUps;
+} & FollowUpActions) {
+  // Until the waiting list has loaded the questions are plain text: a button could lie.
+  const loaded = followUps.pending !== null && !followUps.loadError;
+  const state = followUpState(questions, followUps.pending);
+  const busy = (id: string) => followUps.busy.includes(id);
+  const askable = questions.filter((q) => state[q.id] === "can_ask" && !busy(q.id));
+  const error = followUps.loadError || followUps.error;
   return (
     <div className="rounded-2xl border bg-card px-4 py-3.5">
-      <p className="mb-2 text-xs font-medium text-muted-foreground">Ask the expert of {label}</p>
+      <div className="mb-2 flex min-h-7 items-center justify-between gap-2">
+        <p className="text-xs font-medium text-muted-foreground">Ask the expert of {label}</p>
+        {loaded && askable.length > 0 && (
+          <Button
+            variant="outline"
+            className="h-7 px-2.5 text-xs"
+            disabled={followUps.busy.length > 0}
+            onClick={() => onAsk(mapId, fromId, askable.slice(0, FOLLOW_UP_MAX_BATCH))}
+          >
+            Ask all
+          </Button>
+        )}
+      </div>
       {questions.length === 0 ? (
         <p className="text-sm text-muted-foreground">Nothing to ask this expert.</p>
       ) : (
@@ -301,9 +437,38 @@ function Questions({ label, questions }: { label: string; questions: DiffQuestio
               {q.quote && (
                 <span className="mt-0.5 block text-xs text-muted-foreground">“{q.quote}”</span>
               )}
+              {loaded &&
+                (state[q.id] === "waiting" ? (
+                  <span className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <Clock size={12} className="shrink-0" />
+                    Waiting for their next session
+                    <Button
+                      variant="ghost"
+                      className="h-7 px-1.5 text-xs underline-offset-2 hover:underline"
+                      disabled={busy(q.id)}
+                      onClick={() => onWithdraw(mapId, q.id)}
+                    >
+                      Withdraw
+                    </Button>
+                  </span>
+                ) : (
+                  <Button
+                    variant="outline"
+                    className="mt-1 h-7 px-2.5 text-xs"
+                    disabled={busy(q.id)}
+                    onClick={() => onAsk(mapId, fromId, [q])}
+                  >
+                    Ask in their next session
+                  </Button>
+                ))}
             </li>
           ))}
         </ol>
+      )}
+      {error && (
+        <p role="alert" className="mt-3 text-xs text-destructive">
+          {error}
+        </p>
       )}
     </div>
   );
