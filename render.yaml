@@ -5,9 +5,9 @@ services:
     name: tacit-backend
     runtime: docker
     rootDir: core/backend
-    # Docker paths are relative to the repo root, not rootDir.
-    dockerContext: ./core/backend
-    dockerfilePath: ./core/backend/Dockerfile
+    # Render resolves these relative to rootDir (core/backend).
+    dockerContext: .
+    dockerfilePath: ./Dockerfile
     # free: sleeps after 15 idle minutes, so the first call after a break waits about a minute.
     # For an always-on server pick a paid plan (0.5c-512mb or larger) in the dashboard.
     plan: free
