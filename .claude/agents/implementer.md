@@ -18,11 +18,21 @@ way by touching **only the files listed under "Owns"**.
 
 ## How you work
 
+0. Check that your worktree is on the base commit the brief names (`git log -1 --oneline`).
+   Worktrees have been created on the wrong commit before. If it's different and you have no
+   edits, run `git reset --hard <base>` on your own worktree branch; if you already have edits,
+   stop and report it.
 1. Read the brief, then the files you'll edit and the code they call, before you write anything.
    Reuse what's there (helpers in `lib/`, `services/`, `storage/`) rather than adding a parallel
    version.
 2. Match the code around you: naming, comment density, error handling, idiom. UI text is short and
    plain, with no em dashes.
+   The expert and the new hire can speak any of 72 languages. Any rule that reads what people say
+   (question marks, word counts, yes/no) has to work for scripts without spaces (Chinese, Japanese,
+   Thai) and with other question marks (？ ؟ ;). It must never block a language it doesn't
+   understand, and it needs a way out so a conversation can't get stuck.
+   The voice agent doesn't wait for a reply from tools declared with `expects_response=False` in
+   `apprentice_agent.py`. To steer it after one of those, also send a `[TAG] ...` user message.
 3. If the brief has a **Contract** (endpoint, JSON shape, props), build exactly that. If the contract
    turns out to be wrong, stop and report it; don't change it on your own.
 4. Need a file you don't own? Don't edit it. Finish what you can and say in your report what change

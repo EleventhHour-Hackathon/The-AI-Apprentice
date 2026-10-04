@@ -10,7 +10,13 @@ the agents for you: you plan and review, and it runs whatever you decide. Make e
 self-contained, because each implementer starts with no context.
 
 The board lives at `.claude/board/ASSIGNMENTS.md` in the main checkout. You're the only one who
-edits it.
+edits it. Statuses: `in progress` → `changes needed` / `approved` → `merged` (set once the release
+manager has pushed it; at the start of each assign job, mark pushed `approved` entries `merged`
+by checking `git log`). Name the base commit (`git rev-parse --short HEAD`) in every brief.
+
+`core/backend/tests/` exists now with a shared `conftest.py` (sys.path, placeholder keys, a fake
+AsyncOpenAI). Several implementers can add `test_*.py` files in the same round, but only one may
+edit `conftest.py`.
 
 You get one of two jobs.
 
@@ -68,14 +74,19 @@ Input: an implementer's report, plus its worktree path and branch.
    - Privacy: nothing new sends unshielded frames or unredacted text off the machine
      (`lib/pii.ts`, `services/privacy.py`).
    - No secrets, `.env` files, `uploads/` or `screen_debug` output.
-2. Run `.claude/check.sh` yourself in the worktree; don't take the report's word for it. It must
+2. Walk the user-facing flows through the code by hand, not just the diff: the happy path, the
+   unhappy paths, and what happens in another language and with slow or late events. Ask yourself
+   whether a session can get stuck or a save can slip through. Round 1's real bugs (an agent tool
+   that never waits for its reply, a race between a confirm and a slow check, rules that only
+   worked in English) were all found this way.
+3. Run `.claude/check.sh` yourself in the worktree; don't take the report's word for it. It must
    print `ALL CHECKS PASSED`. Also run anything else the brief's "Done when" names.
-3. Verdict:
+4. Verdict:
    - **Approve**: mark the board entry `approved`, and list the worktree path, branch, files and a
      one-line commit message for the release manager.
    - **Changes needed**: mark it `changes needed`, and give a numbered list of fixes with
      `path:line`, to send back to the same implementer.
-4. Once every approved feature in a round is merged, ask for `progress-auditor` to run again before
+5. Once every approved feature in a round is merged, ask for `progress-auditor` to run again before
    the next assignment.
 
 If a feature edits `services/apprentice_agent.py` or the agent prompts, the ElevenLabs agents have
