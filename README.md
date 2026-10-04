@@ -111,7 +111,7 @@ Every module, requirement and stretch goal in the challenge brief, and how Tacit
 
 | Direction | Where Tacit is today |
 |---|---|
-| **A living company memory** | Record a task again and the apprentice asks only about what changed, then keeps an update ready to apply to the original Work Map |
+| **A living company memory** | The apprentice remembers every confirmed Work Map: name a task it has seen and it skips what it already knows, asks last time's open questions, and builds on the earlier map. Record a task again and it keeps an update ready to apply to the original |
 | **The always-on apprentice** | A coverage check recognizes routine work and spots a case no confirmed Work Map covers, ready with one question for the expert |
 | **People first, then agents** | **Autopilot** in the practice ERP posts the routine invoices and hands every judgment call to a person, with the expert's rule |
 
@@ -139,13 +139,13 @@ The built-in practice ERP reproduces the brief's scene exactly: invoice **4471**
 
 - **Sia on the Work Map:** *Talk to Sia* with two modes, **Learn this task** (for a new hire) and **Review as the expert** (walk through it and correct it by voice). Sia moves the map's focus as she talks.
 - **A Work Map you can walk:** click a step to glide to it; **Next / Previous** (or ← →) follow the workflow; animated entrance and a flowing path to the next step.
-- **Bigger clips:** **Enlarge** opens a clip in a resizable in-app view that remembers its size.
+- **Sharp, whole clips:** every step gets a clip of at least six seconds, joined across recording segments, recorded at the screen's native resolution at 15 fps (or 720p / 1080p in Settings). **Enlarge** opens a clip in a resizable in-app view that remembers its size.
 - **Fewer, better questions:** a quick check before each question skips what the screen or common practice already answers; sure-enough reasons become assumptions for the expert to confirm in the teach-back.
 - **Edit by voice:** the expert can change steps and rules by talking; the map updates live.
 - **Settings that work:** the question pace (curiosity, minimum questions, debrief depth) changes live sessions; **Diagnostics** checks the server, redaction, storage and voice agents.
 - **Desktop app for macOS, Windows and Linux**, connected to a hosted server; every AI key stays on the server, behind an access key.
 - **A product website** with OS-aware downloads and an install guide.
-- **Tested:** 482 backend and 262 app tests run on every change.
+- **Tested:** 498 backend and 262 app tests run on every change.
 
 ## What's next
 
