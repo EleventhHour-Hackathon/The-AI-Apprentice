@@ -78,3 +78,46 @@ export function decideFloor(f: FloorInput): Floor {
     return "waiting";
   return "ask";
 }
+
+/** In the wrap-up, this much silence after an answer before the next question (or the debrief). */
+export const WRAP_UP_QUIET_MS = 2500;
+/** In the wrap-up, how long to wait for an answer that doesn't come. */
+export const WRAP_UP_ANSWER_MS = 20_000;
+
+export type WrapUpInput = {
+  now: number;
+  speaking: boolean;
+  agentSpeaking: boolean;
+  lastSpeechAt: number;
+  /** When the agent last stopped speaking. */
+  agentDoneAt: number;
+  /** "pause": a question was requested; "answer": the agent has replied. */
+  grant: "start" | "pause" | "answer" | null;
+  /** Until when the requested question may still come. */
+  floorOpenUntil: number;
+  /** When the last question was requested. */
+  lastPauseAt: number;
+  /** The last live question counted, if any. */
+  last?: { at: number; kind: string } | undefined;
+  /** Enough questions, one about a guardrail. */
+  met: boolean;
+  prompts: number;
+  limit: number;
+};
+
+/**
+ * After End, when the live questions fall short: the expert is waiting, so there is no
+ * pause to wait for, only each answer. wait, ask the next missing question, or finish
+ * (go to the debrief) once they are asked or the tries run out.
+ */
+export function decideWrapUp(w: WrapUpInput): "wait" | "ask" | "finish" {
+  if (w.speaking || w.agentSpeaking) return "wait";
+  const quietSince = Math.max(w.lastSpeechAt, w.agentDoneAt);
+  if (w.now - quietSince < WRAP_UP_QUIET_MS) return "wait";
+  if (w.last?.kind === "pending") return "wait"; // its label decides whether the guardrail is done
+  if (w.grant === "pause" && w.now < w.floorOpenUntil) return "wait"; // the question is coming
+  const askedThisTime = w.last !== undefined && w.last.at >= w.lastPauseAt;
+  const answered = askedThisTime && w.lastSpeechAt > w.last!.at;
+  if (askedThisTime && !answered && w.now - quietSince < WRAP_UP_ANSWER_MS) return "wait";
+  return w.met || w.prompts >= w.limit ? "finish" : "ask";
+}

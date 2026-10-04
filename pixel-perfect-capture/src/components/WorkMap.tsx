@@ -32,9 +32,12 @@ import {
   MessageSquareText,
   Play,
   Trash2,
+  Unlink,
   X,
 } from "lucide-react";
 import { desktop } from "@/lib/desktop";
+import { MIN_LIVE_QUESTIONS } from "@/lib/floor";
+import { ClipPlayer } from "@/components/ClipPlayer";
 import { DeleteWorkMap } from "@/components/DeleteWorkMap";
 import { Button } from "@/components/ui/button";
 import {
@@ -44,6 +47,7 @@ import {
   normalizeMap,
   recordedAt,
   taskTitle,
+  unlinked,
   type WorkMap as MapData,
   type WorkMapGuardrail,
   type WorkMapRecord,
@@ -62,6 +66,8 @@ type NoteData = {
   text: string;
   tone: "warm" | "plain" | "open";
   selected: boolean;
+  /** What a guardrail lacks: a screen moment and/or the expert's words. */
+  missing?: string[];
 };
 type LaneData = { label: string };
 type FlowData = { kind: "step" | "guard"; from: number };
@@ -168,6 +174,7 @@ function StepNode({ data }: NodeProps<Node<StepData>>) {
           )}
           {s.at !== null && <span className="ml-auto font-mono">{mmss(s.at)}</span>}
         </div>
+        <Unlinked missing={unlinked(s)} />
         <p className="mt-1.5 line-clamp-3 text-[13px] font-medium leading-snug">{s.title}</p>
         {s.decision && (
           <p className="mt-1 line-clamp-2 text-[11.5px] leading-snug text-foreground/70">
@@ -175,7 +182,10 @@ function StepNode({ data }: NodeProps<Node<StepData>>) {
           </p>
         )}
         {s.quote && (
-          <p className="mt-1.5 line-clamp-2 text-[11px] italic leading-snug text-foreground/60">
+          <p
+            className={`mt-1.5 line-clamp-2 text-[11px] italic leading-snug ${s.quote_kind === "narration" ? "text-foreground/45" : "text-foreground/60"}`}
+            title={s.quote_kind === "narration" ? "Said while doing it" : "The expert's reason"}
+          >
             “{s.quote}”
           </p>
         )}
@@ -197,6 +207,7 @@ function NoteNode({ data }: NodeProps<Node<NoteData>>) {
         {data.label}
       </span>
       <p className="mt-1 line-clamp-3 text-[12px] leading-snug">{data.text}</p>
+      {data.missing && <Unlinked missing={data.missing} />}
     </div>
   );
 }
@@ -244,6 +255,7 @@ function layoutMap(map: MapData, selected: Selection) {
       text: g.rule,
       tone: g.kind === "stop_and_ask" ? "warm" : "plain",
       selected: isSelected("guardrail", index),
+      missing: unlinked(g),
     } satisfies NoteData,
   });
 
@@ -341,6 +353,10 @@ function Canvas({ map: record, onClose }: Props) {
   const [selected, setSelected] = useState<Selection>(null);
   const empty = map.steps.length + map.guardrails.length + map.open_questions.length === 0;
   const judgments = map.steps.filter((s) => s.judgment).length;
+  const liveQuestions = map.live_questions ?? [];
+  const asked = liveQuestions.filter((q) => !q.deferred);
+  const guardrailAsked = asked.some((q) => q.kind === "guardrail");
+  const unlinkedCount = [...map.steps, ...map.guardrails].filter((i) => unlinked(i).length).length;
 
   const layout = useMemo(() => layoutMap(map, selected), [map, selected]);
   const pulse = usePulse(map.steps.length);
@@ -445,6 +461,25 @@ function Canvas({ map: record, onClose }: Props) {
             {recordedAt(map.recorded_at)} · {count(map.steps.length, "step")} ·{" "}
             {count(judgments, "judgment call")} · {count(map.guardrails.length, "guardrail")}
             {map.open_questions.length > 0 && ` · ${map.open_questions.length} open`}
+            {unlinkedCount > 0 && (
+              <span
+                className="text-voice-raised"
+                title="Steps or guardrails without a screen moment or the expert's own words"
+              >
+                {` · ${unlinkedCount} unlinked`}
+              </span>
+            )}
+            {liveQuestions.length > 0 && (
+              <span
+                title={`Asked while the expert worked: ${asked.length} of at least ${MIN_LIVE_QUESTIONS}, ${guardrailAsked ? "one" : "none"} about a guardrail`}
+              >
+                {" · "}
+                <span className={asked.length >= MIN_LIVE_QUESTIONS ? "" : "text-voice-raised"}>
+                  {count(asked.length, "live question")}
+                </span>
+                {guardrailAsked ? " incl. a guardrail" : " · no guardrail question"}
+              </span>
+            )}
           </p>
         </div>
         <span
@@ -471,7 +506,7 @@ function Canvas({ map: record, onClose }: Props) {
               Teach a new hire
             </Button>
           )}
-          {map.transcript.length > 0 && (
+          {(map.transcript.length > 0 || liveQuestions.length > 0) && (
             <Button
               variant="outline"
               className="h-8 rounded-full text-xs"
@@ -584,13 +619,19 @@ function Canvas({ map: record, onClose }: Props) {
                   thumb={step.thumb}
                   clip={step.clip}
                   what={step.screen || step.event}
+                  note={
+                    step.at_source === "nearby"
+                      ? "Added in the debrief: this is the screen of the step next to it."
+                      : undefined
+                  }
                 />
+                <MissingLinks missing={unlinked(step)} />
                 {step.decision && <Section label="Decision">{step.decision}</Section>}
                 <Section label="Reason">
-                  {step.reason || step.quote ? (
+                  {step.quote_kind === "reason" || step.reason ? (
                     <Quote
-                      text={step.quote || step.reason}
-                      verbatim={Boolean(step.quote)}
+                      text={step.quote_kind === "reason" ? step.quote : step.reason}
+                      verbatim={step.quote_kind === "reason"}
                       source={step.quote_source}
                       at={step.quote_at}
                     />
@@ -598,6 +639,16 @@ function Canvas({ map: record, onClose }: Props) {
                     <span className="text-pill-muted">No reason given.</span>
                   )}
                 </Section>
+                {step.quote_kind === "narration" && (
+                  <Section label="Said while doing it">
+                    <Quote
+                      text={step.quote}
+                      verbatim
+                      source={step.quote_source}
+                      at={step.quote_at}
+                    />
+                  </Section>
+                )}
                 {stepGuards.length > 0 && (
                   <Section label="Guardrails">
                     {stepGuards.map((g) => (
@@ -618,12 +669,20 @@ function Canvas({ map: record, onClose }: Props) {
             {guard && (
               <>
                 <h2 className="mt-1 text-xl font-medium leading-snug">{guard.rule}</h2>
+                <MissingLinks missing={unlinked(guard)} />
                 <ScreenMoment
                   key={guard.id}
                   at={guard.at}
                   thumb={guard.thumb}
                   clip={guard.clip}
                   what={guard.event}
+                  note={
+                    guard.at_source === "model"
+                      ? "Approximate: this rule isn't tied to a step, so the moment is the merge's best guess."
+                      : guard.at_source === "step"
+                        ? "The screen of the step this rule belongs to."
+                        : undefined
+                  }
                 />
                 {guard.applies_when && <Section label="Applies when">{guard.applies_when}</Section>}
                 {guard.ask_whom && (
@@ -642,6 +701,39 @@ function Canvas({ map: record, onClose }: Props) {
                   </Section>
                 )}
               </>
+            )}
+            {selected.type === "transcript" && liveQuestions.length > 0 && (
+              <Section label="Asked while working">
+                <ol className="space-y-2">
+                  {liveQuestions.map((q, i) => (
+                    <li
+                      key={i}
+                      className={`rounded-xl bg-pill-raised p-3 ${q.deferred ? "opacity-60" : ""}`}
+                    >
+                      <span className="flex items-center gap-1.5 font-mono text-[10px] text-pill-muted">
+                        {q.t !== null && mmss(q.t)}
+                        <span
+                          className={
+                            q.kind === "guardrail"
+                              ? "text-voice-raised"
+                              : q.kind === "reason"
+                                ? "text-voice-debrief"
+                                : ""
+                          }
+                        >
+                          {q.kind === "guardrail"
+                            ? "GUARDRAIL"
+                            : q.kind === "reason"
+                              ? "REASON"
+                              : "OTHER"}
+                        </span>
+                        {q.deferred && <span>· SAVED FOR LATER</span>}
+                      </span>
+                      <p className="mt-1 text-[12.5px] leading-relaxed">{q.text}</p>
+                    </li>
+                  ))}
+                </ol>
+              </Section>
             )}
             {selected.type === "transcript" && (
               <ol className="mt-3 space-y-3">
@@ -717,11 +809,14 @@ function ScreenMoment({
   thumb,
   clip,
   what,
+  note,
 }: {
   at: number | null;
   thumb?: string | null;
   clip?: string | null;
   what?: string | null;
+  /** Where the moment comes from, when it isn't simply when this happened. */
+  note?: string | undefined;
 }) {
   const [failed, setFailed] = useState(false);
   const playable = clip && !failed;
@@ -731,17 +826,12 @@ function ScreenMoment({
       label={`${playable ? "Screen recording" : "Screen moment"}${at !== null ? ` · ${mmss(at)}` : ""}`}
     >
       {playable ? (
-        <video
+        <ClipPlayer
           src={clip}
-          poster={thumb ?? undefined}
-          aria-label={what ?? "Screen recording"}
+          poster={thumb}
+          label={what ?? "Screen recording"}
           autoPlay
-          muted
-          loop
-          playsInline
-          controls
           onError={() => setFailed(true)}
-          className="w-full rounded-lg border border-pill-border bg-black"
         />
       ) : (
         thumb && (
@@ -753,6 +843,7 @@ function ScreenMoment({
         )
       )}
       {what && <p className="mt-1.5 text-[12px] text-pill-muted">{what}</p>}
+      {note && <p className="mt-1 text-[11px] italic text-pill-muted">{note}</p>}
     </Section>
   );
 }
@@ -798,5 +889,30 @@ function Kbd({ children }: { children: ReactNode }) {
     <kbd className="rounded border border-current/20 px-1 font-mono text-[9px] opacity-60">
       {children}
     </kbd>
+  );
+}
+
+/** On a card: what links the item lacks. */
+function Unlinked({ missing }: { missing: string[] }) {
+  if (!missing.length) return null;
+  return (
+    <span
+      className="mt-1.5 inline-flex items-center gap-1 rounded-full border border-voice-raised/50 px-1.5 py-px text-[9.5px] font-medium text-voice-raised"
+      title={`No ${missing.join(" or ")}`}
+    >
+      <Unlink size={9} />
+      Unlinked
+    </span>
+  );
+}
+
+/** In the details panel: say plainly what is missing, so nobody takes it for complete. */
+function MissingLinks({ missing }: { missing: string[] }) {
+  if (!missing.length) return null;
+  return (
+    <p className="mt-2 flex items-center gap-1.5 text-[11.5px] text-voice-raised">
+      <Unlink size={12} />
+      Not linked to {missing.join(" or ")}.
+    </p>
   );
 }

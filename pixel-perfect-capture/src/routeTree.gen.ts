@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as PillRouteImport } from './routes/pill'
+import { Route as SandboxRouteImport } from './routes/sandbox'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as WorkMapsIndexRouteImport } from './routes/work-maps.index'
 import { Route as WorkMapsIdRouteImport } from './routes/work-maps.$id'
@@ -23,6 +24,11 @@ const IndexRoute = IndexRouteImport.update({
 const PillRoute = PillRouteImport.update({
   id: '/pill',
   path: '/pill',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SandboxRoute = SandboxRouteImport.update({
+  id: '/sandbox',
+  path: '/sandbox',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsRoute = SettingsRouteImport.update({
@@ -44,6 +50,7 @@ const WorkMapsIdRoute = WorkMapsIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/pill': typeof PillRoute
+  '/sandbox': typeof SandboxRoute
   '/settings': typeof SettingsRoute
   '/work-maps/$id': typeof WorkMapsIdRoute
   '/work-maps/': typeof WorkMapsIndexRoute
@@ -51,6 +58,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/pill': typeof PillRoute
+  '/sandbox': typeof SandboxRoute
   '/settings': typeof SettingsRoute
   '/work-maps/$id': typeof WorkMapsIdRoute
   '/work-maps': typeof WorkMapsIndexRoute
@@ -59,22 +67,31 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/pill': typeof PillRoute
+  '/sandbox': typeof SandboxRoute
   '/settings': typeof SettingsRoute
   '/work-maps/$id': typeof WorkMapsIdRoute
   '/work-maps/': typeof WorkMapsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/pill' | '/settings' | '/work-maps/$id' | '/work-maps/'
+  fullPaths:
+    '/' | '/pill' | '/sandbox' | '/settings' | '/work-maps/$id' | '/work-maps/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/pill' | '/settings' | '/work-maps/$id' | '/work-maps'
+  to: '/' | '/pill' | '/sandbox' | '/settings' | '/work-maps/$id' | '/work-maps'
   id:
-    '__root__' | '/' | '/pill' | '/settings' | '/work-maps/$id' | '/work-maps/'
+    | '__root__'
+    | '/'
+    | '/pill'
+    | '/sandbox'
+    | '/settings'
+    | '/work-maps/$id'
+    | '/work-maps/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   PillRoute: typeof PillRoute
+  SandboxRoute: typeof SandboxRoute
   SettingsRoute: typeof SettingsRoute
   WorkMapsIdRoute: typeof WorkMapsIdRoute
   WorkMapsIndexRoute: typeof WorkMapsIndexRoute
@@ -94,6 +111,13 @@ declare module '@tanstack/react-router' {
       path: '/pill'
       fullPath: '/pill'
       preLoaderRoute: typeof PillRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sandbox': {
+      id: '/sandbox'
+      path: '/sandbox'
+      fullPath: '/sandbox'
+      preLoaderRoute: typeof SandboxRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings': {
@@ -123,6 +147,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   PillRoute: PillRoute,
+  SandboxRoute: SandboxRoute,
   SettingsRoute: SettingsRoute,
   WorkMapsIdRoute: WorkMapsIdRoute,
   WorkMapsIndexRoute: WorkMapsIndexRoute,

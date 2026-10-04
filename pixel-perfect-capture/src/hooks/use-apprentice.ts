@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { VoiceConversation } from "@elevenlabs/client";
 import { BACKEND_URL } from "@/lib/backend";
-import { decideFloor, MIN_LIVE_QUESTIONS, type Floor, type ScreenKind } from "@/lib/floor";
+import {
+  decideFloor,
+  decideWrapUp,
+  MIN_LIVE_QUESTIONS,
+  type Floor,
+  type ScreenKind,
+} from "@/lib/floor";
 import type { ScreenEvent } from "@/hooks/use-screen-events";
 
 /** Phases of a session. The agent moves between them by calling client tools. */
@@ -20,6 +26,16 @@ export type Capture = Moment & {
   kind: "step" | "guardrail" | "open_question" | "correction";
   title: string;
   detail: string;
+};
+/** A question asked at a pause while the expert worked; the brief asks for 3, one about a guardrail. */
+export type LiveQuestion = {
+  /** Session clock, seconds. */
+  t: number;
+  text: string;
+  /** Labelled by the backend; "pending" until it answers. */
+  kind: "pending" | "guardrail" | "reason" | "other";
+  /** Put off for the debrief with Later: it does not count. */
+  deferred: boolean;
 };
 /** One line of what was said, as the Work Map merge reads it. */
 type Line = { role: "expert" | "apprentice"; text: string; t: number; phase: "live" | "debrief" };
@@ -42,6 +58,11 @@ type ApprenticeState = {
   floor: Floor;
   exchanges: Exchange[];
   captures: Capture[];
+  liveQuestions: LiveQuestion[];
+  /** At least MIN_LIVE_QUESTIONS counted, one of them about a guardrail. */
+  guardrailAsked: boolean;
+  /** End was pressed before that: the apprentice is asking what is missing before the debrief. */
+  wrapUp: boolean;
 };
 
 const initialState: ApprenticeState = {
@@ -58,6 +79,9 @@ const initialState: ApprenticeState = {
   floor: "quiet",
   exchanges: [],
   captures: [],
+  liveQuestions: [],
+  guardrailAsked: false,
+  wrapUp: false,
 };
 
 /** After [PAUSE], how long the agent has to start asking before the floor closes again. */
@@ -74,6 +98,16 @@ const USER_ACTIVITY_EVERY_MS = 1000;
 const mmss = (s: number) =>
   `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 const str = (value: unknown) => (typeof value === "string" ? value.trim() : "");
+type Tally = {
+  asked: { kind: LiveQuestion["kind"]; deferred: boolean }[];
+  guardrailCaptured: boolean;
+};
+/** Live questions that count: asked at a pause, not put off with Later. */
+const counted = (x: Tally) => x.asked.filter((q) => !q.deferred).length;
+const guardrailAsked = (x: Tally) =>
+  x.guardrailCaptured || x.asked.some((q) => q.kind === "guardrail" && !q.deferred);
+const questionsMet = (x: Tally) => counted(x) >= MIN_LIVE_QUESTIONS && guardrailAsked(x);
+
 const live = (node: FlowNode) => node === "session_start" || node === "observing";
 
 async function post<T = unknown>(path: string, body: unknown): Promise<T> {
@@ -153,8 +187,18 @@ export function useApprentice(options: {
     agentSpeaking: false,
     /** [TASK DONE] was sent; End can fire more than once (button, shortcut, pill). */
     taskDone: false,
-    /** A live question has drawn out a guardrail (recorded while the expert answered). */
-    guardrailAsked: false,
+    /** Live questions asked at a pause, with performance.now() of when. */
+    asked: [] as (LiveQuestion & { at: number })[],
+    /** The agent's current utterance answers a [PAUSE]: if it is a question, it counts. */
+    pauseReply: false,
+    /** A guardrail was recorded while the expert answered a live question. */
+    guardrailCaptured: false,
+    agentDoneAt: -Infinity,
+    /** Last screen events, for the wrap-up questions once the screen is no longer shared. */
+    recent: [] as { t: number; text: string }[],
+    wrapUp: false,
+    wrapUpPrompts: 0,
+    wrapUpLimit: 0,
   });
   const clock = useCallback(
     () => (s.current.startedAt ? (performance.now() - s.current.startedAt) / 1000 : 0),
@@ -183,8 +227,8 @@ export function useApprentice(options: {
       return false;
     }
     if (x.node === "observing" && x.grant === "pause") {
-      // A live question at a pause: it counts against the budget, and the answer gets a window.
-      x.questionTimes.push(now);
+      // A reply to a pause: the answer gets a window, and if it is a question it counts.
+      x.pauseReply = true;
       x.grant = "answer";
       x.floorOpenUntil = now + ANSWER_WINDOW_MS;
     }
@@ -203,12 +247,56 @@ export function useApprentice(options: {
     x.gated = false;
   }, []);
 
+  /** Copy the live-question tally into state for the pill. */
+  const syncQuestions = useCallback(() => {
+    const x = s.current;
+    const liveQuestions = x.asked.map(({ at: _at, ...q }) => q);
+    setState((st) => ({ ...st, liveQuestions, guardrailAsked: guardrailAsked(x) }));
+  }, []);
+
+  /** The agent asked a question at a pause: count it, and have the backend label it. */
+  const countQuestion = useCallback(
+    (text: string) => {
+      const x = s.current;
+      const q = {
+        t: clock(),
+        at: performance.now(),
+        text,
+        kind: "pending" as const,
+        deferred: false,
+      };
+      const entry: (typeof x.asked)[number] = q;
+      x.asked.push(entry);
+      x.questionTimes.push(q.at);
+      syncQuestions();
+      const sessionId = x.sessionId;
+      post<{ kind: LiveQuestion["kind"] }>(`/sessions/${sessionId}/live_question`, {
+        text,
+        t: q.t,
+      }).then(
+        ({ kind }) => {
+          if (s.current.sessionId !== sessionId) return;
+          entry.kind = kind;
+          syncQuestions();
+        },
+        (e) => {
+          console.warn("[apprentice] live question not labelled", e);
+          entry.kind = "other";
+          syncQuestions();
+        },
+      );
+    },
+    [clock, syncQuestions],
+  );
+
   const capture = useCallback(
     (kind: Capture["kind"], params: Record<string, unknown>) => {
       const x = s.current;
       const phase = live(x.node) ? "live" : "debrief";
-      if (kind === "guardrail" && x.node === "observing" && x.grant === "answer")
-        x.guardrailAsked = true;
+      if (kind === "guardrail" && x.node === "observing" && x.grant === "answer") {
+        x.guardrailCaptured = true;
+        syncQuestions();
+      }
       void post(`/sessions/${x.sessionId}/capture`, { kind, ...params, t: clock(), phase }).catch(
         (e) => console.warn("[apprentice] capture not saved", e),
       );
@@ -226,7 +314,7 @@ export function useApprentice(options: {
       });
       return "Recorded.";
     },
-    [clock],
+    [clock, syncQuestions],
   );
 
   const merge = useCallback(
@@ -234,7 +322,7 @@ export function useApprentice(options: {
       const x = s.current;
       setState((st) => ({ ...st, merging: true }));
       try {
-        return await post<{ brief: string }>(`/sessions/${x.sessionId}/merge`, {
+        return await post<{ brief: string; summary: string }>(`/sessions/${x.sessionId}/merge`, {
           final,
           transcript: x.transcript,
           duration: clock(),
@@ -267,6 +355,24 @@ export function useApprentice(options: {
       },
     );
   }, [merge]);
+
+  /** The agent's "said" only if the expert really said it lately; it becomes their quote in the map. */
+  const spoken = (said: string) => {
+    const words = (t: string) =>
+      t
+        .toLowerCase()
+        .replace(/[^a-z0-9 ]/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+    const recent = words(
+      s.current.transcript
+        .filter((l) => l.role === "expert")
+        .slice(-3)
+        .map((l) => l.text)
+        .join(" "),
+    );
+    return said && recent.includes(words(said)) ? said : "";
+  };
 
   // Built once: everything the tools use is a ref or a stable callback.
   const clientTools = useRef({
@@ -302,14 +408,54 @@ export function useApprentice(options: {
     },
     confirm_work_map: async () => {
       try {
-        await merge(true);
+        const result = await merge(true);
         setState((st) => ({ ...st, confirmed: true, saved: "saved" }));
         setNode("end");
-        return "Saved. Thank them in one sentence, then call end_call.";
+        return `Saved. The Work Map as saved (ids are for edit_work_map):\n${result.summary}\n\nTell the expert in one sentence that it is saved, ask whether they would like to change anything, and wait for their answer. Do not call end_call yet.`;
       } catch (e) {
         console.warn("[apprentice] final merge failed", e);
-        return "Saving failed. Tell the expert the Work Map could not be saved, then call end_call.";
+        return "Saving failed. Tell the expert the Work Map could not be saved and ask whether to try again; if they say yes, call confirm_work_map again.";
       }
+    },
+    edit_work_map: async (p: Record<string, unknown>) => {
+      const x = s.current;
+      const response = await fetch(`${BACKEND_URL}/api/v1/sessions/${x.sessionId}/edit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...p, said: spoken(str(p["said"])), t: clock() }),
+      }).catch(() => null);
+      if (!response)
+        return "The edit could not reach the backend. Tell the expert and offer to try again.";
+      const body = (await response.json().catch(() => ({}))) as {
+        change?: string;
+        stale?: string;
+        summary?: string;
+        detail?: string;
+      };
+      if (!response.ok)
+        return `Not changed: ${body.detail ?? `the backend answered ${response.status}`}. Ask the expert which item they mean, or what it should say.`;
+      const item: Capture = {
+        kind: "correction",
+        title: body.change ?? "Work Map changed",
+        detail: str(p["said"]),
+        ...latest.current.moment(),
+      };
+      latest.current.onCapture?.(item, x.node);
+      setState((st) => ({ ...st, captures: [...st.captures, item] }));
+      const next = body.stale
+        ? `These fields still carry the old value: ${body.stale}. Call edit_work_map to change only those fields so the map agrees, then say the new version back in one short sentence and ask if that is right.`
+        : "Say the new version back in one short sentence and ask if that is right.";
+      return `Done: ${body.change}. The Work Map now:\n${body.summary}\n\n${next}`;
+    },
+    read_work_map: async () => {
+      const x = s.current;
+      const response = await fetch(`${BACKEND_URL}/api/v1/sessions/${x.sessionId}/summary`).catch(
+        () => null,
+      );
+      if (!response?.ok)
+        return "The Work Map is not saved yet, or the backend could not be reached. Go on from what you remember.";
+      const body = (await response.json()) as { summary: string };
+      return `The Work Map as saved (ids are for edit_work_map):\n${body.summary}\n\nRead the items one at a time, starting where the expert asked, and after each ask whether it is right.`;
     },
   });
 
@@ -350,7 +496,14 @@ export function useApprentice(options: {
       gated: false,
       agentSpeaking: false,
       taskDone: false,
-      guardrailAsked: false,
+      asked: [],
+      pauseReply: false,
+      guardrailCaptured: false,
+      agentDoneAt: -Infinity,
+      recent: [],
+      wrapUp: false,
+      wrapUpPrompts: 0,
+      wrapUpLimit: 0,
     };
     setState({ ...initialState, status: "connecting" });
     try {
@@ -378,6 +531,7 @@ export function useApprentice(options: {
             gate();
           } else {
             x.agentSpeaking = false;
+            x.agentDoneAt = performance.now();
             endUtterance();
           }
           setState((st) => ({ ...st, botSpeaking: mode === "speaking" && !x.muted }));
@@ -391,6 +545,11 @@ export function useApprentice(options: {
             if (!gate()) return; // muted: the expert never heard it, so it is not part of the record
             x.transcript.push({ role: "apprentice", text, t: clock(), phase });
             if (x.grant === "start") return; // "Go ahead." is not a question
+            if (x.pauseReply) {
+              x.pauseReply = false;
+              // Only a question counts: "Got it." at a pause is not one.
+              if (x.node === "observing" && text.includes("?")) countQuestion(text);
+            }
             const moment = latest.current.moment();
             setState((st) => ({
               ...st,
@@ -436,7 +595,7 @@ export function useApprentice(options: {
       const message = error instanceof Error ? error.message : "";
       release(`Could not start the apprentice.${message ? ` ${message}` : ""}`);
     }
-  }, [clock, endUtterance, gate, release, saveDraft]);
+  }, [clock, countQuestion, endUtterance, gate, release, saveDraft]);
 
   /** End the session. Unless the map was confirmed, what was captured is still saved as a draft. */
   const stop = useCallback(() => {
@@ -470,6 +629,54 @@ export function useApprentice(options: {
     [clock],
   );
 
+  /** The task is over: hand over to the debrief. */
+  const finishWork = useCallback(() => {
+    const x = s.current;
+    if (x.taskDone) return;
+    x.taskDone = true;
+    if (x.wrapUp && !questionsMet(x))
+      console.log(
+        `[floor] debrief with ${counted(x)} of ${MIN_LIVE_QUESTIONS} live questions, guardrail ${guardrailAsked(x) ? "asked" : "not asked"}`,
+      );
+    x.wrapUp = false;
+    setState((st) => ({ ...st, wrapUp: false }));
+    conv.current?.sendUserMessage(
+      "[TASK DONE] The expert pressed End: the task is finished. Call start_debrief now.",
+    );
+  }, []);
+
+  /** Ask one of the questions still missing, about what the expert just did. */
+  const askWrapUp = useCallback(() => {
+    const x = s.current;
+    const need = MIN_LIVE_QUESTIONS - counted(x);
+    const howMany =
+      need > 0 ? `${need} more live question${need === 1 ? "" : "s"}` : "one more live question";
+    const guardrail = guardrailAsked(x)
+      ? ""
+      : " Make this one about a guardrail: a limit, an exception or when they would stop and ask someone.";
+    const screen = x.recent.map((e) => `[${mmss(e.t)}] ${e.text}`).join("; ") || "(nothing recent)";
+    const now = performance.now();
+    x.wrapUpPrompts += 1;
+    x.lastPauseAt = now;
+    x.floorOpenUntil = now + PAUSE_GRANT_MS;
+    x.grant = "pause";
+    console.log(`[floor] wrap-up ${x.wrapUpPrompts}: ${howMany}${guardrail ? ", guardrail" : ""}`);
+    conv.current?.sendUserMessage(
+      `[PAUSE] The expert pressed End and is waiting for you. Before the debrief you still need ${howMany}, about what they did on screen: ${screen}.${guardrail} Ask one short question now and wait for the answer. Do not call start_debrief yet.`,
+    );
+  }, []);
+
+  /** End was pressed before the live questions were asked: ask them now, then debrief. */
+  const startWrapUp = useCallback(() => {
+    const x = s.current;
+    x.wrapUp = true;
+    x.wrapUpPrompts = 0;
+    // One try per missing question, plus two for questions that don't count or aren't answered.
+    x.wrapUpLimit = Math.max(MIN_LIVE_QUESTIONS - counted(x), 1) + 2;
+    setState((st) => ({ ...st, wrapUp: true }));
+    askWrapUp();
+  }, [askWrapUp]);
+
   /** One of the pill's controls. */
   const send = useCallback(
     (type: "work.end" | "question.later" | "debrief.skip", data: Record<string, unknown> = {}) => {
@@ -478,11 +685,20 @@ export function useApprentice(options: {
       if (!c) return;
       if (type === "work.end" && live(x.node)) {
         if (x.taskDone) return;
-        x.taskDone = true;
-        c.sendUserMessage(
-          "[TASK DONE] The expert pressed End: the task is finished. Call start_debrief now.",
-        );
+        // Pressed again during the wrap-up: the expert wants the debrief now.
+        if (x.wrapUp || x.node !== "observing" || questionsMet(x)) finishWork();
+        else startWrapUp();
       } else if (type === "question.later" && x.node === "observing") {
+        // The question this pause was given no longer counts as asked.
+        const q = x.asked.at(-1);
+        if (q && !q.deferred && q.at >= x.lastPauseAt) {
+          q.deferred = true;
+          x.questionTimes = x.questionTimes.filter((at) => at !== q.at);
+          syncQuestions();
+          void post(`/sessions/${x.sessionId}/live_question/defer`, { t: q.t }).catch(
+            () => undefined,
+          );
+        }
         if (x.agentSpeaking) {
           x.muted = true;
           c.setVolume({ volume: 0 });
@@ -497,7 +713,7 @@ export function useApprentice(options: {
         c.sendUserMessage("[SKIP] Skip that question and ask your next one.");
       }
     },
-    [capture, clock],
+    [capture, clock, finishWork, startWrapUp, syncQuestions],
   );
 
   /** Something changed on screen: tell the agent silently, and note it as a step to maybe ask about. */
@@ -507,6 +723,7 @@ export function useApprentice(options: {
       if (!conv.current || x.offRecord) return;
       const t = clock();
       conv.current.sendContextualUpdate(`[SCREEN ${mmss(t)}] ${event.event}`);
+      x.recent = [...x.recent, { t, text: event.event }].slice(-6);
       if (x.node === "observing")
         x.pending.push({ at: performance.now(), kind: event.kind, text: event.event, t });
     },
@@ -534,6 +751,25 @@ export function useApprentice(options: {
       const speaking = now - x.lastSpeechAt < 400;
       setState((st) => (st.userSpeaking === speaking ? st : { ...st, userSpeaking: speaking }));
       if (!c || x.node !== "observing" || x.offRecord) return;
+      if (x.wrapUp) {
+        const next = decideWrapUp({
+          now,
+          speaking,
+          agentSpeaking: x.agentSpeaking,
+          lastSpeechAt: x.lastSpeechAt,
+          agentDoneAt: x.agentDoneAt,
+          grant: x.grant,
+          floorOpenUntil: x.floorOpenUntil,
+          lastPauseAt: x.lastPauseAt,
+          last: x.asked.at(-1),
+          met: questionsMet(x),
+          prompts: x.wrapUpPrompts,
+          limit: x.wrapUpLimit,
+        });
+        if (next === "ask") askWrapUp();
+        else if (next === "finish") finishWork();
+        return;
+      }
       const floor = decideFloor({
         now,
         observingSince: x.observingSince,
@@ -555,20 +791,20 @@ export function useApprentice(options: {
       x.lastPauseAt = now;
       x.floorOpenUntil = now + PAUSE_GRANT_MS;
       x.grant = "pause";
-      const asked = x.questionTimes.length;
+      const asked = counted(x);
       const ask =
         asked < MIN_LIVE_QUESTIONS
           ? `You have asked ${asked} of at least ${MIN_LIVE_QUESTIONS} questions, so ask one now, about something on screen.`
           : "Ask one short question if one of these hides a reason, a limit or a moment to stop and ask; otherwise call skip_turn.";
       const guardrail =
-        !x.guardrailAsked && asked >= MIN_LIVE_QUESTIONS - 1
+        !guardrailAsked(x) && asked >= MIN_LIVE_QUESTIONS - 1
           ? " No guardrail yet: make this one about a limit, an exception or when they would stop and ask someone."
           : "";
       console.log(`[floor] pause ${asked + 1} after: ${steps}`);
       c.sendUserMessage(`[PAUSE] The expert has stopped after: ${steps}. ${ask}${guardrail}`);
     }, 400);
     return () => clearInterval(timer);
-  }, [state.status]);
+  }, [state.status, askWrapUp, finishWork]);
 
   // Microphone level for the waveform.
   useEffect(() => {

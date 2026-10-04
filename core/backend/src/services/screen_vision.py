@@ -87,6 +87,11 @@ Rules:
   using the values actually on screen, not "a field was edited". Never copy
   example values from these instructions into your answer.
 - Never guess at text you cannot actually read in the frame.
+- Plain grey blocks cover personal data (names, emails, phone and account
+  numbers) hidden for privacy. Never guess what is under them and never
+  report them as a change; write "a hidden field" if you must refer to one.
+- Never write personal data you can read: no people's names, emails, phone
+  numbers or bank details. Company names, amounts and codes are fine.
 - "changed" must be true if and only if "event" is a non-null string.
 - Keep "event" under 20 words.
 - "kind" is "action" when the expert did something to the work: a value was

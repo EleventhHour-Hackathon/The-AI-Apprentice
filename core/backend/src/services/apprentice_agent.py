@@ -33,7 +33,7 @@ You speak out loud. Keep every turn to one short sentence, under twenty words, w
 HOW YOU SEE THE SCREEN
 Messages that begin with [SCREEN mm:ss] describe what changed on the expert's screen at that time in the session. They are your eyes. Never read them out, never narrate the expert's work back to them, and never say what you can or cannot see.
 
-THE SESSION HAS FOUR PHASES
+THE SESSION HAS FIVE PHASES
 
 1. START. Your first message already asked what they are doing today. Accept whatever they say, even if vague, call begin_observation with it, then say "Go ahead." and nothing else.
 
@@ -60,7 +60,16 @@ THE SESSION HAS FOUR PHASES
 
 4. TEACH-BACK. Explain the whole process back in your own words in under a minute: the steps in order, the judgment behind each decision, and every guardrail including when to stop and ask someone. Use their words for the reasons. Then ask plainly whether that is how it works.
 - If they correct you, call record_correction, say the corrected part back in one sentence, and ask again.
-- Only when they confirm it is right, call confirm_work_map, thank them in one sentence, and call end_call.
+- Only when they confirm it is right, call confirm_work_map.
+
+5. REVIEW. confirm_work_map returns the saved Work Map. Say in one sentence that it is saved, then ask whether they would like to change anything, and WAIT for their answer. The session is not over until they say so.
+- If they want something changed, removed or added ("change the first rule", "actually it's ten thousand", "drop step three", "add a rule about new suppliers"), call edit_work_map. Map "the first rule" or "step three" to the id from the latest map you were given. If it is unclear which item they mean, ask which one before editing. After the edit, say the new version back in one short sentence and ask if that is right.
+- If a change touches other items (the same number, name or rule appears in another step's reason or another rule), edit those too, so the map never contradicts itself.
+- If they change their mind again, edit again. The latest thing they said wins.
+- If they want to go through it again ("start again from the first", "go over the rules again", "read me step two"), call read_work_map, then read the items one at a time, starting where they asked (the first step if they did not say), and after each ask whether it is right. Edit as you go.
+- Only when they say there is nothing more to change ("no", "that's it", "all good", "we're done"), thank them in one short sentence and call end_call in that same turn.
+- Never ask "anything else?" or any other question in the turn you call end_call. If you ask a question, wait for the answer.
+- The same editing works in the DEBRIEF and TEACH-BACK: if the expert changes their mind about something already recorded, call edit_work_map (during the teach-back, record_correction also works).
 
 ALWAYS
 - Never echo the expert. Do not repeat, summarise or rephrase what they just said, except in the teach-back or a few words that set up a new question.
@@ -166,11 +175,42 @@ CLIENT_TOOLS = [
     ),
     _client_tool(
         "confirm_work_map",
-        "Call only when the expert has confirmed your teach-back is right. Saves the Work Map.",
+        "Call only when the expert has confirmed your teach-back is right. Saves the Work Map and returns it, "
+        "every step and rule with its id.",
         {},
         [],
         expects_response=True,
         response_timeout_secs=90,
+    ),
+    _client_tool(
+        "edit_work_map",
+        "Change, remove or add a step or rule in the saved Work Map because the expert asked to. Use the ids "
+        "from the latest map you were given. Returns the updated map.",
+        {
+            "action": _string("What to do", ["change", "remove", "add"]),
+            "item_id": _string("Id of the step or rule to change or remove, for example s2 or g1. Empty when adding."),
+            "what": _string("For add: a step or a rule", ["step", "rule"]),
+            "title": _string("Steps: the new wording of the step. Empty to keep it."),
+            "decision": _string("Steps: the new decision. Empty to keep it."),
+            "reason": _string("Steps: the new reason, in the expert's words. Empty to keep it."),
+            "rule": _string("Rules: the new wording of the rule. Empty to keep it."),
+            "kind": _string("Rules: the kind, if it changed", ["limit", "exception", "stop_and_ask"]),
+            "applies_when": _string("Rules: when it applies, if it changed. Empty to keep it."),
+            "ask_whom": _string("Rules: who to stop and ask, if it changed. Empty to keep it."),
+            "after_id": _string("For add: id of the item to put it after. Empty to add at the end."),
+            "said": _string("The expert's exact words asking for the change."),
+        },
+        ["action", "said"],
+        expects_response=True,
+        response_timeout_secs=20,
+    ),
+    _client_tool(
+        "read_work_map",
+        "Get the saved Work Map, every step and rule with its id, to go through it again with the expert.",
+        {},
+        [],
+        expects_response=True,
+        response_timeout_secs=20,
     ),
 ]
 

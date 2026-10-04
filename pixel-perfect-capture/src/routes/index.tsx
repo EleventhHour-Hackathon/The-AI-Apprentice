@@ -107,6 +107,26 @@ function Index() {
             </Button>
           </div>
           {notice && <p className="mt-4 text-xs text-muted-foreground">{notice}</p>}
+          <p className="mt-6 text-xs text-muted-foreground">
+            No workflow of your own?{" "}
+            <button
+              className="underline underline-offset-2 hover:text-foreground"
+              title="A practice ERP with the challenge's invoices; share its window"
+              onClick={() => window.open("/sandbox", "ledgerly", "width=1280,height=860")}
+            >
+              Open the practice ERP
+            </button>{" "}
+            (expert set) or{" "}
+            <button
+              className="underline underline-offset-2 hover:text-foreground"
+              onClick={() =>
+                window.open("/sandbox?set=newhire", "ledgerly", "width=1280,height=860")
+              }
+            >
+              the new hire’s case
+            </button>
+            .
+          </p>
         </div>
       </div>
       {shell === "web" &&

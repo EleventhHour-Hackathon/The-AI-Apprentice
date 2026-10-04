@@ -71,6 +71,22 @@ def add_capture(session_id: str, capture: Dict[str, Any]) -> bool:
         )
 
 
+def defer_live_question(session_id: str, t: float) -> bool:
+    """Mark the live question asked at t as put off for the debrief. False if there is none."""
+    with _connect() as conn:
+        row = conn.execute("select captures from work_maps where id = %s for update", (session_id,)).fetchone()
+        if row is None:
+            return False
+        captures = row["captures"] or []
+        found = False
+        for capture in captures:
+            if capture.get("kind") == "live_question" and abs((capture.get("t") or 0) - t) < 0.01:
+                capture["deferred"] = found = True
+        if found:
+            conn.execute("update work_maps set captures = %s where id = %s", (Jsonb(captures), session_id))
+        return found
+
+
 def add_screen_event(session_id: str, event: Dict[str, Any]) -> None:
     with _connect() as conn:
         conn.execute(
@@ -130,6 +146,16 @@ def list_summaries() -> List[Dict[str, Any]]:
             """
         ).fetchall()
     return [_row(r) for r in rows]
+
+
+def expired_unconfirmed(days: int) -> List[str]:
+    """Sessions never confirmed by the expert and recorded more than `days` days ago."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "select id from work_maps where not confirmed and recorded_at < now() - make_interval(days => %s)",
+            (days,),
+        ).fetchall()
+    return [str(r["id"]) for r in rows]
 
 
 def get(work_map_id: str) -> Optional[Dict[str, Any]]:

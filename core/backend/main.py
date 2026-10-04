@@ -7,6 +7,7 @@ import uvicorn
 from src.core.config import Config
 from src.router.path_router import router
 from src.services import recordings
+from storage import work_maps as work_map_store
 from src.utils.logger import intercept_standard_logging, logger
 
 intercept_standard_logging()
@@ -44,6 +45,37 @@ async def push_pending_media():
             logger.warning(f"Couldn't push waiting recordings and clips: {e}")
 
     asyncio.get_running_loop().create_task(push())
+
+
+# Unconfirmed Work Maps are kept this long (the Work Maps page counts down to it).
+UNCONFIRMED_RETENTION_DAYS = 30
+
+
+def purge_unconfirmed() -> int:
+    """Delete Work Maps the expert never confirmed, with their video, once they expire."""
+    purged = 0
+    for work_map_id in work_map_store.expired_unconfirmed(UNCONFIRMED_RETENTION_DAYS):
+        try:
+            recordings.delete(work_map_id)  # video first: the row says where it is
+            purged += work_map_store.delete(work_map_id)
+        except Exception as e:
+            logger.warning(f"Couldn't delete expired Work Map {work_map_id}: {e}")
+    return purged
+
+
+@app.on_event("startup")
+async def purge_expired_work_maps():
+    async def loop():
+        while True:
+            try:
+                purged = await asyncio.to_thread(purge_unconfirmed)
+                if purged:
+                    logger.info(f"Deleted {purged} unconfirmed Work Maps older than {UNCONFIRMED_RETENTION_DAYS} days")
+            except Exception as e:
+                logger.warning(f"Couldn't purge expired Work Maps: {e}")
+            await asyncio.sleep(24 * 3600)
+
+    asyncio.get_running_loop().create_task(loop())
 
 if __name__ == "__main__":
     logger.info(f"Starting application server in {Config.ENVIRONMENT} mode")

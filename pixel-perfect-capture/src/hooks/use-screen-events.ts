@@ -62,6 +62,13 @@ export function useScreenEvents(
     session: { id: string; clock: () => number } | null;
     onEvent: (event: ScreenEvent) => void;
     onActivity: () => void;
+    /**
+     * Awaited before a frame is taken; false skips the sample. The privacy shield uses it
+     * to make sure what is on screen now has been scanned (see use-privacy-shield).
+     */
+    beforeSample?: () => Promise<boolean>;
+    /** How often to look with the vision model; the tutor looks more often, to step in in time. */
+    sampleIntervalMs?: number;
   },
 ) {
   const latest = useRef(options);
@@ -127,9 +134,11 @@ export function useScreenEvents(
       if (previous && luminanceDiff(current, previous).mean <= DIFF_THRESHOLD) return;
 
       inFlightRef.current = true;
-      const session = latest.current.session;
-      const t = session?.clock() ?? 0;
       try {
+        const ready = (await latest.current.beforeSample?.()) ?? true;
+        if (!ready || cancelled || !latest.current.enabled) return;
+        const session = latest.current.session;
+        const t = session?.clock() ?? 0;
         frameCanvas.width = FRAME_WIDTH;
         frameCanvas.height = Math.round(element.videoHeight * (FRAME_WIDTH / element.videoWidth));
         frameCtx.drawImage(element, 0, 0, frameCanvas.width, frameCanvas.height);
@@ -162,7 +171,10 @@ export function useScreenEvents(
     };
 
     const activityTimer = setInterval(watchActivity, ACTIVITY_INTERVAL_MS);
-    const sampleTimer = setInterval(() => void sample(), SAMPLE_INTERVAL_MS);
+    const sampleTimer = setInterval(
+      () => void sample(),
+      latest.current.sampleIntervalMs ?? SAMPLE_INTERVAL_MS,
+    );
     return () => {
       cancelled = true;
       clearInterval(activityTimer);

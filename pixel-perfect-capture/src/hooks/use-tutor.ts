@@ -10,6 +10,8 @@ export type LessonStep = {
   decision: string;
   reason: string;
   quote: string;
+  /** "narration": said while doing it, not a reason. */
+  quote_kind?: string;
   judgment: boolean;
   at: number | null;
   thumb: string | null;

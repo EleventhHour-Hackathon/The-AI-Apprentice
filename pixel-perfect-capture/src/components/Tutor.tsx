@@ -8,10 +8,12 @@ import {
   type ReactNode,
 } from "react";
 import { AppWindow, Check, CheckCheck, Hand, Lightbulb, Monitor, Square, X } from "lucide-react";
+import { ClipPlayer } from "@/components/ClipPlayer";
 import { Button } from "@/components/ui/button";
 import { Icon, Kbd } from "@/components/Sia";
 import { VoiceWave } from "./VoiceWave";
 import { useScreenEvents } from "@/hooks/use-screen-events";
+import { usePrivacyShield } from "@/hooks/use-privacy-shield";
 import { useTutor, type LessonStep } from "@/hooks/use-tutor";
 import { taskTitle } from "@/lib/work-maps";
 
@@ -50,7 +52,7 @@ export function Tutor({
     let display: MediaStream;
     try {
       display = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: 2 },
+        video: { frameRate: 5 },
         audio: false,
       });
     } catch {
@@ -73,12 +75,23 @@ export function Tutor({
   }, [begin]);
 
   const working = tutor.status === "connected" && !tutor.report;
-  useScreenEvents(screen, {
+  // The new hire's screen is shielded the same way: personal data never leaves the machine.
+  const shield = usePrivacyShield(screen);
+  useScreenEvents(shield.stream, {
     enabled: working,
     session: null, // lessons don't keep screen moments; the expert's are what gets replayed
     onEvent: tutor.reportScreen,
     onActivity: tutor.reportActivity,
+    beforeSample: shield.fresh,
+    // A wrong decision has to be caught before the new hire confirms it.
+    sampleIntervalMs: 1000,
   });
+  useEffect(() => {
+    if (shield.status === "failed")
+      setScreenError(
+        "The privacy shield couldn’t start, so your screen isn’t being shared. Check the connection and start again.",
+      );
+  }, [shield.status]);
 
   useEffect(() => {
     if (!working) return;
@@ -362,15 +375,11 @@ function ExpertMoment({ step }: { step: LessonStep }) {
   return (
     <figure className="mt-3 rounded-xl bg-pill-raised p-2.5">
       {step.clip ? (
-        <video
+        <ClipPlayer
           src={`${BACKEND_URL}${step.clip}`}
-          poster={step.thumb ?? undefined}
-          aria-label={`The expert doing it: ${step.title}`}
+          poster={step.thumb}
+          label={`The expert doing it: ${step.title}`}
           autoPlay
-          muted
-          loop
-          playsInline
-          className="w-full rounded-lg border border-pill-border bg-black"
         />
       ) : (
         step.thumb && (
@@ -386,8 +395,11 @@ function ExpertMoment({ step }: { step: LessonStep }) {
           THE EXPERT{step.at !== null ? ` · ${fmt(step.at)}` : ""}
         </span>
         <p className="mt-0.5">{step.decision || step.title}</p>
-        {(step.quote || step.reason) && (
-          <p className="mt-1 italic text-pill-foreground/80">“{step.quote || step.reason}”</p>
+        {/* The expert's reason; what they only said while doing it is not one. */}
+        {((step.quote_kind !== "narration" && step.quote) || step.reason) && (
+          <p className="mt-1 italic text-pill-foreground/80">
+            “{(step.quote_kind !== "narration" && step.quote) || step.reason}”
+          </p>
         )}
       </figcaption>
     </figure>

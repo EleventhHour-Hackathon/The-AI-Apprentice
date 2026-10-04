@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode, type CSSProperties } from "react";
-import { AlertCircle, AppWindow, ArrowRight, Check, CheckCheck, CheckCircle2, Clock, Hand, Loader2, Mic, MicOff, Minus, Monitor, Pause, Play, Square, X } from "lucide-react";
+import { AlertCircle, AppWindow, ArrowRight, Check, CheckCheck, CheckCircle2, Clock, Hand, Loader2, Mic, MicOff, Minus, Monitor, Pause, ShieldCheck, Play, Square, X } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { VoiceWave } from "./VoiceWave";
 import { useApprentice, type Capture, type FlowNode } from "@/hooks/use-apprentice";
 import { useScreenEvents } from "@/hooks/use-screen-events";
 import { useScreenRecording } from "@/hooks/use-screen-recording";
-import type { Floor } from "@/lib/floor";
+import { usePrivacyShield } from "@/hooks/use-privacy-shield";
+import { MIN_LIVE_QUESTIONS, type Floor } from "@/lib/floor";
 import { count } from "@/lib/work-maps";
 import { desktop } from "@/lib/desktop";
 
@@ -16,7 +17,7 @@ const colors = { idle: "text-pill-muted", connecting: "text-pill-muted", watchin
 const labels = { idle: "Idle", connecting: "Connecting", watching: "Learning", raised: "Raised", gotit: "Answer captured", debriefing: "Debrief", debrief: "Debrief" };
 /** While watching, why the apprentice is quiet (lib/floor.ts). */
 const floorLabels: Record<Floor, string> = { talking: "Listening", busy: "Watching", reading: "Reading along", waiting: "Learning", quiet: "Learning", ask: "Learning" };
-const stages: Partial<Record<FlowNode, string>> = { debrief: "DEBRIEF", teach_back: "TEACH-BACK", end: "WRAPPING UP" };
+const stages: Partial<Record<FlowNode, string>> = { debrief: "DEBRIEF", teach_back: "TEACH-BACK", end: "REVIEW" };
 const kinds = { step: "Step", guardrail: "Rule", open_question: "Open question", correction: "Correction" };
 /** The note shown once a session ends; "saved" shows what went into the Work Map instead of a detail. */
 const ack = {
@@ -48,9 +49,11 @@ export function Sia({ onOpenApp, onLesson }: { onOpenApp?: () => void; onLesson?
     onCapture: (capture, node) => { if (isWork(node) && capture.kind !== "open_question") setGotit(capture); },
   });
   const work = voice.status === "connected" && isWork(voice.node);
-  const screenEvents = useScreenEvents(screen, { enabled: work && !paused && !offRecord, session: voice.session, onEvent: voice.reportScreen, onActivity: voice.reportActivity });
+  // Only the shielded copy, with personal data painted over, is watched, sampled or recorded.
+  const shield = usePrivacyShield(screen);
+  const screenEvents = useScreenEvents(shield.stream, { enabled: work && !paused && !offRecord, session: voice.session, onEvent: voice.reportScreen, onActivity: voice.reportActivity, beforeSample: shield.fresh });
   snapshot.current = screenEvents.snapshot;
-  useScreenRecording(screen, { enabled: work && !paused && !offRecord, session: voice.session });
+  useScreenRecording(shield.stream, { enabled: work && !paused && !offRecord, session: voice.session });
   const level = paused || offRecord ? 0 : voice.level;
 
   const current = voice.exchanges.at(-1);
@@ -58,6 +61,8 @@ export function Sia({ onOpenApp, onLesson }: { onOpenApp?: () => void; onLesson?
   const steps = voice.captures.filter(c => c.kind === "step").length;
   const rules = voice.captures.filter(c => c.kind === "guardrail").length;
   const parked = voice.captures.filter(c => c.kind === "open_question").length;
+  const asked = voice.liveQuestions.filter(q => !q.deferred).length;
+  const missing = Math.max(MIN_LIVE_QUESTIONS - asked, 0);
   const raised = work && Boolean(current) && dismissed !== currentIndex && (voice.botSpeaking || voice.userSpeaking || !quiet);
   const state: SiaState = voice.status === "idle" ? "idle" : voice.status === "connecting" ? "connecting" : voice.status === "closed" ? "debrief" : !isWork(voice.node) ? "debriefing" : gotit ? "gotit" : raised ? "raised" : "watching";
   const recording = state === "connecting" || state === "watching" || state === "raised" || state === "gotit";
@@ -165,10 +170,10 @@ export function Sia({ onOpenApp, onLesson }: { onOpenApp?: () => void; onLesson?
   const expanded = state === "raised" || state === "gotit" || state === "debriefing" || state === "debrief";
   const width = state === "idle" ? 310 : expanded && state !== "debrief" ? 440 : 380;
   const color = offRecord || paused ? "text-pill-muted" : colors[state];
-  const statusLabel = offRecord ? "Off the record" : paused ? "Paused" : state === "raised" && voice.node === "session_start" ? "Getting started" : state === "watching" ? floorLabels[voice.floor] : labels[state];
+  const statusLabel = offRecord ? "Off the record" : paused ? "Paused" : state === "raised" && voice.node === "session_start" ? "Getting started" : state === "watching" ? (voice.wrapUp ? "Before the debrief" : floorLabels[voice.floor]) : labels[state];
   const answer = (current?.answer ? `${current.answer} ${voice.partial}` : voice.partial).trim();
   const speechLabel = offRecord ? "Off the record" : paused ? "Paused" : current?.captured && !voice.botSpeaking ? "Answer captured" : voice.botSpeaking ? "Asking" : level > .08 ? "Listening to you" : "Ready for your voice";
-  const error = voice.error ?? screenError;
+  const error = voice.error ?? (screenError || (recording && shield.status === "failed" ? "The privacy shield couldn’t start (it needs to download text recognition once), so your screen isn’t being shared. Check the connection and start again." : ""));
   // Folded away is fine while it just watches; anything that needs the expert opens it again.
   useEffect(() => { if (state === "raised" || state === "debriefing" || state === "debrief" || error) setMinimized(false); }, [state, error]);
 
@@ -182,14 +187,21 @@ export function Sia({ onOpenApp, onLesson }: { onOpenApp?: () => void; onLesson?
             {statusLabel}
           </span>
           <div className="ml-auto flex shrink-0 items-center gap-1">
-            {screen && recording && <span className="mr-1 text-pill-muted" title="Watching your screen"><Monitor size={12} /></span>}
+            {screen && recording && <span className={`mr-1 flex items-center gap-0.5 ${shield.status === "failed" ? "text-voice-raised" : "text-pill-muted"}`} title={shield.status === "on" ? `Privacy shield on: ${shield.hidden ? `${count(shield.hidden, "item")} of personal data hidden` : "no personal data on screen right now"}. Nothing leaves this machine unshielded.` : shield.status === "starting" ? "Privacy shield starting: the screen isn't shared until it has checked it" : "Privacy shield couldn't start, so the screen isn't being shared"}>{shield.status === "on" ? <ShieldCheck size={12} /> : <Monitor size={12} />}{shield.status === "on" && shield.hidden > 0 && <span className="font-mono text-[10px]">{shield.hidden}</span>}</span>}
             {recording && <span className="mr-1 font-mono text-[11px] tabular-nums text-pill-muted">{fmt(seconds)}</span>}
             {state === "idle" ? <Button className="voice-cta" onClick={() => void startSession()} title="Start session (S)"><Mic size={13} />Start session<Kbd>S</Kbd></Button> : state === "debrief" ? <Icon title="Close (Esc)" onClick={close}><X /></Icon> : <><Icon title={paused ? "Resume (R)" : "Pause (R)"} onClick={toggleMute}>{paused ? <Play /> : <Pause />}</Icon><Icon title="Off the record (O)" pressed={offRecord} onClick={toggleOffRecord}>{offRecord ? <MicOff /> : <Mic />}</Icon>{recording && <Icon title="End session (S)" onClick={state === "connecting" ? endSession : endWork}><Square size={12} /></Icon>}</>}
             <Icon title="Minimize" onClick={() => setMinimized(true)}><Minus /></Icon>
             {onOpenApp && <Icon title="Open app" onClick={onOpenApp}><AppWindow /></Icon>}
           </div>
         </div>
-        {state === "watching" && (steps + rules + parked > 0) && <div className="pb-3 text-center text-[11px] text-pill-muted">{[steps && count(steps, "step"), rules && count(rules, "rule"), parked && `${parked} saved for later`].filter(Boolean).join(" · ")}</div>}
+        {state === "watching" && voice.node === "observing" && <div className="pb-3 text-center text-[11px] text-pill-muted">
+          <span title={`The apprentice asks at least ${MIN_LIVE_QUESTIONS} questions while you work, one about a limit, an exception or when to stop and ask`}>
+            <span className={asked >= MIN_LIVE_QUESTIONS ? "text-voice-listening" : ""}>Questions {asked}/{MIN_LIVE_QUESTIONS}</span>{" · "}
+            <span className={voice.guardrailAsked ? "text-voice-listening" : ""}>Guardrail {voice.guardrailAsked ? "✓" : "–"}</span>
+          </span>
+          {[steps && count(steps, "step"), rules && count(rules, "rule"), parked && `${parked} saved for later`].filter(Boolean).map(part => ` · ${part}`)}
+          {voice.wrapUp && <p className="mt-1.5 text-pill-foreground/80">{missing > 0 ? `${missing} more question${missing === 1 ? "" : "s"}` : "One more question"}{voice.guardrailAsked ? "" : ", one about a rule"}, then the debrief. Press End again to skip.</p>}
+        </div>}
         {state === "raised" && current && <div className="border-t border-pill-border px-4 pb-4 pt-3 sia-fade">
           <p className="text-sm leading-snug">{current.question}</p>
           <div className="mt-3 flex gap-2"><span className="mt-0.5 text-[10px] text-pill-muted">YOU</span><p className="voice-caption text-[13px] leading-relaxed text-pill-foreground/80">{answer || "Listening…"}</p></div>

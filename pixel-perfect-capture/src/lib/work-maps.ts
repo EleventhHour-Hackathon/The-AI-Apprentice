@@ -3,6 +3,10 @@ import { BACKEND_URL } from "@/lib/backend";
 // Saved by the backend (core/backend/src/services/work_map_merge.py). Maps from before the
 // merge existed have fewer fields; normalizeMap fills them in so both open the same way.
 type Source = "live" | "debrief" | "none";
+/** "reason": the expert's reason in their words; "narration": what they said while doing it. */
+export type QuoteKind = "reason" | "narration" | "none";
+/** Where a guardrail's (or added step's) screen moment comes from; "model" is the merge's guess. */
+export type AtSource = "said" | "step" | "nearby" | "model" | "none";
 export type WorkMapStep = {
   id: string;
   title: string;
@@ -15,6 +19,8 @@ export type WorkMapStep = {
   quote: string;
   quote_at: number | null;
   quote_source: Source;
+  quote_kind: QuoteKind;
+  at_source: AtSource;
   judgment: boolean;
   thumb: string | null;
   /** A few seconds of the expert doing this step (mp4), if the screen was recorded. */
@@ -33,7 +39,9 @@ export type WorkMapGuardrail = {
   quote: string;
   quote_at: number | null;
   quote_source: Source;
+  quote_kind: QuoteKind;
   at: number | null;
+  at_source: AtSource;
   thumb: string | null;
   clip: string | null;
   event: string | null;
@@ -51,6 +59,15 @@ export type WorkMapRecord = {
   open_questions: string[];
   corrections?: string[];
   transcript?: Record<string, unknown>[];
+  /** Questions the apprentice asked at pauses while the expert worked (from the backend). */
+  live_questions?: LiveQuestionRecord[];
+};
+export type LiveQuestionRecord = {
+  t: number | null;
+  text: string;
+  kind: "guardrail" | "reason" | "other";
+  /** Put off for the debrief with Later. */
+  deferred: boolean;
 };
 export type WorkMap = Omit<WorkMapRecord, "steps" | "guardrails" | "transcript"> & {
   steps: WorkMapStep[];
@@ -62,6 +79,17 @@ const text = (v: unknown) => (typeof v === "string" ? v : "");
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 const clipUrl = (v: unknown) => (text(v) ? `${BACKEND_URL}${text(v)}` : null);
 const source = (v: unknown): Source => (v === "live" || v === "debrief" ? v : "none");
+// Maps merged before quote_kind existed only kept reasons.
+const quoteKind = (v: unknown, quote: string): QuoteKind =>
+  v === "reason" || v === "narration" ? v : quote ? "reason" : "none";
+const atSource = (v: unknown): AtSource =>
+  v === "said" || v === "step" || v === "nearby" || v === "model" ? v : "none";
+
+/** What an item is missing to be fully linked: its screen moment and/or the expert's words. */
+export const unlinked = (item: { at: number | null; quote: string }) =>
+  [item.at === null && "screen moment", !item.quote && "expert's words"].filter((x): x is string =>
+    Boolean(x),
+  );
 
 export function normalizeMap(record: WorkMapRecord): WorkMap {
   const steps = record.steps.map((s, i): WorkMapStep => ({
@@ -74,6 +102,8 @@ export function normalizeMap(record: WorkMapRecord): WorkMap {
     quote: text(s["quote"]),
     quote_at: num(s["quote_at"]),
     quote_source: source(s["quote_source"]),
+    quote_kind: quoteKind(s["quote_kind"], text(s["quote"])),
+    at_source: atSource(s["at_source"]),
     judgment: typeof s["judgment"] === "boolean" ? s["judgment"] : Boolean(text(s["decision"])),
     thumb: text(s["thumb"]) || null,
     clip: clipUrl(s["clip"]),
@@ -97,7 +127,9 @@ export function normalizeMap(record: WorkMapRecord): WorkMap {
       quote: text(g["quote"]),
       quote_at: num(g["quote_at"]),
       quote_source: source(g["quote_source"]),
+      quote_kind: quoteKind(g["quote_kind"], text(g["quote"])),
       at: num(g["at"]),
+      at_source: atSource(g["at_source"]),
       thumb: text(g["thumb"]) || null,
       clip: clipUrl(g["clip"]),
       event: text(g["event"]) || null,

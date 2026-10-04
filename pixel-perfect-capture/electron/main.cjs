@@ -9,6 +9,7 @@ const {
   session,
   systemPreferences,
 } = require("electron");
+const fs = require("node:fs");
 const path = require("node:path");
 
 app.setName("Tacit");
@@ -22,16 +23,52 @@ const BOTTOM_GAP = 12;
 let mainWindow = null;
 let pillWindow = null;
 let pillHeight = PILL_MIN_HEIGHT;
+// Where the expert dragged the pill: the bottom centre of its window, in screen points.
+// null keeps it at the bottom centre of the primary display. The pill grows upwards from here.
+let pillAnchor = null;
+let dragFrom = null;
 
 const preload = path.join(__dirname, "preload.cjs");
+const anchorFile = () => path.join(app.getPath("userData"), "pill-position.json");
+
+function loadAnchor() {
+  try {
+    const { x, y } = JSON.parse(fs.readFileSync(anchorFile(), "utf8"));
+    if (Number.isFinite(x) && Number.isFinite(y)) pillAnchor = { x, y };
+  } catch {
+    pillAnchor = null;
+  }
+}
+
+function saveAnchor() {
+  try {
+    if (pillAnchor) fs.writeFileSync(anchorFile(), JSON.stringify(pillAnchor));
+    else fs.rmSync(anchorFile(), { force: true });
+  } catch {
+    // Only a convenience; the pill still works where it is.
+  }
+}
+
+function defaultAnchor() {
+  const { workArea } = screen.getPrimaryDisplay();
+  return { x: workArea.x + workArea.width / 2, y: workArea.y + workArea.height - BOTTOM_GAP };
+}
 
 function placePill() {
   if (!pillWindow) return;
-  const { workArea } = screen.getPrimaryDisplay();
-  const height = Math.min(pillHeight, workArea.height - BOTTOM_GAP);
+  const anchor = pillAnchor ?? defaultAnchor();
+  // Keep the whole window on the display it was dropped on, even if that display changed.
+  const { workArea } = screen.getDisplayNearestPoint({
+    x: Math.round(anchor.x),
+    y: Math.round(anchor.y),
+  });
+  const height = Math.min(pillHeight, workArea.height);
+  const clamp = (v, min, max) => Math.min(Math.max(v, min), max);
   pillWindow.setBounds({
-    x: Math.round(workArea.x + (workArea.width - PILL_WIDTH) / 2),
-    y: Math.round(workArea.y + workArea.height - height - BOTTOM_GAP),
+    x: Math.round(
+      clamp(anchor.x - PILL_WIDTH / 2, workArea.x, workArea.x + workArea.width - PILL_WIDTH),
+    ),
+    y: Math.round(clamp(anchor.y - height, workArea.y, workArea.y + workArea.height - height)),
     width: PILL_WIDTH,
     height,
   });
@@ -103,6 +140,28 @@ ipcMain.on("pill:resize", (_event, height) => {
   pillHeight = Math.max(PILL_MIN_HEIGHT, Math.ceil(height));
   placePill();
 });
+// Dragging: the renderer sends how far the cursor has moved since the drag began.
+ipcMain.on("pill:drag-start", () => {
+  dragFrom = pillAnchor ?? defaultAnchor();
+});
+ipcMain.on("pill:drag", (_event, dx, dy) => {
+  if (!dragFrom || !Number.isFinite(dx) || !Number.isFinite(dy)) return;
+  pillAnchor = { x: dragFrom.x + dx, y: dragFrom.y + dy };
+  placePill();
+});
+ipcMain.on("pill:drag-end", () => {
+  if (!dragFrom || !pillWindow) return;
+  dragFrom = null;
+  // Store where it actually landed, after clamping to the screen.
+  const b = pillWindow.getBounds();
+  pillAnchor = { x: b.x + b.width / 2, y: b.y + b.height };
+  saveAnchor();
+});
+ipcMain.on("pill:reset-position", () => {
+  pillAnchor = null;
+  saveAnchor();
+  placePill();
+});
 ipcMain.on("pill:interactive", (_event, interactive) => {
   pillWindow?.setIgnoreMouseEvents(!interactive, { forward: true });
 });
@@ -117,8 +176,7 @@ ipcMain.on("pill:command", (_event, command) => {
     // Bring the app window forward on a page of the app, e.g. open:/work-maps/<id>.
     mainWindow?.loadURL(`${APP_URL}${command.slice("open:".length)}`);
     showMain();
-  }
-  else if (typeof command === "string" && command.startsWith("lesson:")) {
+  } else if (typeof command === "string" && command.startsWith("lesson:")) {
     // A new hire works their own screen: get the app window out of the way.
     commandPill(command);
     mainWindow?.minimize();
@@ -159,7 +217,9 @@ app.whenReady().then(async () => {
     }
   });
 
+  loadAnchor();
   screen.on("display-metrics-changed", placePill);
+  screen.on("display-removed", placePill);
   createMain();
   createPill();
 });

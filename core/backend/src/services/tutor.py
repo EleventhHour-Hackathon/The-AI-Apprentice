@@ -37,10 +37,15 @@ def work_map_text(work_map: Dict[str, Any]) -> str:
             line += " [judgment call]"
         if s.get("decision"):
             line += f"\n   Decision the expert made on their case: {s['decision']}"
-        if s.get("quote"):
+        narration = s.get("quote_kind") == "narration"
+        if s.get("quote") and not narration:
             line += f'\n   Expert\'s words: "{s["quote"]}"'
         elif s.get("reason"):
             line += f"\n   Reason: {s['reason']}"
+        if s.get("quote") and narration:
+            # What they said while doing it: context, not a reason to teach.
+            line += f'\n   Said while doing it (not a reason): "{s["quote"]}"'
+
         lines.append(line)
     lines.append("\nGUARDRAILS")
     for i, g in enumerate(work_map.get("guardrails") or [], 1):
@@ -72,6 +77,8 @@ Judge only the LATEST event:
 - "fixed": it corrects one of the already-flagged problems.
 - "ok": it is a step done the way the expert does it.
 - "none": nothing to judge (opening, viewing, scrolling, or not covered by the Work Map).
+
+A confirmation or review dialog before saving, posting, approving or sending is the last moment to step in: judge the values it shows (including ones that were pre-filled and never changed) and intervene if the expert's rules say they are wrong for this case. Merely opening a record with wrong pre-filled values is "none"; the mistake is going ahead with them.
 
 Only intervene when the Work Map clearly says so; never on a hunch, and never twice for the same flagged problem.
 
@@ -157,7 +164,9 @@ def report(work_map: Dict[str, Any], attempts: List[Dict[str, Any]]) -> Dict[str
                     **entry,
                     "why": "; ".join(why) + ".",
                     "expected": caught[0].get("expected", "") if caught else step.get("decision", ""),
-                    "expert_words": step.get("quote") or step.get("reason") or "",
+                    "expert_words": (step.get("quote") if step.get("quote_kind") != "narration" else "")
+                    or step.get("reason")
+                    or "",
                 }
             )
         elif right:
