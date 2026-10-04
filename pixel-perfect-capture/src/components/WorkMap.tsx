@@ -503,11 +503,18 @@ function Canvas({ map: record, onClose }: Props) {
         </div>
         <span
           className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] ${map.confirmed ? "" : "text-muted-foreground"}`}
+          title={
+            map.confirmed && map.confirmation
+              ? `The expert said: “${map.confirmation.said}”${map.confirmation.teach_back ? `\n\nTo the teach-back: “${map.confirmation.teach_back}”` : ""}`
+              : undefined
+          }
         >
           {map.confirmed ? (
             <>
               <CheckCheck size={12} className="text-voice-listening" />
-              Confirmed by expert
+              {map.confirmation
+                ? `Confirmed by the expert${map.confirmation.t !== null ? ` at ${mmss(map.confirmation.t)}` : ""}`
+                : "Confirmed by expert"}
             </>
           ) : (
             "Not confirmed"

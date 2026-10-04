@@ -121,3 +121,150 @@ export function decideWrapUp(w: WrapUpInput): "wait" | "ask" | "finish" {
   if (askedThisTime && !answered && w.now - quietSince < WRAP_UP_ANSWER_MS) return "wait";
   return w.met || w.prompts >= w.limit ? "finish" : "ask";
 }
+
+/*
+ * The debrief and the teach-back, after the task: the agent decides when it moves on, but the
+ * pill checks it first. start_teach_back is refused until the apprentice has asked at least
+ * MIN_DEBRIEF_QUESTIONS follow-ups, and confirm_work_map until it has explained the task back
+ * and the expert has answered.
+ */
+
+/** Follow-up questions the apprentice asks in the debrief before the teach-back. */
+export const MIN_DEBRIEF_QUESTIONS = 3;
+/** The teach-back has to explain the task, not just say "got it": at least this many words. */
+export const MIN_TEACH_BACK_WORDS = 25;
+
+const STOP_WORDS = new Set(
+  "about after again also always before could does doing from have into just like more much only should that their them then there these they this those what when where which while will with would your".split(
+    " ",
+  ),
+);
+/** Words that carry the meaning: lowercase, four letters or more, not a common word. */
+const contentWords = (text: string) =>
+  (text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).filter(
+    (w) => w.length >= 4 && !STOP_WORDS.has(w),
+  );
+/** Words in any language, including those written without spaces (Chinese, Japanese, Thai). */
+const words = new Intl.Segmenter(undefined, { granularity: "word" });
+const wordCount = (text: string) => [...words.segment(text)].filter((s) => s.isWordLike).length;
+
+/**
+ * The heuristics below can't be right in every one of the 72 languages, so the gate gives way:
+ * after this many refused start_teach_back calls the teach-back goes ahead, and after this many
+ * "explain first" replies to confirm_work_map the explanation counts as given. A clear no from
+ * the expert, or no answer at all, is never overridden.
+ */
+export const MAX_TEACH_BACK_REFUSALS = 3;
+export const MAX_EXPLAIN_REFUSALS = 2;
+
+/** A gap counts as asked when more than half of its content words appear in one asked question. */
+function alreadyAsked(gap: string, asked: string[]) {
+  const words = [...new Set(contentWords(gap))];
+  if (words.length === 0) return false;
+  return asked.some((q) => {
+    const said = new Set(contentWords(q));
+    return words.filter((w) => said.has(w)).length * 2 > words.length;
+  });
+}
+
+export type DebriefStatus = {
+  /** Enough follow-ups asked to go on to the teach-back (or refused often enough). */
+  met: boolean;
+  /** How many more to ask. */
+  remaining: number;
+  /** Gaps from the draft Work Map to ask about next, at most `remaining`. */
+  next: string[];
+};
+
+/**
+ * asked: the apprentice's debrief questions so far; gaps: the draft Work Map's open questions;
+ * refusals: start_teach_back calls refused so far this session.
+ */
+export function debriefStatus({
+  asked,
+  gaps,
+  refusals = 0,
+}: {
+  asked: string[];
+  gaps: string[];
+  refusals?: number;
+}): DebriefStatus {
+  const remaining = Math.max(0, MIN_DEBRIEF_QUESTIONS - asked.length);
+  const next = gaps.filter((g) => g.trim() && !alreadyAsked(g, asked)).slice(0, remaining);
+  return { met: remaining === 0 || refusals >= MAX_TEACH_BACK_REFUSALS, remaining, next };
+}
+
+/** "Is that right?" and the like: checking in, not asking about the task (English and German). */
+const CHECK_INS = [
+  /^is that (right|correct|ok|okay)$/,
+  /^did i get that right$/,
+  /^does that make sense$/,
+  /^is that how it works$/,
+  /^(right|correct|okay|ok)$/,
+  /^stimmt das$/,
+  /^ist das richtig$/,
+  /^passt das$/,
+  /^(oder|richtig)$/,
+];
+const normalized = (sentence: string) =>
+  sentence
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}' ]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+/**
+ * Question marks: ? ？ (CJK) ؟ (Arabic, Persian, Urdu) ՞ (Armenian) and the Greek question mark,
+ * which is ";" (or U+037E) in Greek script.
+ */
+const questionsIn = (text: string) =>
+  text.match(
+    /[\p{Script=Greek}]/u.test(text)
+      ? /[^.!。！?？؟՞;\u037E]*[?？؟՞;\u037E]/gu
+      : /[^.!。！?？؟՞\u037E]*[?？؟՞\u037E]/gu,
+  ) ?? [];
+
+/**
+ * An apprentice line asks a debrief question: one of its questions is more than a check-in.
+ * A check-in tagged onto a statement ("The limit is 5,000, right?") is one too.
+ */
+export function isDebriefQuestion(text: string) {
+  return questionsIn(text).some((q) => {
+    const s = normalized(q);
+    const tag = normalized(q.split(/[,，،]/).at(-1) ?? "");
+    return s !== "" && !CHECK_INS.some((c) => c.test(s) || c.test(tag));
+  });
+}
+
+/** The expert's answer to the teach-back says no, or yes with a correction (English and German). */
+const NOT_YES_START =
+  /^(no|nope|not|nein|nee|nicht|but|aber)\b|^(yes|yeah|yep|yup|ja)[\s,.!]*(but|aber)\b/;
+const NOT_YES_ANYWHERE =
+  /\b(not quite|not really|not exactly|that's wrong|that is wrong|not right|not correct|isn't right|except|nicht ganz|nicht richtig|stimmt nicht|falsch)\b|außer/;
+/** "Actually" is a correction only when the answer doesn't start with a clear yes. */
+const CLEAR_YES = /^(yes|yeah|yep|yup|exactly|correct|right|ja|genau|richtig|stimmt|passt)\b/;
+const SOFT_NO = /\b(actually|eigentlich)\b/;
+
+/**
+ * explained: what the apprentice said in the teach-back; confirmedBy: what the expert said after it.
+ * explain_first: it hasn't explained the task yet. await_confirmation: the expert hasn't answered.
+ * not_confirmed: the expert said no or corrected it. Other languages are never blocked.
+ * refusals: "explain first" replies already given this session.
+ */
+export function teachBackStatus({
+  explained,
+  confirmedBy,
+  refusals = 0,
+}: {
+  explained: string[];
+  confirmedBy: string;
+  refusals?: number;
+}): "explain_first" | "await_confirmation" | "not_confirmed" | "ok" {
+  if (wordCount(explained.join(" ")) < MIN_TEACH_BACK_WORDS && refusals < MAX_EXPLAIN_REFUSALS)
+    return "explain_first";
+  if (!confirmedBy.trim()) return "await_confirmation";
+  const said = confirmedBy.toLowerCase().replace(/[’]/g, "'").trim();
+  if (NOT_YES_START.test(said) || NOT_YES_ANYWHERE.test(said)) return "not_confirmed";
+  if (SOFT_NO.test(said) && !CLEAR_YES.test(said)) return "not_confirmed";
+  return "ok";
+}

@@ -2,9 +2,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { VoiceConversation } from "@elevenlabs/client";
 import { BACKEND_URL } from "@/lib/backend";
 import {
+  debriefStatus,
   decideFloor,
   decideWrapUp,
+  isDebriefQuestion,
+  MAX_EXPLAIN_REFUSALS,
+  MIN_DEBRIEF_QUESTIONS,
   MIN_LIVE_QUESTIONS,
+  teachBackStatus,
   type Floor,
   type ScreenKind,
 } from "@/lib/floor";
@@ -64,6 +69,8 @@ type ApprenticeState = {
   guardrailAsked: boolean;
   /** End was pressed before that: the apprentice is asking what is missing before the debrief. */
   wrapUp: boolean;
+  /** Follow-up questions asked in the debrief; the teach-back waits for MIN_DEBRIEF_QUESTIONS. */
+  debriefAsked: number;
 };
 
 const initialState: ApprenticeState = {
@@ -83,6 +90,7 @@ const initialState: ApprenticeState = {
   liveQuestions: [],
   guardrailAsked: false,
   wrapUp: false,
+  debriefAsked: 0,
 };
 
 /** After [PAUSE], how long the agent has to start asking before the floor closes again. */
@@ -200,6 +208,17 @@ export function useApprentice(options: {
     wrapUp: false,
     wrapUpPrompts: 0,
     wrapUpLimit: 0,
+    /** The draft Work Map's open questions, from start_debrief. */
+    gaps: [] as string[],
+    /** The apprentice's questions in the debrief. */
+    debriefQuestions: [] as string[],
+    /** What the apprentice said in the teach-back. */
+    teachBack: [] as string[],
+    /** The expert's last words after the teach-back began, with the session clock. */
+    teachBackReply: null as { text: string; t: number } | null,
+    /** Refused start_teach_back calls, and "explain first" replies to confirm_work_map (see floor.ts). */
+    teachBackRefusals: 0,
+    explainRefusals: 0,
   });
   const clock = useCallback(
     () => (s.current.startedAt ? (performance.now() - s.current.startedAt) / 1000 : 0),
@@ -319,15 +338,14 @@ export function useApprentice(options: {
   );
 
   const merge = useCallback(
-    async (final: boolean) => {
+    async (final: boolean, extra: Record<string, unknown> = {}) => {
       const x = s.current;
       setState((st) => ({ ...st, merging: true }));
       try {
-        return await post<{ brief: string; summary: string }>(`/sessions/${x.sessionId}/merge`, {
-          final,
-          transcript: x.transcript,
-          duration: clock(),
-        });
+        return await post<{ brief: string; summary: string; open_questions?: unknown }>(
+          `/sessions/${x.sessionId}/merge`,
+          { final, transcript: x.transcript, duration: clock(), ...extra },
+        );
       } finally {
         setState((st) => ({ ...st, merging: false }));
       }
@@ -397,6 +415,8 @@ export function useApprentice(options: {
       setNode("debrief");
       try {
         const result = await merge(false);
+        const gaps = result.open_questions;
+        s.current.gaps = Array.isArray(gaps) ? gaps.map(str).filter(Boolean) : [];
         return result.brief;
       } catch (e) {
         console.warn("[apprentice] draft merge failed", e);
@@ -404,12 +424,70 @@ export function useApprentice(options: {
       }
     },
     start_teach_back: () => {
+      const x = s.current;
+      if (x.node === "debrief") {
+        const status = debriefStatus({
+          asked: x.debriefQuestions,
+          gaps: x.gaps,
+          refusals: x.teachBackRefusals,
+        });
+        const asked = x.debriefQuestions.length;
+        if (status.met && status.remaining > 0)
+          console.info(
+            `[debrief] teach-back let through after ${x.teachBackRefusals} refusals: ${asked} of ${MIN_DEBRIEF_QUESTIONS} questions counted`,
+          );
+        if (!status.met) {
+          x.teachBackRefusals += 1;
+          const more = `Ask ${status.remaining} more, one at a time, waiting for each answer, then call start_teach_back.`;
+          const about = status.next.length
+            ? `Gaps still open:\n${status.next.map((g) => `- ${g}`).join("\n")}`
+            : "The gaps are covered, so ask about the edges: larger amounts, a new supplier, missing data, and who to ask when unsure.";
+          console.log(`[debrief] teach-back refused: ${asked} of ${MIN_DEBRIEF_QUESTIONS}`);
+          const reply = `Not yet: you have asked ${asked} of ${MIN_DEBRIEF_QUESTIONS} follow-up questions. Do not explain the task back yet. ${more}\n${about}`;
+          // The agent doesn't wait for this tool's reply, so it also hears it as a message.
+          conv.current?.sendUserMessage(`[NOT YET] ${reply}`);
+          return reply;
+        }
+      }
+      if (x.node !== "teach_back") {
+        // An explanation spoken before this call landed is part of the teach-back.
+        const lastExpert = x.transcript.map((l) => l.role).lastIndexOf("expert");
+        x.teachBack = x.transcript.slice(lastExpert + 1).map((l) => l.text);
+        x.teachBackReply = null;
+      }
       setNode("teach_back");
       return "Explain it back now.";
     },
     confirm_work_map: async () => {
+      const x = s.current;
+      if (x.node === "end")
+        return "The Work Map is already saved. Use edit_work_map for any change the expert asks for.";
+      const status =
+        x.node === "teach_back"
+          ? teachBackStatus({
+              explained: x.teachBack,
+              confirmedBy: x.teachBackReply?.text ?? "",
+              refusals: x.explainRefusals,
+            })
+          : "explain_first";
+      if (
+        x.node === "teach_back" &&
+        status !== "explain_first" &&
+        x.explainRefusals >= MAX_EXPLAIN_REFUSALS
+      )
+        console.info(`[teach-back] explanation taken as given after ${x.explainRefusals} refusals`);
+      if (status === "explain_first") {
+        if (x.node === "teach_back") x.explainRefusals += 1;
+        return `Not saved: ${x.node === "teach_back" ? "" : "call start_teach_back, then "}explain the whole task back first, then ask whether that is right; call confirm_work_map only after the expert says yes.`;
+      }
+      if (status === "await_confirmation")
+        return "Not saved: ask the expert whether that is right and wait for their answer.";
+      if (status === "not_confirmed")
+        return "Not saved: the expert hasn't said yes yet. If they corrected you, call record_correction and say the corrected part back first, then ask again.";
+      const reply = x.teachBackReply!;
+      const confirmation = { teach_back: x.teachBack.join(" "), said: reply.text, t: reply.t };
       try {
-        const result = await merge(true);
+        const result = await merge(true, { confirmation });
         setState((st) => ({ ...st, confirmed: true, saved: "saved" }));
         setNode("end");
         return `Saved. The Work Map as saved (ids are for edit_work_map):\n${result.summary}\n\nTell the expert in one sentence that it is saved, ask whether they would like to change anything, and wait for their answer. Do not call end_call yet.`;
@@ -506,6 +584,12 @@ export function useApprentice(options: {
         wrapUp: false,
         wrapUpPrompts: 0,
         wrapUpLimit: 0,
+        gaps: [],
+        debriefQuestions: [],
+        teachBack: [],
+        teachBackReply: null,
+        teachBackRefusals: 0,
+        explainRefusals: 0,
       };
       setState({ ...initialState, status: "connecting" });
       try {
@@ -548,6 +632,15 @@ export function useApprentice(options: {
             if (role === "agent") {
               if (!gate()) return; // muted: the expert never heard it, so it is not part of the record
               x.transcript.push({ role: "apprentice", text, t: clock(), phase });
+              if (x.node === "debrief" && isDebriefQuestion(text)) {
+                x.debriefQuestions.push(text);
+                const debriefAsked = x.debriefQuestions.length;
+                setState((st) => ({ ...st, debriefAsked }));
+              } else if (x.node === "teach_back") {
+                x.teachBack.push(text);
+                // Asking again (after a correction): the expert's earlier answer no longer counts.
+                if (text.includes("?")) x.teachBackReply = null;
+              }
               if (x.grant === "start") return; // "Go ahead." is not a question
               if (x.pauseReply) {
                 x.pauseReply = false;
@@ -567,6 +660,9 @@ export function useApprentice(options: {
             // Messages the pill sent on the expert's behalf ([PAUSE], [SKIP], ...) are not their words.
             if (text.startsWith("[")) return;
             x.transcript.push({ role: "expert", text, t: clock(), phase });
+            // What the expert said once the teach-back is under way: their answer to it.
+            if (x.node === "teach_back" && x.teachBack.length > 0)
+              x.teachBackReply = { text, t: clock() };
             if (x.node === "observing" && text.endsWith("?"))
               x.lastDirectQuestionAt = performance.now();
             setState((st) => {
@@ -716,6 +812,13 @@ export function useApprentice(options: {
         const question = str(data["question"]);
         if (question) capture("open_question", { question, screen_time: mmss(clock()) });
       } else if (type === "debrief.skip" && x.node === "debrief") {
+        // A skipped question doesn't count toward the debrief.
+        const last = x.transcript.at(-1);
+        if (last?.role === "apprentice" && last.text === x.debriefQuestions.at(-1)) {
+          x.debriefQuestions.pop();
+          const debriefAsked = x.debriefQuestions.length;
+          setState((st) => ({ ...st, debriefAsked }));
+        }
         c.sendUserMessage("[SKIP] Skip that question and ask your next one.");
       }
     },

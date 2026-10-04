@@ -1,3 +1,4 @@
+import math
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -199,7 +200,9 @@ async def merge_session(session_id: str, payload: dict = Body(...)):
     """Merge the session into a Work Map: the draft for the debrief, or the final confirmed map.
 
     Body: {"transcript": [{"role": "expert"|"apprentice", "text", "t", "phase"}],
-           "final": bool, "duration": seconds}
+           "final": bool, "duration": seconds,
+           "confirmation": {"teach_back", "said", "t"}}
+    confirmation (final only): the teach-back and the expert's words confirming it.
     """
     session_id = _uuid(session_id)
     final = bool(payload.get("final"))
@@ -238,6 +241,24 @@ async def merge_session(session_id: str, payload: dict = Body(...)):
         duration=payload.get("duration"),
         corrections=[c["correction"] for c in session.get("captures") or [] if c.get("kind") == "correction"],
     )
+    confirmation = payload.get("confirmation")
+    if (
+        final
+        and isinstance(confirmation, dict)
+        and isinstance(confirmation.get("teach_back"), str)
+        and isinstance(confirmation.get("said"), str)
+        and isinstance(confirmation.get("t"), (int, float))
+        and not isinstance(confirmation.get("t"), bool)
+        # JSON allows Infinity and NaN; jsonb doesn't.
+        and math.isfinite(confirmation["t"])
+        and confirmation["t"] >= 0
+    ):
+        # The teach-back the expert confirmed, and their words confirming it.
+        work_map["confirmation"] = {
+            "teach_back": redact(confirmation["teach_back"]),
+            "said": redact(confirmation["said"]),
+            "t": round(float(confirmation["t"]), 2),
+        }
     try:
         work_map_store.save_map(session_id, work_map, "confirmed" if final else "draft")
     except Exception as e:

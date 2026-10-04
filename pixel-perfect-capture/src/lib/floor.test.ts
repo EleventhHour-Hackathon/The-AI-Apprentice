@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { decideFloor, decideWrapUp, type FloorInput, type WrapUpInput } from "./floor";
+import {
+  debriefStatus,
+  decideFloor,
+  decideWrapUp,
+  isDebriefQuestion,
+  MAX_EXPLAIN_REFUSALS,
+  MAX_TEACH_BACK_REFUSALS,
+  MIN_DEBRIEF_QUESTIONS,
+  MIN_TEACH_BACK_WORDS,
+  teachBackStatus,
+  type FloorInput,
+  type WrapUpInput,
+} from "./floor";
 
 const MIN = 60_000;
 // Five minutes in, after a step, with everything quiet: the moment to ask.
@@ -125,5 +137,195 @@ describe("decideWrapUp", () => {
 
   it("asks again at once when the reply to the request was not a question", () => {
     expect(decideWrapUp({ ...wrap, last: { at: 50_000, kind: "reason" } })).toBe("ask");
+  });
+});
+
+describe("debriefStatus", () => {
+  const gaps = [
+    "What is the approval limit for an invoice amount?",
+    "Which supplier names need a second check?",
+    "Who do you ask when the purchase order is missing?",
+    "What happens with currency conversions?",
+  ];
+
+  it("asks for all three when none are asked yet, from the open gaps", () => {
+    expect(debriefStatus({ asked: [], gaps })).toEqual({
+      met: false,
+      remaining: MIN_DEBRIEF_QUESTIONS,
+      next: gaps.slice(0, 3),
+    });
+  });
+
+  it("needs one more after two", () => {
+    const s = debriefStatus({ asked: ["Why that?", "And then?"], gaps });
+    expect(s.met).toBe(false);
+    expect(s.remaining).toBe(1);
+    expect(s.next).toEqual([gaps[0]]);
+  });
+
+  it("is met after three, with nothing more to suggest", () => {
+    expect(debriefStatus({ asked: ["a?", "b?", "c?"], gaps })).toEqual({
+      met: true,
+      remaining: 0,
+      next: [],
+    });
+  });
+
+  it("skips gaps already asked about", () => {
+    const s = debriefStatus({
+      asked: ["Is there an approval limit on the invoice amount?"],
+      gaps,
+    });
+    expect(s.remaining).toBe(2);
+    expect(s.next).toEqual([gaps[1], gaps[2]]);
+  });
+
+  it("keeps a gap that only shares a word with an asked question", () => {
+    const s = debriefStatus({ asked: ["Which invoice comes first?"], gaps });
+    expect(s.next[0]).toBe(gaps[0]);
+  });
+
+  it("suggests nothing when there are no gaps, but still needs the questions", () => {
+    expect(debriefStatus({ asked: ["a?"], gaps: [] })).toEqual({
+      met: false,
+      remaining: 2,
+      next: [],
+    });
+    expect(debriefStatus({ asked: [], gaps: ["  "] }).next).toEqual([]);
+  });
+});
+
+describe("teachBackStatus", () => {
+  const long =
+    "So you open each invoice, match it to the purchase order, check the amount against the limit, and if the supplier is new or the order is missing you hold it and ask finance before you approve.";
+
+  it("wants an explanation first", () => {
+    expect(teachBackStatus({ explained: [], confirmedBy: "Yes" })).toBe("explain_first");
+    expect(teachBackStatus({ explained: ["Got it, thanks."], confirmedBy: "Yes" })).toBe(
+      "explain_first",
+    );
+  });
+
+  it("counts the words across the teach-back lines", () => {
+    const words = long.split(" ");
+    const halves = [words.slice(0, 20).join(" "), words.slice(20).join(" ")];
+    expect(teachBackStatus({ explained: halves, confirmedBy: "Yes, that's right." })).toBe("ok");
+    expect(words.length).toBeGreaterThanOrEqual(MIN_TEACH_BACK_WORDS);
+  });
+
+  it("waits for the expert to answer", () => {
+    expect(teachBackStatus({ explained: [long], confirmedBy: "" })).toBe("await_confirmation");
+    expect(teachBackStatus({ explained: [long], confirmedBy: "  " })).toBe("await_confirmation");
+  });
+
+  it("is ok once explained and answered", () => {
+    expect(teachBackStatus({ explained: [long], confirmedBy: "Yes, that's it." })).toBe("ok");
+  });
+
+  it("is not confirmed when the expert says no or corrects it", () => {
+    const status = (confirmedBy: string) => teachBackStatus({ explained: [long], confirmedBy });
+    expect(status("No, the limit is five thousand.")).toBe("not_confirmed");
+    expect(status("Yes, but only for new suppliers.")).toBe("not_confirmed");
+    expect(status("Not quite.")).toBe("not_confirmed");
+    expect(status("Mostly, except the currency part.")).toBe("not_confirmed");
+    expect(status("That’s wrong about the order.")).toBe("not_confirmed");
+    expect(status("Nein, das Limit ist höher.")).toBe("not_confirmed");
+    expect(status("Ja, aber nur bei neuen Lieferanten.")).toBe("not_confirmed");
+    expect(status("Das stimmt nicht ganz.")).toBe("not_confirmed");
+    expect(status("Alles, außer der Währung.")).toBe("not_confirmed");
+  });
+
+  it("is ok on a plain yes, in any language", () => {
+    const status = (confirmedBy: string) => teachBackStatus({ explained: [long], confirmedBy });
+    expect(status("Yes, exactly right.")).toBe("ok");
+    expect(status("Ja, genau so.")).toBe("ok");
+    expect(status("Oui, c'est ça.")).toBe("ok");
+  });
+
+  it("takes 'actually' after a clear yes as a yes, and as a correction otherwise", () => {
+    const status = (confirmedBy: string) => teachBackStatus({ explained: [long], confirmedBy });
+    expect(status("Yes, that's actually right.")).toBe("ok");
+    expect(status("Yeah, that's actually spot on.")).toBe("ok");
+    expect(status("Ja, eigentlich passt das.")).toBe("ok");
+    expect(status("Actually, the limit is higher.")).toBe("not_confirmed");
+    expect(status("Eigentlich ist das Limit höher.")).toBe("not_confirmed");
+    expect(status("Yes, except the currency part.")).toBe("not_confirmed");
+  });
+
+  it("catches a yes followed by a but", () => {
+    const status = (confirmedBy: string) => teachBackStatus({ explained: [long], confirmedBy });
+    expect(status("Yes. But it's net.")).toBe("not_confirmed");
+    expect(status("Yeah but it's net.")).toBe("not_confirmed");
+    expect(status("But it's net, not gross.")).toBe("not_confirmed");
+    expect(status("Aber nur netto.")).toBe("not_confirmed");
+  });
+
+  it("counts words in languages written without spaces", () => {
+    const zh =
+      "你先打开每张发票，把它和采购订单核对，检查金额是否超过限额。如果供应商是新的，或者订单缺失，就先暂停，并在批准之前询问财务部门。";
+    const ja =
+      "まず請求書を開いて、注文書と照らし合わせ、金額が上限を超えていないか確認します。新しい取引先や注文書がない場合は保留にして、承認する前に経理に確認します。";
+    expect(teachBackStatus({ explained: [zh], confirmedBy: "对，没错。" })).toBe("ok");
+    expect(teachBackStatus({ explained: [ja], confirmedBy: "はい、その通りです。" })).toBe("ok");
+    expect(teachBackStatus({ explained: ["好的。"], confirmedBy: "对。" })).toBe("explain_first");
+  });
+
+  it("gives way on a short explanation after enough refusals, never on a no or no answer", () => {
+    const short = { explained: ["Got it, thanks."], confirmedBy: "Yes." };
+    expect(teachBackStatus({ ...short, refusals: MAX_EXPLAIN_REFUSALS - 1 })).toBe("explain_first");
+    expect(teachBackStatus({ ...short, refusals: MAX_EXPLAIN_REFUSALS })).toBe("ok");
+    expect(teachBackStatus({ ...short, confirmedBy: "", refusals: 9 })).toBe("await_confirmation");
+    expect(teachBackStatus({ ...short, confirmedBy: "No.", refusals: 9 })).toBe("not_confirmed");
+  });
+});
+
+describe("debriefStatus refusals", () => {
+  it("lets the teach-back go ahead after enough refusals", () => {
+    const one = { asked: ["Why?"], gaps: [] };
+    expect(debriefStatus({ ...one, refusals: MAX_TEACH_BACK_REFUSALS - 1 }).met).toBe(false);
+    const forced = debriefStatus({ ...one, refusals: MAX_TEACH_BACK_REFUSALS });
+    expect(forced.met).toBe(true);
+    expect(forced.remaining).toBe(2);
+  });
+});
+
+describe("isDebriefQuestion", () => {
+  it("counts a real question, however short", () => {
+    expect(isDebriefQuestion("Why?")).toBe(true);
+    expect(isDebriefQuestion("Got it. What happens when the PO is missing?")).toBe(true);
+    expect(isDebriefQuestion("Warum prüfst du den Lieferanten zuerst?")).toBe(true);
+  });
+
+  it("doesn't count check-ins", () => {
+    expect(isDebriefQuestion("Is that right?")).toBe(false);
+    expect(isDebriefQuestion("Okay?")).toBe(false);
+    expect(isDebriefQuestion("Stimmt das?")).toBe(false);
+    expect(isDebriefQuestion("Das Limit ist fünftausend, oder?")).toBe(false);
+    expect(
+      isDebriefQuestion(
+        "So you match each invoice to its order and hold the new suppliers. Is that how it works?",
+      ),
+    ).toBe(false);
+  });
+
+  it("counts a line with a check-in and a real question", () => {
+    expect(isDebriefQuestion("Does that make sense? And who approves above the limit?")).toBe(true);
+  });
+
+  it("doesn't count a line without a question", () => {
+    expect(isDebriefQuestion("Thanks, that helps.")).toBe(false);
+  });
+
+  it("knows the question marks of other scripts", () => {
+    expect(isDebriefQuestion("为什么要先检查供应商？")).toBe(true);
+    expect(isDebriefQuestion("なぜ先に取引先を確認するのですか？")).toBe(true);
+    expect(isDebriefQuestion("لماذا تتحقق من المورد أولاً؟")).toBe(true);
+    expect(isDebriefQuestion("Ինչու՞ ես նախ ստուգում մատակարարին")).toBe(true);
+    expect(isDebriefQuestion("Γιατί ελέγχεις πρώτα τον προμηθευτή;")).toBe(true);
+    expect(isDebriefQuestion("Γιατί ελέγχεις πρώτα τον προμηθευτή;")).toBe(true);
+  });
+
+  it("doesn't take a semicolon outside Greek for a question", () => {
+    expect(isDebriefQuestion("First the supplier; then the amount.")).toBe(false);
   });
 });

@@ -69,7 +69,10 @@ export type WorkMapRecord = {
   transcript?: Record<string, unknown>[];
   /** Questions the apprentice asked at pauses while the expert worked (from the backend). */
   live_questions?: LiveQuestionRecord[];
+  /** The teach-back the expert confirmed, and what they said to confirm it (session clock). */
+  confirmation?: Confirmation | undefined;
 };
+export type Confirmation = { teach_back: string; said: string; t: number | null };
 export type LiveQuestionRecord = {
   t: number | null;
   text: string;
@@ -154,7 +157,12 @@ export function normalizeMap(record: WorkMapRecord): WorkMap {
     const who = role === "expert" || role === "user" ? "expert" : "apprentice";
     return [{ who, text: words, t: num(l["t"]) }];
   });
-  return { ...record, steps, guardrails, transcript };
+  const c = record.confirmation as Record<string, unknown> | null | undefined;
+  const confirmation =
+    c && typeof c === "object" && text(c["said"])
+      ? { teach_back: text(c["teach_back"]), said: text(c["said"]), t: num(c["t"]) }
+      : undefined;
+  return { ...record, steps, guardrails, transcript, confirmation };
 }
 
 export const guardLabel: Record<GuardKind, string> = {

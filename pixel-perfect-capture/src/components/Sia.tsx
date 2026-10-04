@@ -7,7 +7,7 @@ import { useApprentice, type Capture, type FlowNode } from "@/hooks/use-apprenti
 import { useScreenEvents } from "@/hooks/use-screen-events";
 import { useScreenRecording } from "@/hooks/use-screen-recording";
 import { usePrivacyShield } from "@/hooks/use-privacy-shield";
-import type { Floor } from "@/lib/floor";
+import { MIN_DEBRIEF_QUESTIONS, type Floor } from "@/lib/floor";
 import { count } from "@/lib/work-maps";
 import { desktop } from "@/lib/desktop";
 import { storedLanguage } from "@/lib/languages";
@@ -170,7 +170,7 @@ export function Sia({ onOpenApp, onLesson }: { onOpenApp?: () => void; onLesson?
   const expanded = state === "raised" || state === "gotit" || state === "debriefing" || state === "debrief";
   const width = state === "idle" ? 310 : expanded ? 440 : 380;
   const color = offRecord || paused ? "text-pill-muted" : colors[state];
-  const statusLabel = offRecord ? "Off the record" : paused ? "Paused" : state === "raised" && voice.node === "session_start" ? "Getting started" : state === "watching" ? (voice.wrapUp ? "Before the debrief" : floorLabels[voice.floor]) : labels[state];
+  const statusLabel = offRecord ? "Off the record" : paused ? "Paused" : state === "raised" && voice.node === "session_start" ? "Getting started" : state === "watching" ? (voice.wrapUp ? "Before the debrief" : floorLabels[voice.floor]) : state === "debriefing" && voice.node === "debrief" ? `Debrief ${Math.min(voice.debriefAsked, MIN_DEBRIEF_QUESTIONS)}/${MIN_DEBRIEF_QUESTIONS}` : labels[state];
   const answer = (current?.answer ? `${current.answer} ${voice.partial}` : voice.partial).trim();
   const speechLabel = offRecord ? "Off the record" : paused ? "Paused" : current?.captured && !voice.botSpeaking ? "Answer captured" : voice.botSpeaking ? "Asking" : level > .08 ? "Listening to you" : "Ready for your voice";
   const error = voice.error ?? (screenError || (recording && shield.status === "failed" ? "The privacy shield couldn’t start (it needs to download text recognition once), so your screen isn’t being shared. Check the connection and start again." : ""));
