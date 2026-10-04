@@ -106,6 +106,7 @@
                   <li><a href="https://github.com/GsnMithra/tacit-app/releases/latest/download/Tacit-linux-x86_64.AppImage">Linux</a></li>
                 </ul>
               </div>
+              <p class="download-note">Rather not install anything yet? <a href="#try">Try the demos in your browser</a>.</p>
             </div>
           </div>
 
@@ -393,28 +394,29 @@
         <div class="wrap">
           <div class="section-head">
             <p class="eyebrow">Getting started</p>
-            <h2 id="start-title" class="display">Up and running in five minutes.</h2>
+            <h2 id="start-title" class="display">Installed in two minutes.</h2>
+            <p>No account and no setup: the app connects to our hosted server by itself. Rather not install anything? <a href="#try">Try the demos in your browser</a>.</p>
           </div>
           <ol class="start-strip">
             <li>
               <span class="num" aria-hidden="true">1</span>
               <div>
                 <h3>Download</h3>
-                <p>Get the app for your computer below and open it. The <a href="install.html#install">install guide</a> shows the first-open steps.</p>
+                <p>Get the file for your computer from the <a href="#download">download section</a> below.</p>
               </div>
             </li>
             <li>
               <span class="num" aria-hidden="true">2</span>
               <div>
-                <h3>Open it</h3>
-                <p>Tacit connects to your team's server on its own. If it ever asks for an access key, use the one you were sent with the app.</p>
+                <h3>Allow it once</h3>
+                <p>Our builds aren't signed with an Apple or Microsoft certificate yet, so your computer asks once whether you trust Tacit. That's expected. The steps for your computer are below.</p>
               </div>
             </li>
             <li>
               <span class="num" aria-hidden="true">3</span>
               <div>
-                <h3>Connect</h3>
-                <p>On the Connect to Tacit screen the server address is already filled in. Paste your key and connect.</p>
+                <h3>Open and go</h3>
+                <p>Tacit connects on its own. The server is on a free plan and may take up to a minute to wake. If you see <strong>Connect to Tacit</strong>, everything is filled in: click <strong>Connect</strong> and wait a moment.</p>
               </div>
             </li>
           </ol>
@@ -427,12 +429,19 @@
           <div class="section-head">
             <p class="eyebrow">Download</p>
             <h2 id="download-title" class="display">Tacit for your desktop.</h2>
-            <p>Always the latest version. The installers aren't signed yet, so your computer asks once before opening the app. The <a href="#faq-unsigned">FAQ</a> shows how.</p>
+            <p>Always the latest version. The installers aren't signed yet, so your computer asks once before opening the app. Follow the steps for your computer.</p>
           </div>
           <div class="platforms">
             <div class="platform" data-platform="mac">
               <h3><svg aria-hidden="true"><use href="#i-apple" /></svg>macOS<span class="yours">Your computer</span></h3>
-              <p>A disk image. Drag Tacit to Applications.</p>
+              <p>Pick <strong>Apple silicon</strong> if Apple menu → About This Mac shows <em>Chip: Apple M…</em>, otherwise <strong>Intel</strong>.</p>
+              <ol class="platform-steps">
+                <li>Open the <code>.dmg</code> and drag <strong>Tacit</strong> into <strong>Applications</strong>.</li>
+                <li>Open Tacit. macOS says <em>"Tacit" Not Opened</em>. Click <strong>Done</strong>.</li>
+                <li>Open <strong>System Settings → Privacy &amp; Security</strong>, scroll down, and click <strong>Open Anyway</strong> next to Tacit.</li>
+                <li>Open Tacit again and click <strong>Open</strong>. Allow the <strong>microphone</strong>, and <strong>screen recording</strong> when asked.</li>
+              </ol>
+              <p class="platform-tip">Shortcut: in Terminal, run <code>xattr -dr com.apple.quarantine /Applications/Tacit.app</code>, then open Tacit.</p>
               <div class="links">
                 <a class="btn btn-primary" href="https://github.com/GsnMithra/tacit-app/releases/latest/download/Tacit-mac-arm64.dmg">
                   <svg aria-hidden="true"><use href="#i-download" /></svg>Apple silicon
@@ -446,6 +455,11 @@
             <div class="platform" data-platform="win">
               <h3><svg aria-hidden="true"><use href="#i-windows" /></svg>Windows<span class="yours">Your computer</span></h3>
               <p>An installer for 64-bit Windows 10 and 11.</p>
+              <ol class="platform-steps">
+                <li>Download and run <code>Tacit-win-x64.exe</code>.</li>
+                <li>If you see <em>Windows protected your PC</em>, click <strong>More info → Run anyway</strong>.</li>
+                <li>Tacit installs and opens. Allow the microphone when asked.</li>
+              </ol>
               <div class="links">
                 <a class="btn btn-primary" href="https://github.com/GsnMithra/tacit-app/releases/latest/download/Tacit-win-x64.exe">
                   <svg aria-hidden="true"><use href="#i-download" /></svg>Windows installer
@@ -455,7 +469,12 @@
             </div>
             <div class="platform" data-platform="linux">
               <h3><svg aria-hidden="true"><use href="#i-terminal" /></svg>Linux<span class="yours">Your computer</span></h3>
-              <p>An AppImage for x86_64. Make it executable and run it.</p>
+              <p>An AppImage for x86_64.</p>
+              <ol class="platform-steps">
+                <li>Download <code>Tacit-linux-x86_64.AppImage</code>.</li>
+                <li>Run <code>chmod +x Tacit-linux-x86_64.AppImage</code>, then <code>./Tacit-linux-x86_64.AppImage</code>.</li>
+                <li>If it complains about FUSE, install it once: <code>sudo apt install libfuse2</code> (on Ubuntu 24.04: <code>libfuse2t64</code>).</li>
+              </ol>
               <div class="links">
                 <a class="btn btn-primary" href="https://github.com/GsnMithra/tacit-app/releases/latest/download/Tacit-linux-x86_64.AppImage">
                   <svg aria-hidden="true"><use href="#i-download" /></svg>AppImage
