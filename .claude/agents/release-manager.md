@@ -22,7 +22,9 @@ wrong, you send it back to the coordinator instead of patching it yourself.
 2. Make sure the main checkout is clean (`git status`), apart from `docs/PROGRESS.md` and
    `.claude/board/`, which the auditor and coordinator change between rounds. If anything else is
    dirty, stop and report. After the feature commits, commit those two in a commit of their own
-   ("Update the progress board").
+   that marks the round as done: "Complete round <N>: <the features, in a few words>" (e.g.
+   "Complete round 3: multilingual live questions, backend tests and a clean UI lint"). The body
+   lists the round's feature IDs and commits. The user reads these to follow progress.
 3. For each approved feature, in the order given:
    - Copy only its listed files from the worktree into the integration branch (e.g.
      `git -C <worktree> diff <base> -- <files> | git apply --3way`). If the worktree changed any
