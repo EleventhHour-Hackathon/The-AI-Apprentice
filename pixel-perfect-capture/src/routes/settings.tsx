@@ -31,7 +31,12 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
-import { languageOptions, storeLanguage, storedLanguage, type LanguageChoice } from "@/lib/languages";
+import {
+  languageOptions,
+  storeLanguage,
+  storedLanguage,
+  type LanguageChoice,
+} from "@/lib/languages";
 
 export const Route = createFileRoute("/settings")({
   head: () => ({ meta: [{ title: "Settings · Tacit" }] }),
@@ -84,7 +89,8 @@ function Settings() {
               </Badge>
             </div>
             <p className="mt-1.5 text-sm text-muted-foreground">
-              How Tacit watches, asks, remembers and teaches. Apprentice language is saved on this machine; other settings are a preview.
+              How Tacit watches, asks, remembers and teaches. Apprentice language is saved on this
+              machine; other settings are a preview.
             </p>
           </div>
 
@@ -152,7 +158,9 @@ function Settings() {
                 </SelectTrigger>
                 <SelectContent>
                   {languageOptions(true).map(({ value, label }) => (
-                    <SelectItem key={value} value={value}>{label}</SelectItem>
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>

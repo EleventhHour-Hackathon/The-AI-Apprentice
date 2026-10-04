@@ -112,6 +112,8 @@ function Sandbox() {
     if (next === "save") commit();
     else if (next === "wait") setWaitingSince(now);
   };
+  // No deps on purpose: re-check the waiting confirm on every render (R-14).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (waitingSince === null) return;
     const next = decide(waitingSince);
