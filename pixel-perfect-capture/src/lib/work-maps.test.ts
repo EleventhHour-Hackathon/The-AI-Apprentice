@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BACKEND_URL } from "./backend";
-import { agentExportUrl, fetchAgentInstructions, fileSlug } from "./work-maps";
+import { agentExportUrl, fetchAgentInstructions, fetchWorkMapDiff, fileSlug } from "./work-maps";
 
 const id = "6f1c2b9e-3d4a-4c5b-8e7f-0a1b2c3d4e5f";
 
@@ -46,5 +46,53 @@ describe("fetchAgentInstructions", () => {
     await expect(fetchAgentInstructions(id)).rejects.toThrow("unavailable");
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
     await expect(fetchAgentInstructions(id)).rejects.toThrow("Couldn’t reach");
+  });
+});
+
+describe("fetchWorkMapDiff", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const side = {
+    task: "t",
+    recorded_at: null,
+    confirmed: true,
+    status: "",
+    steps: 1,
+    guardrails: 0,
+  };
+  const body = {
+    a: { id, ...side },
+    b: { id: "b", ...side },
+    diff: { steps: { same: [], differs: [], only_a: [], only_b: [] } },
+  };
+
+  it("asks for the pair with escaped ids and an optional limit", async () => {
+    const fetch = vi.fn().mockImplementation(() => Promise.resolve(Response.json(body)));
+    vi.stubGlobal("fetch", fetch);
+    await fetchWorkMapDiff("a/1&x", "b 2", 3);
+    expect(fetch.mock.calls[0]![0]).toBe(
+      `${BACKEND_URL}/api/v1/work_map_diff?a=a%2F1%26x&b=b+2&limit=3`,
+    );
+    await fetchWorkMapDiff(id, "b");
+    expect(fetch.mock.calls[1]![0]).toBe(`${BACKEND_URL}/api/v1/work_map_diff?a=${id}&b=b`);
+  });
+
+  it("treats an answer without questions as nothing to ask", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json(body)));
+    expect((await fetchWorkMapDiff(id, "b")).questions).toEqual({ a: [], b: [] });
+  });
+
+  it("explains a network error and a missing session", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+    await expect(fetchWorkMapDiff(id, "b")).rejects.toThrow(
+      "Couldn’t reach the apprentice backend.",
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(Response.json({ detail: "Work Map b not found" }, { status: 404 })),
+    );
+    await expect(fetchWorkMapDiff(id, "b")).rejects.toThrow(
+      "Session B no longer exists. Pick another one.",
+    );
   });
 });

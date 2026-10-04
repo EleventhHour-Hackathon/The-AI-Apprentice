@@ -29,6 +29,7 @@ import {
   CheckCheck,
   Clock,
   Download,
+  GitCompare,
   GraduationCap,
   MessageSquareText,
   Play,
@@ -36,6 +37,7 @@ import {
   Unlink,
   X,
 } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 import { desktop } from "@/lib/desktop";
 import { MIN_LIVE_QUESTIONS } from "@/lib/floor";
 import {
@@ -575,6 +577,16 @@ function Canvas({ map: record, onClose }: Props) {
               Transcript
             </Button>
           )}
+          <Button variant="outline" className="h-8 rounded-full text-xs" asChild>
+            <Link
+              to="/work-maps/compare"
+              search={{ a: map.id }}
+              title="Compare with another session of this task"
+            >
+              <GitCompare size={13} />
+              Compare
+            </Link>
+          </Button>
           <DeleteWorkMap id={map.id} task={map.task} onDeleted={onClose}>
             <Button
               variant="ghost"

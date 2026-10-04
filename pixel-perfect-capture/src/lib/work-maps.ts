@@ -1,4 +1,5 @@
 import { BACKEND_URL } from "@/lib/backend";
+import { diffError } from "@/lib/compare";
 
 // Saved by the backend (core/backend/src/services/work_map_merge.py). Maps from before the
 // merge existed have fewer fields; normalizeMap fills them in so both open the same way.
@@ -214,6 +215,82 @@ export const agentExportUrl = (id: string, format: "md" | "json") =>
 /** The agent instructions as a Markdown file, ready to download. */
 export const fetchAgentInstructions = async (id: string) =>
   (await send(agentExportUrl(id, "md"))).blob();
+
+/** How two Work Maps of one task differ (core/backend/src/services/work_map_diff.py). */
+export type DiffWords = { quote: string; quote_translation: string; reason: string };
+export type DiffField = {
+  field: string;
+  kind: "changed" | "missing_a" | "missing_b";
+  a: unknown;
+  b: unknown;
+};
+export type DiffSection = {
+  same: { a: string; b: string; title: string; score: number }[];
+  differs: {
+    a: string;
+    b: string;
+    title_a: string;
+    title_b: string;
+    score: number;
+    fields: DiffField[];
+    words_a: DiffWords;
+    words_b: DiffWords;
+  }[];
+  only_a: { id: string; title: string; words: DiffWords }[];
+  only_b: { id: string; title: string; words: DiffWords }[];
+};
+export type WorkMapDiff = { steps: DiffSection; guardrails: DiffSection };
+/** A question for one expert about one difference; both sides of a difference share its id. */
+export type DiffQuestion = {
+  id: string;
+  section: "steps" | "guardrails";
+  /** The asked expert's own item id. */
+  item: string;
+  /** The matching item in the other map; null when only this expert did it. */
+  other: string | null;
+  /** The diff field asked about, or "only". */
+  field: string;
+  text: string;
+  /** The asked expert's words the question quotes, "" if none. */
+  quote: string;
+};
+export type DiffSide = {
+  id: string;
+  task: string | null;
+  recorded_at: string | null;
+  confirmed: boolean;
+  status: string;
+  steps: number;
+  guardrails: number;
+};
+export type WorkMapDiffResponse = {
+  a: DiffSide;
+  b: DiffSide;
+  diff: WorkMapDiff;
+  questions: { a: DiffQuestion[]; b: DiffQuestion[] };
+};
+
+/** The difference between two Work Maps, with the questions to ask each expert (at most `limit` each). */
+export async function fetchWorkMapDiff(
+  a: string,
+  b: string,
+  limit?: number,
+  init?: RequestInit,
+): Promise<WorkMapDiffResponse> {
+  const params = new URLSearchParams({ a, b });
+  if (limit !== undefined) params.set("limit", String(limit));
+  let response: Response;
+  try {
+    response = await fetch(`${BACKEND_URL}/api/v1/work_map_diff?${params}`, init);
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") throw e;
+    throw new Error("Couldn’t reach the apprentice backend.");
+  }
+  const body = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!response.ok) throw new Error(diffError(response.status, body?.["detail"]));
+  const result = body as unknown as WorkMapDiffResponse;
+  return { ...result, questions: result.questions ?? { a: [], b: [] } };
+}
 
 /** A file name from the task: lowercase ASCII words joined by "-", or "work-map". */
 export const fileSlug = (task: string | null) =>
