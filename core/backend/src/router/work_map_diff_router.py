@@ -1,9 +1,9 @@
 from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from src.router.path_router import _store_unavailable, _uuid
-from src.services import work_map_diff
+from src.services import diff_questions, work_map_diff
 from storage import work_maps as work_map_store
 
 router = APIRouter(prefix="/api/v1", tags=["Work Map diff"])
@@ -25,8 +25,11 @@ def _header(work_map: Dict[str, Any], work_map_id: str) -> Dict[str, Any]:
 
 
 @router.get("/work_map_diff")
-def get_work_map_diff(a: str, b: str) -> Dict[str, Any]:
-    """How two Work Maps of the same task differ, step by step and rule by rule."""
+def get_work_map_diff(a: str, b: str, limit: int = Query(5, ge=0, le=10)) -> Dict[str, Any]:
+    """How two Work Maps of the same task differ, step by step and rule by rule.
+
+    With it, for each expert, up to limit questions about where their map differs, best first.
+    """
     a = _uuid(a, "Work Map")
     b = _uuid(b, "Work Map")
     if a == b:
@@ -42,8 +45,10 @@ def get_work_map_diff(a: str, b: str) -> Dict[str, Any]:
         raise
     except Exception as e:
         raise _store_unavailable(e) from e
+    d = work_map_diff.diff(maps["a"], maps["b"])
     return {
         "a": _header(maps["a"], a),
         "b": _header(maps["b"], b),
-        "diff": work_map_diff.diff(maps["a"], maps["b"]),
+        "diff": d,
+        "questions": diff_questions.questions(d, limit),
     }

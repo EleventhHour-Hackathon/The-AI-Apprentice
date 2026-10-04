@@ -132,7 +132,7 @@ def test_the_diff_with_a_header_for_each_map(client):
     response = _get(client, ID_A, ID_B)
     assert response.status_code == 200
     body = response.json()
-    assert set(body) == {"a", "b", "diff"}
+    assert list(body) == ["a", "b", "diff", "questions"]
     assert body["a"] == {
         "id": ID_A,
         "task": "Code a supplier invoice",
@@ -162,6 +162,85 @@ def test_the_diff_with_a_header_for_each_map(client):
     assert steps["only_a"] == []
 
 
+QUESTION_KEYS = {"id", "section", "item", "other", "field", "text", "quote"}
+
+
+def _ids(body, side, section):
+    diff = body["diff"][section]
+    ids = {e[side] for e in diff["same"] + diff["differs"]}
+    return ids | {e["id"] for e in diff[f"only_{side}"]}
+
+
+def test_questions_for_each_expert(client):
+    body = _get(client, ID_A, ID_B).json()
+    questions = body["questions"]
+    assert set(questions) == {"a", "b"}
+    for side in ("a", "b"):
+        assert questions[side], side
+        for q in questions[side]:
+            assert set(q) == QUESTION_KEYS
+            assert q["section"] in ("steps", "guardrails")
+            assert q["item"] in _ids(body, side, q["section"])
+            assert isinstance(q["text"], str) and q["text"]
+    # Each side quotes only its own words.
+    said_a = "First I open the invoice. Equipment over 5,000 is always capex."
+    said_b = "First the invoice. We never pay a vendor that isn't on the list."
+    said_b += " Equipment over 10,000 is always capex."
+    for q in questions["a"]:
+        assert q["quote"] == "" or q["quote"] in said_a
+    for q in questions["b"]:
+        assert q["quote"] == "" or q["quote"] in said_b
+    # The vendor-list step only B has is asked of B, quoting B.
+    [only] = [q for q in questions["b"] if q["field"] == "only"]
+    assert only == {**only, "id": "steps:-:s2:only", "item": "s2", "other": None}
+    assert only["quote"] == "We never pay a vendor that isn't on the list."
+    assert all(q["field"] != "only" for q in questions["a"])
+    # The capex threshold is the top question on both sides, paired by id.
+    assert questions["a"][0]["id"] == questions["b"][0]["id"] == "guardrails:g1:g1:numbers"
+
+
+def test_questions_are_capped_by_limit(client, monkeypatch):
+    many = {
+        **MAP_B,
+        "steps": [
+            {"id": f"x{i}", "title": f"Unrelated chore number {i}", "decision": f"Did {i}."}
+            for i in range(1, 9)
+        ],
+    }
+    monkeypatch.setattr(work_map_diff_router.work_map_store, "get", {ID_A: MAP_A, ID_B: many}.get)
+    body = _get(client, ID_A, ID_B).json()
+    assert len(body["questions"]["b"]) == 5
+    response = client.get("/api/v1/work_map_diff", params={"a": ID_A, "b": ID_B, "limit": 1})
+    assert response.status_code == 200
+    assert all(len(qs) <= 1 for qs in response.json()["questions"].values())
+    response = client.get("/api/v1/work_map_diff", params={"a": ID_A, "b": ID_B, "limit": 10})
+    assert len(response.json()["questions"]["b"]) == 9
+
+
+def test_limit_zero_gives_no_questions_and_the_diff(client):
+    response = client.get("/api/v1/work_map_diff", params={"a": ID_A, "b": ID_B, "limit": 0})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["questions"] == {"a": [], "b": []}
+    assert len(body["diff"]["guardrails"]["differs"]) == 1
+
+
+@pytest.mark.parametrize("limit", ["11", "-1", "abc"])
+def test_a_bad_limit(client, limit):
+    response = client.get("/api/v1/work_map_diff", params={"a": ID_A, "b": ID_B, "limit": limit})
+    assert response.status_code == 422
+    assert isinstance(response.json()["detail"], list)
+
+
+def test_swapping_a_and_b_swaps_the_questions(client):
+    forward = _get(client, ID_A, ID_B).json()["questions"]
+    back = _get(client, ID_B, ID_A).json()["questions"]
+    assert [q["item"] for q in back["a"]] == [q["item"] for q in forward["b"]]
+    assert [q["item"] for q in back["b"]] == [q["item"] for q in forward["a"]]
+    assert [q["quote"] for q in back["a"]] == [q["quote"] for q in forward["b"]]
+    assert [q["field"] for q in back["b"]] == [q["field"] for q in forward["a"]]
+
+
 def test_the_response_has_no_transcript_captures_or_full_maps(client):
     text = _get(client, ID_A, ID_B).text
     assert "transcript" not in text
@@ -184,6 +263,8 @@ def test_a_map_with_no_steps(client, monkeypatch):
     assert body["b"]["steps"] == 0 and body["b"]["guardrails"] == 0
     assert body["b"]["task"] is None and body["b"]["recorded_at"] is None
     assert len(body["diff"]["steps"]["only_a"]) == 3
+    assert body["questions"]["b"] == []
+    assert [q["item"] for q in body["questions"]["a"]] == ["g1", "s1", "s2", "s3"]
 
 
 @pytest.mark.parametrize("b", [ID_A, ID_A.upper()])
