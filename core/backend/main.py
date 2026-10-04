@@ -6,7 +6,7 @@ import uvicorn
 
 from src.core.config import Config
 from src.router.path_router import router
-from src.services import recordings
+from src.services import privacy, recordings
 from storage import work_maps as work_map_store
 from src.utils.logger import intercept_standard_logging, logger
 
@@ -27,7 +27,12 @@ app.add_middleware(
 
 @app.get("/health")
 async def root():
-    return {"message": "Server is healthy", "version": "2.0.0"}
+    # The first call loads spaCy (when the privacy extra is installed), so it runs off the loop.
+    return {
+        "message": "Server is healthy",
+        "version": "2.0.0",
+        "privacy": await asyncio.to_thread(privacy.status),
+    }
 
 
 app.include_router(router)

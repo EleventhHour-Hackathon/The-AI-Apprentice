@@ -27,6 +27,14 @@ dev = [
     "ruff>=0.1.0",
     "pre-commit>=3.5.0"
 ]
+# Name redaction (src/services/privacy.py): `uv sync --extra privacy`.
+# The caps keep the default install as it is: presidio-analyzer 2.2.363+ needs pydantic>=2.12.5,
+# spaCy 3.8.15+ needs a newer click, and later Presidio releases skip spaCy 3.8.14.
+privacy = [
+    "presidio-analyzer>=2.2,<2.2.363",
+    "spacy>=3.8,<3.8.14",
+    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
+]
 
 [tool.ruff]
 line-length = 100
