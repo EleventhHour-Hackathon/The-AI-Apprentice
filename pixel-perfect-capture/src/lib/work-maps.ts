@@ -186,17 +186,21 @@ export type WorkMapSummary = {
   open_questions: number;
 };
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function send(url: string, init?: RequestInit): Promise<Response> {
   let response: Response;
   try {
-    response = await fetch(`${BACKEND_URL}/api/v1${path}`, init);
+    response = await fetch(url, init);
   } catch {
     throw new Error("Couldn’t reach the apprentice backend.");
   }
   if (response.status === 404) throw new Error("This Work Map doesn’t exist.");
   if (response.status === 503) throw new Error("Work Map storage (Supabase) is unavailable.");
   if (!response.ok) throw new Error(`The backend answered ${response.status}.`);
-  return (await response.json()) as T;
+  return response;
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  return (await (await send(`${BACKEND_URL}/api/v1${path}`, init)).json()) as T;
 }
 
 export const fetchWorkMaps = () => request<WorkMapSummary[]>("/work_maps");
@@ -204,6 +208,19 @@ export const fetchWorkMap = (id: string) =>
   request<WorkMapRecord>(`/work_maps/${encodeURIComponent(id)}`);
 export const deleteWorkMap = (id: string) =>
   request<{ deleted: string }>(`/work_maps/${encodeURIComponent(id)}`, { method: "DELETE" });
+/** The Work Map as instructions another agent can load: a Markdown system prompt, or JSON. */
+export const agentExportUrl = (id: string, format: "md" | "json") =>
+  `${BACKEND_URL}/api/v1/work_maps/${encodeURIComponent(id)}/agent.${format}`;
+/** The agent instructions as a Markdown file, ready to download. */
+export const fetchAgentInstructions = async (id: string) =>
+  (await send(agentExportUrl(id, "md"))).blob();
+
+/** A file name from the task: lowercase ASCII words joined by "-", or "work-map". */
+export const fileSlug = (task: string | null) =>
+  (task ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "") || "work-map";
 
 export const taskTitle = (task: string | null) => {
   const t = task?.trim();

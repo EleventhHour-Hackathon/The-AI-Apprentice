@@ -25,6 +25,7 @@ import {
 import "@xyflow/react/dist/base.css";
 import {
   ArrowLeft,
+  Bot,
   CheckCheck,
   Clock,
   Download,
@@ -50,6 +51,8 @@ import { DeleteWorkMap } from "@/components/DeleteWorkMap";
 import { Button } from "@/components/ui/button";
 import {
   count,
+  fetchAgentInstructions,
+  fileSlug,
   guardLabel,
   mmss,
   normalizeMap,
@@ -412,17 +415,28 @@ function Canvas({ map: record, onClose }: Props) {
     return null;
   };
 
-  const exportMap = () => {
-    const blob = new Blob([JSON.stringify(record, null, 2)], { type: "application/json" });
+  const download = (blob: Blob, name: string) => {
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    const slug = (map.task ?? "work-map")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, "");
-    a.download = `${slug || "work-map"}.json`;
+    a.download = name;
     a.click();
     URL.revokeObjectURL(a.href);
+  };
+
+  const exportMap = () => {
+    const blob = new Blob([JSON.stringify(record, null, 2)], { type: "application/json" });
+    download(blob, `${fileSlug(map.task)}.json`);
+  };
+
+  // Fetched rather than linked: a failed link would navigate the window to a raw error page.
+  const [agentExportError, setAgentExportError] = useState("");
+  const exportForAgents = async () => {
+    setAgentExportError("");
+    try {
+      download(await fetchAgentInstructions(map.id), `${fileSlug(map.task)}.agent.md`);
+    } catch (e) {
+      setAgentExportError((e as Error).message);
+    }
   };
 
   const keys = useRef({ exportMap, onClose, selected });
@@ -572,6 +586,19 @@ function Canvas({ map: record, onClose }: Props) {
               <Trash2 size={14} />
             </Button>
           </DeleteWorkMap>
+          {agentExportError && (
+            <p role="alert" className="max-w-56 text-xs text-destructive">
+              {agentExportError}
+            </p>
+          )}
+          <Button
+            className="h-8 rounded-full text-xs"
+            title="Download as instructions an AI agent can follow"
+            onClick={() => void exportForAgents()}
+          >
+            <Bot size={13} />
+            Export for agents
+          </Button>
           <Button className="h-8 rounded-full text-xs" title="Export JSON (E)" onClick={exportMap}>
             <Download size={13} />
             Export<Kbd>E</Kbd>

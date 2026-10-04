@@ -4,9 +4,9 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 
-from src.services import apprentice_agent, recordings, tutor
+from src.services import agent_export, apprentice_agent, recordings, tutor
 from src.services.screen_vision import get_backend as get_vision_backend, log_frame
 from src.services import live_questions, work_map_edit, work_map_links
 from src.services.privacy import redact, redact_deep
@@ -347,6 +347,35 @@ def get_work_map(work_map_id: str):
 
     work_map["live_questions"] = live_questions.from_captures(work_map.pop("captures", None) or [])
     return _with_moments(work_map_id, work_map, events, segments)
+
+
+def _stored_map(work_map_id: str) -> Dict[str, Any]:
+    work_map_id = _uuid(work_map_id, "Work Map")
+    try:
+        work_map = work_map_store.get(work_map_id)
+    except Exception as e:
+        raise _store_unavailable(e) from e
+    if work_map is None:
+        raise HTTPException(status_code=404, detail="Work Map not found")
+    return work_map
+
+
+@router.get("/work_maps/{work_map_id}/agent.md")
+def get_agent_markdown(work_map_id: str):
+    """The Work Map as a Markdown system prompt another agent can load, as a download."""
+    work_map = _stored_map(work_map_id)
+    name = agent_export.filename(work_map)
+    return PlainTextResponse(
+        agent_export.to_markdown(work_map),
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )
+
+
+@router.get("/work_maps/{work_map_id}/agent.json")
+def get_agent_json(work_map_id: str):
+    """The same instructions as structured JSON, for tool-using agents."""
+    return agent_export.to_json(_stored_map(work_map_id))
 
 
 def _with_moments(
