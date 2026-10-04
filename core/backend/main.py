@@ -10,6 +10,8 @@ from src.router import tutor_kb_router
 from src.router import work_map_diff_router
 from src.router import follow_ups_router
 from src.router import living_map_router
+from src.router import autopilot_router
+from src.router import coverage_router
 from src.services import privacy, recordings
 from storage import work_maps as work_map_store
 from src.utils.logger import intercept_standard_logging, logger
@@ -44,6 +46,8 @@ app.include_router(tutor_kb_router.router)
 app.include_router(work_map_diff_router.router)
 app.include_router(follow_ups_router.router)
 app.include_router(living_map_router.router)
+app.include_router(autopilot_router.router)
+app.include_router(coverage_router.router)
 
 
 @app.on_event("startup")
