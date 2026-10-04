@@ -77,7 +77,7 @@ if [ -n "$PY" ]; then
   (cd "$BACKEND" && OPENAI_API_KEY="${OPENAI_API_KEY:-check}" ELEVENLABS_API_KEY="${ELEVENLABS_API_KEY:-check}" SUPABASE_DB_URL="${SUPABASE_DB_URL:-postgresql://check@localhost/check}" uv run python -c "import main" >$LOGS/be-import.log 2>&1) && pass "backend imports" || { fail "backend imports (see $LOGS/be-import.log)"; tail -20 $LOGS/be-import.log; }
 fi
 if [ -d "$BACKEND/tests" ]; then
-  (cd "$BACKEND" && uv run --with pytest --with pytest-asyncio pytest -q >$LOGS/be-test.log 2>&1) && pass "backend tests" || { fail "backend tests (see $LOGS/be-test.log)"; tail -30 $LOGS/be-test.log; }
+  (cd "$BACKEND" && uv run --extra dev pytest -q >$LOGS/be-test.log 2>&1) && pass "backend tests" || { fail "backend tests (see $LOGS/be-test.log)"; tail -30 $LOGS/be-test.log; }
 fi
 
 [ "$FAIL" = 0 ] && echo "ALL CHECKS PASSED" || { echo "CHECKS FAILED"; exit 1; }
