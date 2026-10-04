@@ -293,7 +293,7 @@ Not assigned this round:
 - B-26 (use-apprentice reads the policy): after B-25.
 - B-02, B-19, S-05: unchanged from round 4 (whole-backend lint, pyproject/uv.lock owners).
 
-## B-20 + B-32 · Diff endpoint for two Work Maps; unique ids in _normalize · implementer-1 · approved
+## B-20 + B-32 · Diff endpoint for two Work Maps; unique ids in _normalize · implementer-1 · merged
 Base: 4d25ccb (`git rev-parse --short HEAD` in your worktree must match). Repo /Users/mithra/.builds/sia (you work in your own worktree of it).
 Goal: (B-20) the UI can ask the backend "how do these two Work Maps of the same task differ?" with `GET /api/v1/work_map_diff?a=<id>&b=<id>` and get S-01's diff plus a header for each map. (B-32) a Work Map that mixes items with and without ids never ends up with two items sharing an id after an edit.
 Brief says: Stretch, "Two experts, one task: show where two sessions differ and ask each expert why" (docs/CHALLENGE.md; docs/PROGRESS.md rows S-01 → B-20). B-32 protects Required R-07/R-08 (voice edits in the debrief address items by id).
@@ -344,7 +344,7 @@ Approved (main session): GET /api/v1/work_map_diff per contract with 15 tests; _
 Release: worktree .claude/worktrees/agent-ac951e1b72f140f66, files core/backend/src/router/work_map_diff_router.py, core/backend/tests/test_work_map_diff_router.py, core/backend/main.py, core/backend/src/services/work_map_edit.py, core/backend/tests/test_work_map_edit.py.
 Commit (two commits): "Serve the difference between two experts' Work Maps" (router, test, main.py) and "Keep Work Map ids unique when some items have none" (work_map_edit.py, test_work_map_edit.py)
 
-## B-21 · Questions for each expert, made from the differences (pure service) · implementer-2 · approved
+## B-21 · Questions for each expert, made from the differences (pure service) · implementer-2 · merged
 Base: 4d25ccb (`git rev-parse --short HEAD` in your worktree must match). Repo /Users/mithra/.builds/sia (you work in your own worktree of it).
 Goal: given S-01's diff of two experts' Work Maps, the backend can write, for each expert, a short ranked list of questions that quote that expert's own words and name what the other expert did ("You posted it to 4711; in another session it went to capex 0400 first. Why?"), so the next debrief can ask each of them why. Deterministic templates, no LLM, no endpoint, no storage this round.
 Brief says: Stretch, "Two experts, one task: show where two sessions differ and ask each expert why" (docs/CHALLENGE.md; docs/PROGRESS.md row B-21).
@@ -399,7 +399,7 @@ Follow-up to queue: optionally name a folded second field (e.g. ask_whom next to
 Release: worktree .claude/worktrees/agent-a40aac058064e26e6, files core/backend/src/services/diff_questions.py, core/backend/tests/test_diff_questions.py.
 Commit: "Write a question for each expert about where their Work Maps differ, in their own words"
 
-## B-25 · The question pace follows Settings (pure policy) · implementer-3 · approved
+## B-25 · The question pace follows Settings (pure policy) · implementer-3 · merged
 Base: 4d25ccb (`git rev-parse --short HEAD` in your worktree must match). Repo /Users/mithra/.builds/sia (you work in your own worktree of it).
 Goal: the Settings "Curiosity", "Questions during the session" and "Debrief" choices turn into a tested question-pace policy the floor logic can use, which never asks fewer questions than the brief requires (at least 3 live, at least 3 in the debrief). This round is the pure half: the live session starts reading it in B-26.
 Brief says: Required, the apprentice asks at least 3 questions while the expert works and at least 3 follow-ups in the debrief (docs/CHALLENGE.md; docs/PROGRESS.md rows B-25, R-07/R-08); Beyond, Settings that do something (B-07 follow-up).
@@ -426,3 +426,183 @@ export function debriefStatus(args: { asked: string[]; gaps: string[]; refusals?
 Approved (main session): policyFrom/DEFAULT_POLICY per contract; defaults keep today's behaviour; minLive/minDebrief never below 3; 74 tests; check.sh 4d25ccb → ALL CHECKS PASSED.
 Release: worktree .claude/worktrees/agent-a275c0b5dc7a8c09b, files pixel-perfect-capture/src/lib/floor.ts, pixel-perfect-capture/src/lib/floor.test.ts, pixel-perfect-capture/src/lib/settings.ts, pixel-perfect-capture/src/lib/settings.test.ts, pixel-perfect-capture/src/routes/settings.tsx.
 Commit: "Turn the question settings into a pace the apprentice can follow, never below three questions"
+
+Merged (round 5): B-20 + B-32 a846525 + 2dc2cf0, B-21 270f615, B-25 1c8a0ff, B-33 4d25ccb; round completion a2208c3.
+
+# Round 6 · base a2208c3
+
+Goal of the round: make "Two experts, one task" demoable (pick two sessions of one task, see where they differ and the question for each expert). B-36 and B-10 run in parallel against one written contract; B-39 rides with B-36 (same implementer, disjoint files).
+
+Not assigned this round:
+- B-37 (store a chosen question on an expert's map): same router file as B-36. Next round, after B-36 merges; then B-38 (next debrief asks it) and B-40 (the "Ask in their next session" button, after B-10 + B-37).
+- B-27 (capture interval), B-28 (tutor options), B-30: each removes `soon` badges in routes/settings.tsx, which implementer-3 owns this round (one owner per file). Next round.
+- B-31 (cheap storage probe): needs core/backend/main.py and lib/settings.ts; free this round but the three slots go to the round goal and the Partial B-26. Next round.
+- B-42 (group Work Maps by task): touches ui/lib/work-maps.ts (implementer-2 this round). After B-10.
+- B-02, B-19, S-05: unchanged (whole-backend lint; pyproject.toml/uv.lock owners).
+- Needs the user (left out): S-06 upload to ElevenLabs KB, voice/speaking-speed overrides (agent sync), Dependabot upgrades.
+
+## B-36 + B-39 · Questions in the diff response; clearer question wording · implementer-1 · approved
+Base: a2208c3 (`git rev-parse --short HEAD` in your worktree must match). Repo /Users/mithra/.builds/sia (you work in your own worktree of it).
+Goal: (B-36) `GET /api/v1/work_map_diff` also returns, for each expert, the ranked questions to ask them about where their Work Maps differ, so the compare view (built in parallel by implementer-2) can show them. (B-39) those questions read better aloud: only the numbers that actually differ, a short clause when a second hard field differs too, and the rules and steps named instead of "2 rules"/"a different step".
+Brief says: Stretch, "Two experts, one task: show where two sessions differ and ask each expert why" (docs/CHALLENGE.md; docs/PROGRESS.md rows S-01, B-36, B-39).
+Background (core/backend): `src/router/work_map_diff_router.py` (49 lines) serves `GET /api/v1/work_map_diff?a=&b=` with plain `def get_work_map_diff(a: str, b: str)`: `_uuid` (non-UUID → 404 "Work Map not found"), a == b → 422 "Pick two different Work Maps", `work_map_store.get` per side (None → 404 "Work Map a not found"/"Work Map b not found", a checked first; exception → `_store_unavailable(e)` → 503 "Work Map storage is unavailable"), returns `{"a": _header(...), "b": _header(...), "diff": work_map_diff.diff(map_a, map_b)}`. `src/services/diff_questions.py` has `questions(d, limit=5) -> {"a": [Question], "b": [Question]}` (pure, deterministic; read its module docstring, `PRIORITY`, `TEMPLATES`, `_say`, `_field_question`, `_differs`, `_only`). tests/test_work_map_diff_router.py (11 tests, `client` fixture with the store monkeypatched, maps MAP_A/MAP_B: two experts coding a supplier invoice, capex threshold 5,000 vs 10,000, a vendor-list step only B has) and tests/test_diff_questions.py (14 tests) are the existing tests. On those fixtures today, A's top question reads "On "Equipment over 5,000 goes to capex account 0400", you went with 0400 and 5,000; in another session it was 0400 and 10,000. Which holds, and when?": the shared account code 0400 is noise.
+Owns: core/backend/src/router/work_map_diff_router.py, core/backend/tests/test_work_map_diff_router.py, core/backend/src/services/diff_questions.py, core/backend/tests/test_diff_questions.py.
+Must not touch: core/backend/src/services/work_map_diff.py and tests/test_work_map_diff.py (read only; report bugs, don't fix), core/backend/main.py, src/router/path_router.py, other routers, storage/*, tests/conftest.py, pyproject.toml, uv.lock, everything under pixel-perfect-capture/ (implementer-2 and implementer-3), .claude/check.sh.
+Plan:
+1. (B-36, do first) router: add `limit: int = Query(5, ge=0, le=10)` (from fastapi) to `get_work_map_diff`; compute `d = work_map_diff.diff(...)` once and return `{"a", "b", "diff": d, "questions": diff_questions.questions(d, limit)}` (no second diff; key order as in the Contract). Validation order unchanged (a FastAPI 422 for a bad `limit` comes before any store call; that is fine). Update the endpoint docstring.
+2. (B-36) tests in test_work_map_diff_router.py: `questions` present with keys exactly `a` and `b`, each a list of objects with exactly the Question keys; A's questions carry A's item ids and quote only A's words (and B's only B's), e.g. B's list has the `only` question for the vendor-list step with B's quote; the default caps at 5; `limit=1` gives at most one per side; `limit=0` gives `{"a": [], "b": []}` with the diff still present; `limit=11`, `limit=-1` and `limit=abc` → 422; swapping a and b swaps the two lists (same ids); a map with no steps still returns questions (possibly empty lists). Don't assert full question texts in the router tests (that's test_diff_questions' job), so wording changes don't ripple.
+3. (B-39) numbers: in the `numbers` template say only the numbers that differ (drop those both sides share, so "you went with 5,000; in another session it was 10,000"); if nothing is left on a side, fall back to that side's full list, and the existing empty-side templates still apply when a side really has none.
+4. (B-39) second-field clause: in `_differs`, after choosing the pair's top field, if the next field by priority is one of `numbers`, `rule`, `kind`, `ask_whom`, `judgment` (never reworded text, never `missing_*` text fields) and has a value on at least one side, append exactly one short sentence after the question, e.g. "The numbers differ too." / "The rule reads the other way too." / "The kind of rule differs too." / "The person to ask differs too." / "Whether it's a judgment call differs too." (a dict `ALSO` next to `TEMPLATES`). At most one clause; ids, `field` (still the top field) and ranking unchanged.
+5. (B-39) name the rules and steps: in `questions()`, build once per side a label lookup from the diff itself: guardrail id → rule (`same[].a/b` + `title`, `differs[].a/b` + `title_a`/`title_b`, `only_a`/`only_b` `id` + `title`) and step id → title the same way from `steps`; pass it down. The step-level `guardrails` field (a/b = lists of guardrail ids) names the rules in quotes, each trimmed to ~50 chars with `trim`, at most two, then "and N more" (`"Equipment over 5,000 goes to capex" and "Never pay an unlisted vendor"`); ids with no label count toward "N more"/fall back to today's "one rule"/"N rules" when none has a label. The guardrail-level `step` field (a/b = step ids) names each side's step title ("You tied this rule to "Code the cost account"; in another session it came in at "Approve the invoice for payment". Where does it come in, and why?"), falling back to today's wording when a title is missing. Update the module docstring to say so.
+6. Tests in test_diff_questions.py: numbers drops the shared 0400; the second-field clause appears for numbers + ask_whom, not for numbers + reworded decision, and only once with three hard fields; rules named (two names, and "and 1 more" with three) and unnamed ids fall back; step names on a `step` field, and fallback without titles; ids and order of the existing end-to-end test unchanged. Change existing exact-text assertions only where these clauses apply.
+7. Ruff-clean (line length 100) and ruff-formatted on all four files; type hints and short comments like the code around it.
+Done when: `cd core/backend && uv run --extra dev pytest -q` passes (only the known privacy-extra skip, 0 xfailed); `uvx ruff check` and `uvx ruff format --check` on the four files are clean; `/Users/mithra/.builds/sia/.claude/check.sh a2208c3` prints ALL CHECKS PASSED. Report test counts, the questions for both sides on MAP_A/MAP_B (`curl`-shaped JSON of `questions`), and the `ALSO` sentences.
+Contract (implementer-2 builds the compare view against this in parallel; implement exactly):
+```
+GET /api/v1/work_map_diff?a=<work map uuid>&b=<work map uuid>[&limit=<int 0..10, default 5>]
+200 {
+  "a": {"id": str, "task": str | null, "recorded_at": str | null, "confirmed": bool,
+        "status": str, "steps": int, "guardrails": int},
+  "b": { same shape },
+  "diff": Diff,
+  "questions": {"a": [Question], "b": [Question]}   # diff_questions.questions(diff, limit):
+                                                    # ranked best first, at most `limit` each,
+                                                    # [] when nothing differs or limit=0
+}
+404 {"detail": "Work Map a not found" | "Work Map b not found" | "Work Map not found" (a or b not a UUID)}
+422 {"detail": "Pick two different Work Maps"} when a == b (also the same UUID in another case)
+422 {"detail": [ {...FastAPI validation error...}, ... ]} (a list) when a or b is missing or limit is
+    not an int in 0..10
+503 {"detail": "Work Map storage is unavailable"}
+
+Diff = {
+  "steps": {
+    "same":    [{"a": id, "b": id, "title": str, "score": float}],
+    "differs": [{"a": id, "b": id, "title_a": str, "title_b": str, "score": float,
+                 "fields": [{"field": str, "kind": "changed" | "missing_a" | "missing_b",
+                             "a": value | null, "b": value | null}],
+                 "words_a": {"quote": str, "quote_translation": str, "reason": str},
+                 "words_b": {"quote": str, "quote_translation": str, "reason": str}}],
+    "only_a":  [{"id": id, "title": str, "words": {"quote": str, "quote_translation": str, "reason": str}}],
+    "only_b":  [same shape as only_a]
+  },
+  "guardrails": { the same four lists; "title"/"title_a"/"title_b" are the rule texts }
+}
+Step fields: "decision", "reason" (a/b strings), "judgment" (a/b booleans or null),
+  "guardrails" (a/b lists of that side's guardrail ids, or null).
+Guardrail fields: "rule" (a/b rule texts; only when polarity words differ: never/always,
+  over/under...), "kind" (a/b "limit" | "exception" | "stop_and_ask"), "ask_whom", "applies_when"
+  (strings), "numbers" (a/b sorted lists of number strings, e.g. ["0400", "5000"]), "step" (a/b step ids).
+Ids (id) are strings: the map's own ids or the s<n>/g<n> fallbacks. `words` values are strings,
+  never null; quote/quote_translation are "" when the expert's words were narration.
+
+Question = {
+  "id": str,        # e.g. "guardrails:g1:g1:numbers", "steps:-:s2:only"; the same on both
+                    # sides of one difference (pair the two sides by it)
+  "section": "steps" | "guardrails",
+  "item": str,      # the asked expert's own item id (matches diff ids of that side)
+  "other": str | null,   # the matching item id in the other map; null for only-one-expert items
+  "field": str,     # the diff field asked about, or "only"
+  "text": str,      # the question as the apprentice would say it (English)
+  "quote": str      # the asked expert's words it quotes, "" if none
+}
+```
+
+Approved (main session): questions in the response per contract with limit 0..10; shared numbers dropped; one ALSO clause; rules/steps named; 246 backend tests; check.sh a2208c3 → ALL CHECKS PASSED.
+Follow-up to queue: don't ask a side twice about the same difference (e.g. a step `reason` change whose only difference is the same numbers already asked on its guardrail); skip a text `changed` question when its numbers are the only difference and they're already covered.
+Release: worktree .claude/worktrees/agent-a2b3b4c7b7b2c1bd4, files core/backend/src/router/work_map_diff_router.py, core/backend/tests/test_work_map_diff_router.py, core/backend/src/services/diff_questions.py, core/backend/tests/test_diff_questions.py.
+Commit (two commits): "Return each expert's questions with the difference between their Work Maps" (router + its test) and "Ask about only the numbers that differ, and name the rules and steps" (diff_questions + its test)
+
+## B-10 · Compare two sessions of one task, with the questions for each expert · implementer-2 · approved
+Base: a2208c3 (`git rev-parse --short HEAD` in your worktree must match). Repo /Users/mithra/.builds/sia (you work in your own worktree of it).
+Goal: from a Work Map, "Compare" opens `/work-maps/compare?a=<id>`; the user picks a second session of the same task and sees, side by side, which steps and guardrails are the same, which differ (each expert's version and words, the differing fields highlighted), which only one of them did, and under each session the questions to ask that expert.
+Brief says: Stretch, "Two experts, one task: show where two sessions differ and ask each expert why" (docs/CHALLENGE.md; docs/PROGRESS.md rows S-01, B-10).
+Background (pixel-perfect-capture/src): TanStack Router file routes; `routes/work-maps.$id.tsx` renders `<WorkMap map onClose>` full screen, and the map's header (title, buttons "Teach a new hire in", "Transcript", delete, "Export for agents") lives in `components/WorkMap.tsx` around lines 476-600. `routes/work-maps.index.tsx` shows the page layout to copy (`AppHeader`, `max-w-2xl` container, loading / error-with-Retry / empty states, rounded-2xl cards). `lib/work-maps.ts` has `WorkMapSummary`, `fetchWorkMaps()`, `taskTitle`, `recordedAt`, `count`, `guardLabel` and a private `send`/`request` (fetch → "Couldn’t reach the apprentice backend." on network error; generic texts for 404/503) using `BACKEND_URL` from `lib/backend.ts`. Tests are vitest (`lib/work-maps.test.ts` mocks fetch with `vi.stubGlobal`/`vi.spyOn`). `routeTree.gen.ts` is generated by the TanStack plugin during `npm run build`/`vite dev`; commit the regenerated file, never hand-edit it. There are no expert names: call the sides "Session A" / "Session B" with each one's recorded date. The backend endpoint below exists without `questions` at base; implementer-1 adds `questions` this round, so build against the Contract and treat a response without `questions` as empty lists. A realistic fixture (diff + questions) is printed by: `cd core/backend && uv run --extra dev python -c "import json,sys; sys.path.insert(0,'tests'); import test_work_map_diff_router as t; from src.services import work_map_diff as w, diff_questions as q; d=w.diff(t.MAP_A,t.MAP_B); print(json.dumps({'diff':d,'questions':q.questions(d)},indent=1,ensure_ascii=False))"`; copy it into the test as a literal (wording of `text` may change this round; don't assert on it beyond passing it through).
+Owns: pixel-perfect-capture/src/routes/work-maps.compare.tsx (new), pixel-perfect-capture/src/routeTree.gen.ts (regenerated only), pixel-perfect-capture/src/lib/compare.ts (new), pixel-perfect-capture/src/lib/compare.test.ts (new), pixel-perfect-capture/src/lib/work-maps.ts (+ lib/work-maps.test.ts), pixel-perfect-capture/src/components/WorkMap.tsx (one "Compare" link in the header only), pixel-perfect-capture/src/routes/work-maps.$id.tsx (only if you need it for the entry point).
+Must not touch: everything under core/ (implementer-1), hooks/use-apprentice.ts, lib/floor.ts, lib/floor.test.ts, components/Sia.tsx, routes/settings.tsx, lib/settings.ts (implementer-3), routes/work-maps.index.tsx, package.json and lockfiles.
+Plan:
+1. lib/work-maps.ts: types `WorkMapDiff`, `DiffField`, `DiffWords`, `DiffSection`, `DiffQuestion`, `WorkMapDiffResponse` exactly per the Contract; `fetchWorkMapDiff(a, b, limit?)` calling `/work_map_diff?a=&b=` with `URLSearchParams`. It must not use the generic 404 text: network error → "Couldn’t reach the apprentice backend."; read `detail` from the JSON body when it is a string; 404 "Work Map a not found"/"b" → "Session A (or B) no longer exists. Pick another one."; 404 "Work Map not found" → "That isn’t a Work Map id."; 422 → "Pick two different sessions." (string detail) or "The compare link is incomplete." (list detail); 503 → "Work Map storage (Supabase) is unavailable."; other → "The backend answered <status>.". Put the status/detail → message mapping in a pure exported `diffError(status, detail)` in lib/compare.ts so it is testable; throw `Error(message)`. A 200 without `questions` → `{a: [], b: []}`.
+2. lib/compare.ts (pure, no React): `sameTask(a, b)` (trim, collapse spaces, case-insensitive; null/empty tasks never match); `pickerGroups(maps, aId)` → `{ sameTask: WorkMapSummary[], otherTasks: WorkMapSummary[] }` for B (excluding A itself, newest first); `compareRows(diff)` → per section ("steps", "guardrails") rows `{ kind: "same" | "differs" | "only_a" | "only_b", key, titleA, titleB, fields: {field, label, a: string, b: string, kind}[], wordsA, wordsB }` with display values: lists joined with ", ", numbers formatted 5000 → "5,000" (keep leading-zero codes like "0400"), judgment true/false → "Judgment call"/"Routine", kind via `guardLabel`, null/"" → "Not said", field labels in plain words ("Numbers", "Who to ask", "Applies when", "Rules on this step", "Step", ...); a `words` helper preferring quote_translation, else quote, else reason; robust to missing sections/lists (empty rows, no throw); `questionsFor(response, side)` with a missing `questions` → []. Only `differs` shows field values; `same` is one line.
+3. routes/work-maps.compare.tsx: `createFileRoute("/work-maps/compare")` with `validateSearch` returning `{ a?: string; b?: string }` (strings only, else undefined). Layout: `AppHeader`, title "Compare two sessions", back link to /work-maps. Two pickers (native `<select>` like WorkMap.tsx's language select) fed by `fetchWorkMaps`: A lists all maps; B lists `sameTask` first and the rest under an `<optgroup label="Other tasks">`. Changing a picker updates the URL search (`navigate({ search })`, replace). When a and b are both set and differ, call `fetchWorkMapDiff`; ignore a stale response when the pair changed meanwhile (request counter or AbortController).
+4. Results: a header per side ("Session A" / "Session B", task, recorded date, "Confirmed"/"Not confirmed", step and guardrail counts, a link to that map). If the two tasks differ (`!sameTask`), show a gentle note (warning style like the unconfirmed note in work-maps.index.tsx): "These sessions are from different tasks, so many differences may just be different work." and still show the comparison. Then "Questions for each expert": two columns, each listing that side's questions (text, and the quote in a muted line when not ""), empty → "Nothing to ask this expert." Then for Steps and Guardrails: "Differs" (two columns, each side's title and words, changed fields with a/b highlighted), "Only in Session A" / "Only in Session B" (with that session's date), and "Same" collapsed to one line each. Nothing differs at all → "These two sessions agree on every step and guardrail."
+5. States in words: loading the list; backend down (error + "Check that the backend in core/backend is running." + Retry, like work-maps.index.tsx); fewer than two Work Maps → "Record a second session of this task to compare."; only A chosen → prompt to pick B; a == b in the URL → "Pick two different sessions." without calling the backend; every `diffError` message with Retry.
+6. Entry point: a "Compare" outline button in WorkMap.tsx's header (next to "Transcript"; icon e.g. `GitCompare` from lucide-react) as a `<Link to="/work-maps/compare" search={{ a: map.id }}>`. Nothing else in WorkMap.tsx changes.
+7. Run `npm run build` once so the plugin regenerates routeTree.gen.ts with the new route; commit that output. Prettier-formatted, no em dashes in any UI text (use ":" or "," instead), whole-UI lint 0 problems.
+Done when: lib/compare.test.ts covers `sameTask` (case/space, null), `pickerGroups`, `compareRows` on the fixture (a numbers difference rendered "5,000" vs "10,000" with "0400" kept, an only_b step, same rows), missing sections/questions, and every `diffError` branch; lib/work-maps.test.ts covers `fetchWorkMapDiff` building the URL (escaped ids, limit) and mapping a network error and a 404 detail. `cd pixel-perfect-capture && npm test`, `npm run build`, `npm run lint` (0 problems) pass; `/Users/mithra/.builds/sia/.claude/check.sh a2208c3` prints ALL CHECKS PASSED. `grep -n "—" src/routes/work-maps.compare.tsx src/lib/compare.ts` finds nothing. Report the states you handled and how the page reads on the fixture (describe the sections).
+Contract (implementer-1 serves this in parallel; build only against it):
+```
+GET /api/v1/work_map_diff?a=<work map uuid>&b=<work map uuid>[&limit=<int 0..10, default 5>]
+200 {
+  "a": {"id": str, "task": str | null, "recorded_at": str | null, "confirmed": bool,
+        "status": str, "steps": int, "guardrails": int},
+  "b": { same shape },
+  "diff": Diff,
+  "questions": {"a": [Question], "b": [Question]}   # diff_questions.questions(diff, limit):
+                                                    # ranked best first, at most `limit` each,
+                                                    # [] when nothing differs or limit=0
+}
+404 {"detail": "Work Map a not found" | "Work Map b not found" | "Work Map not found" (a or b not a UUID)}
+422 {"detail": "Pick two different Work Maps"} when a == b (also the same UUID in another case)
+422 {"detail": [ {...FastAPI validation error...}, ... ]} (a list) when a or b is missing or limit is
+    not an int in 0..10
+503 {"detail": "Work Map storage is unavailable"}
+
+Diff = {
+  "steps": {
+    "same":    [{"a": id, "b": id, "title": str, "score": float}],
+    "differs": [{"a": id, "b": id, "title_a": str, "title_b": str, "score": float,
+                 "fields": [{"field": str, "kind": "changed" | "missing_a" | "missing_b",
+                             "a": value | null, "b": value | null}],
+                 "words_a": {"quote": str, "quote_translation": str, "reason": str},
+                 "words_b": {"quote": str, "quote_translation": str, "reason": str}}],
+    "only_a":  [{"id": id, "title": str, "words": {"quote": str, "quote_translation": str, "reason": str}}],
+    "only_b":  [same shape as only_a]
+  },
+  "guardrails": { the same four lists; "title"/"title_a"/"title_b" are the rule texts }
+}
+Step fields: "decision", "reason" (a/b strings), "judgment" (a/b booleans or null),
+  "guardrails" (a/b lists of that side's guardrail ids, or null).
+Guardrail fields: "rule" (a/b rule texts; only when polarity words differ: never/always,
+  over/under...), "kind" (a/b "limit" | "exception" | "stop_and_ask"), "ask_whom", "applies_when"
+  (strings), "numbers" (a/b sorted lists of number strings, e.g. ["0400", "5000"]), "step" (a/b step ids).
+Ids (id) are strings: the map's own ids or the s<n>/g<n> fallbacks. `words` values are strings,
+  never null; quote/quote_translation are "" when the expert's words were narration.
+
+Question = {
+  "id": str,        # e.g. "guardrails:g1:g1:numbers", "steps:-:s2:only"; the same on both
+                    # sides of one difference (pair the two sides by it)
+  "section": "steps" | "guardrails",
+  "item": str,      # the asked expert's own item id (matches diff ids of that side)
+  "other": str | null,   # the matching item id in the other map; null for only-one-expert items
+  "field": str,     # the diff field asked about, or "only"
+  "text": str,      # the question as the apprentice would say it (English)
+  "quote": str      # the asked expert's words it quotes, "" if none
+}
+```
+
+Approved (main session): /work-maps/compare with pickers (same task first), side-by-side differs/only/same, questions per expert, all error/empty states, stale-response abort; Compare link in WorkMap header; 24 new tests; check.sh a2208c3 → ALL CHECKS PASSED. Not yet opened in a browser.
+Follow-ups to queue: show rule texts instead of guardrail ids in the 'Rules on this step' field; untangle the work-maps.ts ↔ compare.ts import loop (move diffError or the types).
+Release: worktree .claude/worktrees/agent-a9bd04f2c3ba1b144, files pixel-perfect-capture/src/routes/work-maps.compare.tsx, pixel-perfect-capture/src/lib/compare.ts, pixel-perfect-capture/src/lib/compare.test.ts, pixel-perfect-capture/src/lib/work-maps.ts, pixel-perfect-capture/src/lib/work-maps.test.ts, pixel-perfect-capture/src/components/WorkMap.tsx, pixel-perfect-capture/src/routeTree.gen.ts.
+Commit: "Compare two sessions of a task side by side, with the questions to ask each expert"
+
+## B-26 · The apprentice follows the question pace from Settings in a live session · implementer-3 · approved
+Base: a2208c3 (`git rev-parse --short HEAD` in your worktree must match). Repo /Users/mithra/.builds/sia (you work in your own worktree of it).
+Goal: the Settings choices "Curiosity", "Questions during the session" and "Debrief" really change a live session: the pill waits longer or shorter between questions, asks at least the chosen number before the debrief, and holds the teach-back until the chosen number of follow-ups; the pill shows "Debrief n/<that number>"; the three rows lose their "Soon" badge.
+Brief says: Required, at least 3 live questions and at least 3 debrief follow-ups (docs/CHALLENGE.md; docs/PROGRESS.md rows R-04, R-05, R-07/R-08, B-25, B-26); Beyond, Settings that do something.
+Background (pixel-perfect-capture/src): lib/floor.ts exports `FloorPolicy {minLive, earlyGapMs, gapMs, minDebrief}`, `DEFAULT_POLICY` (3, 40_000, 75_000, 3), `policyFrom(settings)` (never below 3), `decideFloor(f, policy = DEFAULT_POLICY)`, `debriefStatus({asked, gaps, refusals, minDebrief})`, plus `MIN_LIVE_QUESTIONS`/`MIN_DEBRIEF_QUESTIONS`. lib/settings.ts exports `loadSettings()` (localStorage `tacit:settings`, validated, defaults on anything bad). hooks/use-apprentice.ts still uses the constants: `questionsMet` (line 120), `start_teach_back` client tool (431-450: debriefStatus without minDebrief, the "[NOT YET] Not yet: you have asked n of 3 ..." reply), `start` (558: resets the session ref `s.current`), `finishWork` (741-743 log), `askWrapUp` (755 `need`), `startWrapUp` (779 `wrapUpLimit`), the floor timer (876 `met`, 884 `decideFloor(...)` without policy, 907-911 the "[PAUSE] ... You have asked n of at least 3 ..." text and the guardrail nudge at `MIN_LIVE_QUESTIONS - 1`). `ApprenticeState` (line ~50-96) exposes `debriefAsked`. components/Sia.tsx line 383 renders `Debrief ${min(debriefAsked, 3)}/3` with `MIN_DEBRIEF_QUESTIONS`. routes/settings.tsx: the `soon` props on the "Curiosity" (line 134), "Questions during the session" (148) and "Debrief" (172) rows. core/backend/src/services/apprentice_agent.py's prompt says "at least three" with no upper limit and that the [PAUSE] message gives the count, so no prompt change or agent sync is needed.
+Owns: pixel-perfect-capture/src/hooks/use-apprentice.ts, pixel-perfect-capture/src/lib/floor.ts, pixel-perfect-capture/src/lib/floor.test.ts, pixel-perfect-capture/src/components/Sia.tsx, pixel-perfect-capture/src/routes/settings.tsx (only the three `soon` props).
+Must not touch: lib/settings.ts and lib/settings.test.ts (read only), components/WorkMap.tsx (implementer-2; its "n of at least 3 live questions" tally stays on the constant), lib/work-maps.ts, routes/work-maps.*, src/routeTree.gen.ts (implementer-2), everything under core/ (implementer-1), core/backend/src/services/apprentice_agent.py and any agent prompt, package.json and lockfiles.
+Plan:
+1. lib/floor.ts (pure, tested): `liveQuestionsMet(asked: number, guardrail: boolean, policy = DEFAULT_POLICY)`; `wrapUpLimit(asked: number, policy = DEFAULT_POLICY)` = max(minLive - asked, 1) + 2; `pauseAsk(asked: number, guardrail: boolean, policy = DEFAULT_POLICY)` returning the ask sentence plus the guardrail nudge exactly as use-apprentice builds them today (lines 905-913), with `policy.minLive` in place of the constant; `notYetReply(asked: number, status: DebriefStatus, minDebrief: number)` returning today's "Not yet: ..." text with the number. With DEFAULT_POLICY each must produce today's text byte for byte.
+2. use-apprentice.ts: add `policy: FloorPolicy` to the session ref, set to `policyFrom(loadSettings())` in `start` (read once per session, so changing Settings mid-session doesn't move the goalposts); the initial ref value is `DEFAULT_POLICY`. Use it everywhere listed in Background: `questionsMet` → `liveQuestionsMet(counted(x), guardrailAsked(x), x.policy)`, `decideFloor(..., x.policy)`, `debriefStatus({..., minDebrief: x.policy.minDebrief})`, the [NOT YET] reply and logs, `need`, `wrapUpLimit`, the [PAUSE] text. Update the two doc comments that name the constants. Drop the constant imports that become unused.
+3. `ApprenticeState`: add `minDebrief: number` (initial `DEFAULT_POLICY.minDebrief`), set from the policy in `start`'s `setState({...initialState, status: "connecting", minDebrief})`.
+4. Sia.tsx: `Debrief ${Math.min(voice.debriefAsked, voice.minDebrief)}/${voice.minDebrief}`; drop the `MIN_DEBRIEF_QUESTIONS` import.
+5. settings.tsx: remove `soon` from exactly those three rows; nothing else in the file (other rows keep their badges; the file's top comment stays true).
+6. floor.test.ts: the new helpers at DEFAULT_POLICY match today's strings exactly (copy them from use-apprentice.ts at base), and at minLive 5 / minDebrief 5 say "of at least 5" / "of 5", hold `liveQuestionsMet` until 5 with a guardrail, nudge for the guardrail at 4, and `wrapUpLimit` grows accordingly; `policyFrom` of curious/quiet changes `decideFloor`'s outcome at the boundary when passed through. Existing tests stay green.
+7. No em dashes in UI text; prettier-clean; whole-UI lint 0 problems.
+Done when: `cd pixel-perfect-capture && npx vitest run src/lib/floor.test.ts`, `npm test`, `npm run build` and `npm run lint` (0 problems) pass; `grep -n "MIN_LIVE_QUESTIONS\|MIN_DEBRIEF_QUESTIONS" src/hooks/use-apprentice.ts src/components/Sia.tsx` finds nothing; `/Users/mithra/.builds/sia/.claude/check.sh a2208c3` prints ALL CHECKS PASSED. Report every place the policy is now read, and confirm the default settings send the agent exactly today's messages.
+Contract: none with the other implementers (uses B-25's merged floor.ts API: `FloorPolicy`, `DEFAULT_POLICY`, `policyFrom`, `decideFloor(f, policy?)`, `debriefStatus({asked, gaps, refusals?, minDebrief?})`).
+
+Approved (main session review of the use-apprentice diff): policy read once per session in start; every constant site uses x.policy; default settings byte-identical to today's agent messages (tested); 61 floor tests; check.sh a2208c3 → ALL CHECKS PASSED.
+Release: worktree .claude/worktrees/agent-a58b6b4aefc26c063, files pixel-perfect-capture/src/lib/floor.ts, pixel-perfect-capture/src/lib/floor.test.ts, pixel-perfect-capture/src/hooks/use-apprentice.ts, pixel-perfect-capture/src/components/Sia.tsx, pixel-perfect-capture/src/routes/settings.tsx.
+Commit: "Let a live session follow the question pace chosen in Settings"
