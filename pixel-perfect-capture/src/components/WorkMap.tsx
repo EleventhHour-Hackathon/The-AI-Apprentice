@@ -558,6 +558,14 @@ function Canvas({ map: record, onClose, focusRequest, onFocusChange }: Props) {
     const item = requestId ? findItem(map, requestId) : null;
     if (item) selectRef.current(item);
   }, [map, requestId, requestNonce]);
+  // A map opens on its first item, unless a focus was asked for. Once only: a reload after Sia
+  // edits the map keeps the person's place.
+  const opened = useRef(false);
+  useEffect(() => {
+    if (opened.current) return;
+    opened.current = true;
+    if (!requestId) selectRef.current(nextItem(map, null));
+  }, [map, requestId]);
 
   const step = selected?.type === "step" ? map.steps[selected.index] : undefined;
   const guard = selected?.type === "guardrail" ? map.guardrails[selected.index] : undefined;
