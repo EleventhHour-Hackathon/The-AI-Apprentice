@@ -27,6 +27,8 @@ import {
   ArrowLeft,
   Bot,
   CheckCheck,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   Download,
   GitCompare,
@@ -49,6 +51,7 @@ import {
   storedLanguage,
   type LanguageChoice,
 } from "@/lib/languages";
+import { findItem, itemId, nextItem, prevItem, type FocusItem } from "@/lib/map-focus";
 import { saveNextSession } from "@/lib/next-session";
 import { ClipPlayer } from "@/components/ClipPlayer";
 import { DeleteWorkMap } from "@/components/DeleteWorkMap";
@@ -85,7 +88,8 @@ type NoteData = {
   missing?: string[];
 };
 type LaneData = { label: string };
-type FlowData = { kind: "step" | "guard"; from: number };
+/** `focus`: the link from the selected item onward, which carries a gentle flow. */
+type FlowData = { kind: "step" | "guard"; from: number; focus: boolean };
 /** What the side panel shows. */
 type Selection = { type: "step" | "guardrail"; index: number } | { type: "transcript" } | null;
 
@@ -95,14 +99,17 @@ const STAGGER = 80;
 const SLOT = 1400;
 const REST = 2600;
 const enterDelay = (ms: number) => ({ "--wm-delay": `${ms}ms` }) as CSSProperties;
+const reducedMotion = () =>
+  typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /** Index of the step the walkthrough is on, or -1 between rounds. */
 const Pulse = createContext(-1);
 
-function usePulse(steps: number) {
+/** Paused while an item is selected, so the focus flow is the only thing moving. */
+function usePulse(steps: number, paused: boolean) {
   const [active, setActive] = useState(-1);
   useEffect(() => {
-    if (steps < 2 || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (steps < 2 || paused || reducedMotion()) return;
     let i = -1;
     let timer: ReturnType<typeof setTimeout>;
     const tick = () => {
@@ -111,9 +118,12 @@ function usePulse(steps: number) {
       timer = setTimeout(tick, i === -1 ? REST : SLOT);
     };
     timer = setTimeout(tick, steps * STAGGER + 900);
-    return () => clearTimeout(timer);
-  }, [steps]);
-  return active;
+    return () => {
+      clearTimeout(timer);
+      setActive(-1);
+    };
+  }, [steps, paused]);
+  return paused ? -1 : active;
 }
 
 /** A connector that draws itself in, and carries the pulse while its step is active. */
@@ -131,6 +141,7 @@ function FlowEdge(props: EdgeProps<Edge<FlowData>>) {
         style={props.style}
         {...(kind === "step" ? { pathLength: 1 } : {})}
       />
+      {props.data?.focus && <path d={path} fill="none" className="wm-edge-flow" />}
       {live && kind === "step" && <PulseDot path={path} />}
     </>
   );
@@ -164,7 +175,7 @@ function StepNode({ data }: NodeProps<Node<StepData>>) {
   const live = useContext(Pulse) === data.n - 1;
   return (
     <div
-      className={`wm-node wm-enter w-[250px] overflow-hidden rounded-2xl border bg-card text-card-foreground ${data.selected ? "wm-node-selected" : ""} ${live ? "wm-node-live" : ""}`}
+      className={`wm-node wm-enter w-[250px] overflow-hidden rounded-2xl border bg-card text-card-foreground ${s.judgment ? "wm-judgment" : ""} ${data.selected ? "wm-node-selected" : ""} ${live ? "wm-node-live" : ""}`}
     >
       <Handle type="target" position={Position.Left} style={stepHandle} />
       {s.clip ? (
@@ -182,10 +193,10 @@ function StepNode({ data }: NodeProps<Node<StepData>>) {
         <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
           <span className="font-mono">{String(data.n).padStart(2, "0")}</span>
           {s.judgment && (
-            <>
+            <span className="wm-badge flex items-center gap-1.5">
               <span className="h-1.5 w-1.5 rounded-full bg-voice-listening sia-breathe" />
               <span className="text-foreground/70">Judgment call</span>
-            </>
+            </span>
           )}
           {s.at !== null && <span className="ml-auto font-mono">{mmss(s.at)}</span>}
         </div>
@@ -217,7 +228,7 @@ function NoteNode({ data }: NodeProps<Node<NoteData>>) {
       className={`wm-node wm-enter w-[250px] rounded-2xl border px-3.5 py-2.5 ${data.tone === "warm" ? "wm-guard-warm" : "bg-card text-card-foreground"} ${data.selected ? "wm-node-selected" : ""}`}
     >
       <Handle type="target" position={Position.Top} style={hidden} />
-      <span className="flex items-center gap-1 text-[10px] font-medium opacity-75">
+      <span className="wm-badge flex items-center gap-1 text-[10px] font-medium opacity-75">
         {data.tone === "open" && <Clock size={10} />}
         {data.label}
       </span>
@@ -237,7 +248,16 @@ function LaneNode({ data }: NodeProps<Node<LaneData>>) {
 
 const nodeTypes = { step: StepNode, note: NoteNode, lane: LaneNode };
 
-type Props = { map: WorkMapRecord; onClose: () => void };
+/** The step or guardrail in focus, by its id ("s1", "g2"...). */
+export type MapFocus = { kind: "step" | "guardrail"; id: string };
+type Props = {
+  map: WorkMapRecord;
+  onClose: () => void;
+  /** Select and centre this step or guardrail id; a new nonce asks again for the same id. */
+  focusRequest?: { id: string; nonce: number } | undefined;
+  /** Called when the selected step or guardrail changes, with null when none is. */
+  onFocusChange?: ((item: MapFocus | null) => void) | undefined;
+};
 export function WorkMap(props: Props) {
   return (
     <ReactFlowProvider>
@@ -295,7 +315,7 @@ function layoutMap(map: MapData, selected: Selection) {
           source: `step-${i - 1}`,
           target: id,
           style: enterDelay(i * STAGGER),
-          data: { kind: "step", from: i - 1 } satisfies FlowData,
+          data: { kind: "step", from: i - 1, focus: isSelected("step", i - 1) } satisfies FlowData,
         });
     });
     y += stepsHeight;
@@ -318,7 +338,7 @@ function layoutMap(map: MapData, selected: Selection) {
       id: `step-${si}-guardrail-${gi}`,
       type: "flow",
       style: enterDelay(delay),
-      data: { kind: "guard", from: si } satisfies FlowData,
+      data: { kind: "guard", from: si, focus: isSelected("guardrail", gi) } satisfies FlowData,
       source: `step-${si}`,
       sourceHandle: "g",
       target: `guardrail-${gi}`,
@@ -363,7 +383,12 @@ function layoutMap(map: MapData, selected: Selection) {
   return { nodes, edges };
 }
 
-function Canvas({ map: record, onClose }: Props) {
+const asFocus = (selected: Selection): FocusItem | null =>
+  selected?.type === "step" || selected?.type === "guardrail"
+    ? { kind: selected.type, index: selected.index }
+    : null;
+
+function Canvas({ map: record, onClose, focusRequest, onFocusChange }: Props) {
   const map = useMemo(() => normalizeMap(record), [record]);
   const [selected, setSelected] = useState<Selection>(null);
   const empty = map.steps.length + map.guardrails.length + map.open_questions.length === 0;
@@ -384,18 +409,33 @@ function Canvas({ map: record, onClose }: Props) {
   const unlinkedCount = [...map.steps, ...map.guardrails].filter((i) => unlinked(i).length).length;
 
   const layout = useMemo(() => layoutMap(map, selected), [map, selected]);
-  const pulse = usePulse(map.steps.length);
+  const pulse = usePulse(map.steps.length, asFocus(selected) !== null);
   const flow = useReactFlow();
-  // Glide to a clicked card, keeping it clear of the details panel on the right.
+  const [calm] = useState(reducedMotion);
+  // Glide to a card, keeping it clear of the details panel on the right; no glide if motion is reduced.
   const focus = (node: Node) => {
-    const zoom = flow.getZoom();
+    const zoom = Math.max(flow.getZoom(), 0.8);
     const width = node.measured?.width ?? 250;
     const height = node.measured?.height ?? 120;
     flow.setCenter(node.position.x + width / 2 + 210 / zoom, node.position.y + height / 2, {
       zoom,
-      duration: 550,
+      duration: calm ? 0 : 550,
     });
   };
+  // A focus asked for before the canvas is ready waits for it.
+  const pending = useRef<FocusItem | null>(null);
+  const select = (item: FocusItem | null) => {
+    setSelected(item && { type: item.kind, index: item.index });
+    if (!item) return;
+    const id = `${item.kind}-${item.index}`;
+    const node = flow.getNode(id) ?? layout.nodes.find((n) => n.id === id);
+    if (node && flow.viewportInitialized) focus(node);
+    else pending.current = item;
+  };
+  const current = asFocus(selected);
+  const next = nextItem(map, current);
+  const previous = prevItem(map, current);
+
   // React Flow reports node sizes through onNodesChange; keep them so the minimap can draw.
   const [nodes, setNodes] = useState<Node[]>([]);
   useEffect(
@@ -443,14 +483,17 @@ function Canvas({ map: record, onClose }: Props) {
     }
   };
 
-  const keys = useRef({ exportMap, onClose, selected });
-  keys.current = { exportMap, onClose, selected };
+  const keys = useRef({ exportMap, onClose, selected, select, next, previous, empty });
+  keys.current = { exportMap, onClose, selected, select, next, previous, empty };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       if (
         // The delete dialog handles its own keys (Esc closes it, not the map).
-        target.closest('input, textarea, [contenteditable=true], [role="alertdialog"]') ||
+        // The clip overlay handles its own keys too.
+        target.closest(
+          'input, textarea, select, [contenteditable=true], [role="alertdialog"], [role="dialog"]',
+        ) ||
         e.metaKey ||
         e.ctrlKey ||
         e.altKey ||
@@ -462,6 +505,13 @@ function Canvas({ map: record, onClose }: Props) {
       if (k === "e") {
         e.preventDefault();
         a.exportMap();
+      } else if ((k === "arrowright" || k === "n") && !a.empty) {
+        e.preventDefault();
+        // Nothing selected (or the transcript): start at the first item.
+        if (a.next || !asFocus(a.selected)) a.select(a.next);
+      } else if ((k === "arrowleft" || k === "p") && a.previous) {
+        e.preventDefault();
+        a.select(a.previous);
       } else if (k === "escape") {
         e.preventDefault();
         if (a.selected) setSelected(null);
@@ -471,6 +521,43 @@ function Canvas({ map: record, onClose }: Props) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  // Tell the caller what is in focus, once per change ("" for nothing).
+  const currentId = current && itemId(map, current);
+  const focusKey = current && currentId ? `${current.kind}:${currentId}` : "";
+  const reported = useRef("");
+  const report = useRef(onFocusChange);
+  useEffect(() => {
+    report.current = onFocusChange;
+  });
+  const panel = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (focusKey === reported.current) return;
+    reported.current = focusKey;
+    // Next and Previous open each item at its top.
+    panel.current?.scrollTo?.({ top: 0 });
+    const colon = focusKey.indexOf(":");
+    report.current?.(
+      focusKey
+        ? {
+            kind: focusKey.slice(0, colon) as MapFocus["kind"],
+            id: focusKey.slice(colon + 1),
+          }
+        : null,
+    );
+  }, [focusKey]);
+
+  // Focus asked for from outside (Sia's focus_step / next_step); a new nonce repeats it.
+  const requestId = focusRequest?.id;
+  const requestNonce = focusRequest?.nonce;
+  const selectRef = useRef(select);
+  useEffect(() => {
+    selectRef.current = select;
+  });
+  useEffect(() => {
+    const item = requestId ? findItem(map, requestId) : null;
+    if (item) selectRef.current(item);
+  }, [map, requestId, requestNonce]);
 
   const step = selected?.type === "step" ? map.steps[selected.index] : undefined;
   const guard = selected?.type === "guardrail" ? map.guardrails[selected.index] : undefined;
@@ -642,16 +729,21 @@ function Canvas({ map: record, onClose }: Props) {
                 edgeTypes={edgeTypes}
                 onNodesChange={(changes) => setNodes((ns) => applyNodeChanges(changes, ns))}
                 fitView
-                fitViewOptions={{ padding: 0.15, maxZoom: 1.2, duration: 600 }}
+                fitViewOptions={{ padding: 0.15, maxZoom: 1.2, duration: calm ? 0 : 600 }}
+                onInit={() => {
+                  const item = pending.current;
+                  pending.current = null;
+                  if (item) requestAnimationFrame(() => select(item));
+                }}
                 minZoom={0.3}
                 maxZoom={2}
                 nodesDraggable={false}
                 nodesConnectable={false}
                 proOptions={{ hideAttribution: true }}
                 onNodeClick={(_, n) => {
-                  const next = pick(n.id);
-                  setSelected(next);
-                  if (next) focus(n);
+                  const picked = pick(n.id);
+                  setSelected(picked);
+                  if (picked) focus(n);
                 }}
                 onPaneClick={() => setSelected(null)}
                 className="workmap-flow"
@@ -667,13 +759,15 @@ function Canvas({ map: record, onClose }: Props) {
               </ReactFlow>
             </Pulse.Provider>
             <p className="pointer-events-none absolute bottom-4 left-6 text-[10px] text-muted-foreground">
-              Scroll to zoom · drag to pan · click a step or guardrail for details
+              Scroll to zoom · drag to pan · click a step or guardrail for details · ← → to move
+              along
             </p>
           </>
         )}
 
         {selected && (
           <aside
+            ref={panel}
             aria-label="Details"
             className="sia-fade absolute bottom-4 right-4 top-4 z-10 flex w-[400px] max-w-[calc(100vw-32px)] flex-col overflow-y-auto rounded-3xl border border-pill-border bg-pill p-5 text-pill-foreground"
             style={{ boxShadow: "var(--voice-shadow)" }}
@@ -843,11 +937,53 @@ function Canvas({ map: record, onClose }: Props) {
                 ))}
               </ol>
             )}
+            {current && (
+              <nav
+                aria-label="Move through the workflow"
+                className="sticky -bottom-5 -mx-5 -mb-5 mt-auto flex items-center gap-2 border-t border-pill-border bg-pill px-5 pb-4 pt-3"
+              >
+                <Button
+                  variant="ghost"
+                  className="voice-icon h-8"
+                  title={previous ? `Previous: ${describe(map, previous)} (←)` : undefined}
+                  aria-label="Previous"
+                  disabled={!previous}
+                  onClick={() => select(previous)}
+                >
+                  <ChevronLeft size={14} />
+                </Button>
+                <span
+                  className="min-w-0 flex-1 truncate text-[11px] text-pill-muted"
+                  aria-live="polite"
+                >
+                  {next ? `Next: ${describe(map, next)}` : "End of the workflow"}
+                </span>
+                <Button
+                  className="voice-cta h-8 gap-1"
+                  title={next ? `Next: ${describe(map, next)} (→)` : "End of the workflow"}
+                  disabled={!next}
+                  onClick={() => select(next)}
+                >
+                  Next
+                  <ChevronRight size={14} />
+                </Button>
+              </nav>
+            )}
           </aside>
         )}
       </div>
     </div>
   );
+}
+
+/** A short name for an item, for the Next and Previous controls. */
+function describe(map: MapData, item: FocusItem) {
+  if (item.kind === "step") {
+    const title = map.steps[item.index]?.title;
+    return `step ${item.index + 1}${title ? `, ${title}` : ""}`;
+  }
+  const g = map.guardrails[item.index];
+  return g ? `${guardLabel[g.kind].toLowerCase()}, ${g.rule}` : "guardrail";
 }
 
 /** Start a lesson from this map, in the new hire's language: in the desktop pill, or on the home page in a browser. */

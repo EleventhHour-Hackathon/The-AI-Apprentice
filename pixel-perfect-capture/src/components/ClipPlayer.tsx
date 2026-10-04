@@ -5,8 +5,10 @@ import {
   type KeyboardEvent,
   type PointerEvent,
   type ReactNode,
+  type RefObject,
 } from "react";
 import { Maximize2, Minimize2, Pause, Play, RotateCcw } from "lucide-react";
+import { ClipOverlay } from "@/components/ClipOverlay";
 import { mmss } from "@/lib/work-maps";
 import { cn } from "@/lib/utils";
 
@@ -24,12 +26,78 @@ type Props = {
   className?: string;
 };
 
+/** Where a clip was when it moved between the inline player and the enlarged one. */
+type Handoff = { time: number; playing: boolean };
+
 /**
- * A screen-recording clip with Tacit's own controls: play, scrub, speed and full screen.
- * The clips have no sound, so there is no volume control.
+ * A screen-recording clip with Tacit's own controls: play, scrub, speed and Enlarge, which opens
+ * it in a large, resizable overlay inside the window (the Fullscreen API doesn't work in the
+ * desktop app). The clips have no sound, so there is no volume control.
  */
-export function ClipPlayer({ src, poster, label, autoPlay = false, onError, className }: Props) {
+export function ClipPlayer(props: Props) {
+  const [enlarged, setEnlarged] = useState<Handoff | null>(null);
+  const [resume, setResume] = useState<(Handoff & { n: number }) | null>(null);
   const shell = useRef<HTMLDivElement>(null);
+  const big = useRef<() => Handoff>(null);
+  // However the overlay closes (Shrink, Esc, a click outside), the inline player carries on.
+  const shrink = (given?: Handoff) => {
+    const handoff = given ?? big.current?.();
+    if (handoff) setResume((r) => ({ ...handoff, n: (r?.n ?? 0) + 1 }));
+    setEnlarged(null);
+    shell.current?.focus({ preventScroll: true });
+  };
+  return (
+    <>
+      <Player {...props} shellRef={shell} resume={resume} onSize={setEnlarged} />
+      {enlarged && (
+        <ClipOverlay label={props.label} onClose={() => shrink()}>
+          <Player
+            {...props}
+            className="h-full rounded-xl"
+            loop={props.autoPlay}
+            autoPlay={false}
+            start={enlarged}
+            enlarged
+            handoffRef={big}
+            onSize={shrink}
+          />
+        </ClipOverlay>
+      )}
+    </>
+  );
+}
+
+type PlayerProps = Props & {
+  shellRef?: RefObject<HTMLDivElement | null>;
+  loop?: boolean | undefined;
+  /** Where to start (the enlarged player picks up where the inline one was). */
+  start?: Handoff;
+  /** Pick up again here when this changes (back from the enlarged player). */
+  resume?: (Handoff & { n: number }) | null;
+  enlarged?: boolean;
+  /** Filled with a way to read where the clip is, for whoever closes the overlay. */
+  handoffRef?: RefObject<(() => Handoff) | null>;
+  /** Enlarge, or in the overlay shrink back, handing over where the clip is. */
+  onSize: (handoff: Handoff) => void;
+};
+
+function Player({
+  src,
+  poster,
+  label,
+  autoPlay = false,
+  loop = autoPlay,
+  onError,
+  className,
+  shellRef,
+  start,
+  resume,
+  enlarged = false,
+  handoffRef,
+  onSize,
+}: PlayerProps) {
+  const ownShell = useRef<HTMLDivElement>(null);
+  const shell = shellRef ?? ownShell;
   const video = useRef<HTMLVideoElement>(null);
   const track = useRef<HTMLDivElement>(null);
   const [playing, setPlaying] = useState(false);
@@ -38,8 +106,21 @@ export function ClipPlayer({ src, poster, label, autoPlay = false, onError, clas
   const [speed, setSpeed] = useState<(typeof SPEEDS)[number]>(1);
   const [scrubbing, setScrubbing] = useState(false);
   const [hover, setHover] = useState<number | null>(null);
-  const [full, setFull] = useState(false);
   const [ended, setEnded] = useState(false);
+
+  // Back from the enlarged player: carry on from where it was.
+  useEffect(() => {
+    const v = video.current;
+    if (!v || !resume) return;
+    v.currentTime = resume.time;
+    setTime(resume.time);
+    if (resume.playing) void v.play().catch(() => undefined);
+  }, [resume]);
+
+  // The enlarged player takes the keyboard as it opens.
+  useEffect(() => {
+    if (enlarged) shell.current?.focus();
+  }, [enlarged, shell]);
 
   // timeupdate fires only a few times a second; follow the frames while playing.
   useEffect(() => {
@@ -50,12 +131,6 @@ export function ClipPlayer({ src, poster, label, autoPlay = false, onError, clas
     });
     return () => cancelAnimationFrame(frame);
   }, [playing]);
-
-  useEffect(() => {
-    const onChange = () => setFull(document.fullscreenElement === shell.current);
-    document.addEventListener("fullscreenchange", onChange);
-    return () => document.removeEventListener("fullscreenchange", onChange);
-  }, []);
 
   const toggle = () => {
     const v = video.current;
@@ -94,16 +169,22 @@ export function ClipPlayer({ src, poster, label, autoPlay = false, onError, clas
     if (video.current) video.current.playbackRate = next;
   };
 
-  const toggleFull = () => {
-    if (document.fullscreenElement) void document.exitFullscreen();
-    else void shell.current?.requestFullscreen().catch(() => undefined);
+  const handoff = (): Handoff => {
+    const v = video.current;
+    const now = { time: v?.currentTime ?? time, playing: Boolean(v && !v.paused) };
+    v?.pause();
+    return now;
   };
+  useEffect(() => {
+    if (handoffRef) handoffRef.current = handoff;
+  });
+  const toggleSize = () => onSize(handoff());
 
   const onKey = (e: KeyboardEvent) => {
     if (e.key === " " || e.key === "k") toggle();
     else if (e.key === "ArrowLeft") seek(time - 2);
     else if (e.key === "ArrowRight") seek(time + 2);
-    else if (e.key === "f") toggleFull();
+    else if (e.key === "f") toggleSize();
     else return;
     e.preventDefault();
     e.stopPropagation();
@@ -121,7 +202,7 @@ export function ClipPlayer({ src, poster, label, autoPlay = false, onError, clas
       onKeyDown={onKey}
       className={cn(
         "clip-player group/clip relative overflow-hidden rounded-lg border border-pill-border bg-black text-white outline-none focus-visible:ring-2 focus-visible:ring-voice-debrief",
-        full && "flex items-center rounded-none border-0",
+        enlarged && "flex items-center",
         className,
       )}
     >
@@ -133,7 +214,7 @@ export function ClipPlayer({ src, poster, label, autoPlay = false, onError, clas
         muted
         playsInline
         // Autoplaying clips loop quietly, like a GIF; the others stop on the replay button.
-        loop={autoPlay}
+        loop={loop}
         preload="metadata"
         onClick={toggle}
         onPlay={() => {
@@ -145,11 +226,18 @@ export function ClipPlayer({ src, poster, label, autoPlay = false, onError, clas
           setPlaying(false);
           setEnded(true);
         }}
-        onLoadedMetadata={(e) => setDuration(finite(e.currentTarget.duration))}
+        onLoadedMetadata={(e) => {
+          const v = e.currentTarget;
+          setDuration(finite(v.duration));
+          if (!start) return;
+          v.currentTime = start.time;
+          setTime(start.time);
+          if (start.playing) void v.play().catch(() => undefined);
+        }}
         onDurationChange={(e) => setDuration(finite(e.currentTarget.duration))}
         onTimeUpdate={(e) => !playing && setTime(e.currentTarget.currentTime)}
         onError={onError}
-        className="block w-full cursor-pointer"
+        className={cn("block w-full cursor-pointer", enlarged && "h-full object-contain")}
       />
 
       {/* Big centre button while paused. */}
@@ -243,11 +331,8 @@ export function ClipPlayer({ src, poster, label, autoPlay = false, onError, clas
           >
             {speed}×
           </button>
-          <ControlButton
-            label={full ? "Exit full screen (F)" : "Full screen (F)"}
-            onClick={toggleFull}
-          >
-            {full ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+          <ControlButton label={enlarged ? "Shrink (F)" : "Enlarge (F)"} onClick={toggleSize}>
+            {enlarged ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
           </ControlButton>
         </div>
       </div>
