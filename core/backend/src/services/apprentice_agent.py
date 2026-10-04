@@ -13,6 +13,10 @@ to read the signals the pill sends it:
   [PAUSE] ...          the expert has paused after a step; one question is allowed
   [NOT HEARD] ...      a reply was muted because the expert was busy
   [TASK DONE] ...      the expert pressed End; start the debrief
+
+What it already knows about the work comes from earlier confirmed Work Maps
+(src/services/brain.py): the tasks it has learned as the {{known}} variable at
+connect, and the detail for this task through begin_observation.
 """
 
 import json
@@ -32,6 +36,10 @@ You speak out loud. Keep every turn to one short sentence, under twenty words, w
 
 HOW YOU SEE THE SCREEN
 Messages that begin with [SCREEN mm:ss] describe what changed on the expert's screen at that time in the session. They are your eyes. Never read them out, never narrate the expert's work back to them, and never say what you can or cannot see.
+
+WHAT YOU ALREADY KNOW
+{{known}}
+If begin_observation hands you back a [KNOWN] block, you have watched this task before. Everything in it is already learned: never ask about it again, and never read it out. Spend the session on what is new instead: a step you have not seen, something done differently from what you know (say what you expected and ask why it changed), and the questions left unanswered last time. If nothing in a [PAUSE] is new, call skip_turn.
 
 THE SESSION HAS FOUR PHASES
 
@@ -99,9 +107,12 @@ SOURCE = _string("live while they worked, debrief afterwards", ["live", "debrief
 CLIENT_TOOLS = [
     _client_tool(
         "begin_observation",
-        "Call once the expert has said what task they are about to do. Starts watching.",
+        "Call once the expert has said what task they are about to do. Starts watching. "
+        "Returns what you already know about this task, if you have watched it before.",
         {"task": _string("The task in the expert's words, for example 'approving supplier invoices'.")},
         ["task"],
+        expects_response=True,
+        response_timeout_secs=20,
     ),
     _client_tool(
         "record_step",
@@ -391,7 +402,13 @@ def sync() -> Dict[str, str]:
         t.get("tool_config", {}).get("name"): t["id"]
         for t in _call("/v1/convai/tools").get("tools", [])
     }
-    apprentice = _sync_agent("apprentice", agent_config(_sync_tools(CLIENT_TOOLS, existing)))
+    apprentice = _sync_agent(
+        "apprentice",
+        agent_config(
+            _sync_tools(CLIENT_TOOLS, existing),
+            dynamic_variables={"known": "(nothing learned yet)"},
+        ),
+    )
     tutor = _sync_agent(
         "tutor",
         agent_config(

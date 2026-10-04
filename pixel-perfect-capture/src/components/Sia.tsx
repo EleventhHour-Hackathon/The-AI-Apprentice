@@ -166,6 +166,7 @@ export function Sia({ onOpenApp, onLesson }: { onOpenApp?: () => void; onLesson?
             {onOpenApp && <Icon title="Open app" onClick={onOpenApp}><AppWindow /></Icon>}
           </div>
         </div>
+        {state === "watching" && voice.known && <div className="pb-2 text-center text-[11px] text-voice-listening">Picking up from an earlier session</div>}
         {state === "watching" && (steps + rules + parked > 0) && <div className="pb-3 text-center text-[11px] text-pill-muted">{[steps && count(steps, "step"), rules && count(rules, "rule"), parked && `${parked} saved for later`].filter(Boolean).join(" · ")}</div>}
         {state === "raised" && current && <div className="border-t border-pill-border px-4 pb-4 pt-3 sia-fade">
           <p className="text-sm leading-snug">{current.question}</p>

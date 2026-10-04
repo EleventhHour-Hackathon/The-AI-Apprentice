@@ -42,11 +42,12 @@ Build:
 MODE_RULES
 
 Rules:
+- KNOWN BEFORE THIS SESSION, when present, is what the apprentice already learned about this task. Build on it: keep its steps and guardrails that this session did not contradict, even where nothing happened on screen to show them again, and leave their reason as it was. Where this session shows something different, the session wins: use what happened now and say what changed in the step's decision. Drop a question from open_questions once this session answered it, and keep the ones it did not.
 - Never invent a reason, rule or quote. Only the EXPERT's words count; the APPRENTICE's questions are not reasons.
 - A correction from the teach-back overrides what was said before.
 - Keep wording short and concrete, with the real values from the screen."""
 
-DRAFT_RULES = """  This is the DRAFT, before the debrief. List 3 to 6 questions the apprentice should ask now, most valuable first: steps with a decision but no reason, edges of the guardrails (larger amounts, new or foreign suppliers, missing data, who to ask), and cases that were never shown. Each is one short spoken question about the judgment behind the work: why, when it would be different, where the limit is, who they would ask. Never ask the expert to describe or repeat what they did or said, and never restate the task or the screen back to them ("What steps do you take to debug code after seeing the test summary?" is a bad question; "What would make you stop and ask someone before changing it?" is a good one). If little was shown, ask about the edges of the task in general: the cases handled differently, the moments to stop and ask, what a new person gets wrong. Do not repeat questions the expert already answered."""
+DRAFT_RULES = """  This is the DRAFT, before the debrief. List 3 to 6 questions the apprentice should ask now, most valuable first: steps with a decision but no reason, edges of the guardrails (larger amounts, new or foreign suppliers, missing data, who to ask), and cases that were never shown. Each is one short spoken question about the judgment behind the work: why, when it would be different, where the limit is, who they would ask. Never ask the expert to describe or repeat what they did or said, and never restate the task or the screen back to them ("What steps do you take to debug code after seeing the test summary?" is a bad question; "What would make you stop and ask someone before changing it?" is a good one). If little was shown, ask about the edges of the task in general: the cases handled differently, the moments to stop and ask, what a new person gets wrong. Do not repeat questions the expert already answered, and never ask about anything under KNOWN BEFORE THIS SESSION: the apprentice already learned it. Its still-open questions are the best ones to ask."""
 
 FINAL_RULES = """  This is the FINAL map, after the debrief and teach-back. List only what is genuinely still unanswered (often nothing)."""
 
@@ -136,6 +137,23 @@ def _snap(at: Optional[float], events: List[Dict[str, Any]]) -> Optional[float]:
     return min((e["t"] for e in events), key=lambda t: abs(t - at))
 
 
+def _prior_text(prior: Optional[Dict[str, Any]]) -> str:
+    """What the apprentice already knew about this task, for the merge to reconcile with."""
+    if not prior:
+        return ""
+    sections = [
+        ("Steps", prior.get("steps")),
+        ("Guardrails", prior.get("guardrails")),
+        ("Questions that were still open", prior.get("open_questions")),
+    ]
+    body = "\n".join(
+        f"{label}:\n" + "\n".join(f"- {item}" for item in items)
+        for label, items in sections
+        if items
+    )
+    return f"\n\nKNOWN BEFORE THIS SESSION (from earlier confirmed Work Maps):\n{body}" if body else ""
+
+
 async def merge(
     *,
     task: Optional[str],
@@ -143,8 +161,15 @@ async def merge(
     transcript: List[Dict[str, Any]],
     captures: List[Dict[str, Any]],
     final: bool,
+    prior: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Return {"steps", "guardrails", "open_questions"} for the session."""
+    """Return {"steps", "guardrails", "open_questions"} for the session.
+
+    With `prior`, the map extends what the apprentice already knew about this
+    task rather than replacing it: steps and guardrails that still hold are
+    carried through, what the expert did differently this time wins, and
+    questions answered this session stop being open.
+    """
     screen = "\n".join(f"{mmss(e['t'])} {e['event']}" for e in events) or "(nothing seen)"
     said = "\n".join(
         f"{mmss(line.get('t'))} {'EXPERT' if line['role'] == 'expert' else 'APPRENTICE'}: {line['text']}"
@@ -152,7 +177,7 @@ async def merge(
     ) or "(nothing said)"
     user = (
         f"TASK: {task or 'unknown'}\n\nSCREEN:\n{screen}\n\nTRANSCRIPT:\n{said}\n\n"
-        f"CAPTURES:\n{json.dumps(captures, ensure_ascii=False)}"
+        f"CAPTURES:\n{json.dumps(captures, ensure_ascii=False)}{_prior_text(prior)}"
     )
     system = SYSTEM.replace("MODE_RULES", FINAL_RULES if final else DRAFT_RULES)
 
