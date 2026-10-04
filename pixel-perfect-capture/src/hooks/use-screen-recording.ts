@@ -1,12 +1,26 @@
 import { useEffect, useRef } from "react";
 import { backendFetch } from "@/lib/backend";
+import { loadSettings, type Settings } from "@/lib/settings";
 
-/** Enough for text on a shared screen to stay readable at 10 fps. */
-const BITS_PER_SECOND = 1_500_000;
+/** Frames per second the screen is captured, shielded and recorded at. */
+export const CAPTURE_FPS = 15;
+/**
+ * What each Video quality setting captures and records: the largest size the shared screen is
+ * scaled to, and a bitrate that keeps small text sharp at that size.
+ */
+export const VIDEO_QUALITY: Record<
+  Settings["videoQuality"],
+  { width: number; height: number; bitsPerSecond: number }
+> = {
+  "720p": { width: 1280, height: 800, bitsPerSecond: 3_000_000 },
+  "1080p": { width: 1920, height: 1200, bitsPerSecond: 6_000_000 },
+  native: { width: 3840, height: 2400, bitsPerSecond: 8_000_000 },
+};
 /** Hand the recorder's data over every few seconds, so a crash loses little. */
 const TIMESLICE_MS = 5000;
-/** Start a new segment this often: about 22 MB each, under the 50 MB Storage limit. */
-const SEGMENT_MS = 120_000;
+/** Each segment is kept under this, with room to spare below the 50 MB Storage limit. */
+const SEGMENT_BYTES = 36 * 1024 * 1024;
+const MAX_SEGMENT_MS = 120_000;
 
 function upload(sessionId: string, start: number, end: number, chunks: Blob[]) {
   if (!chunks.length || end - start < 1) return;
@@ -34,7 +48,7 @@ const mimeType = () =>
  * step can show a few seconds of the expert actually doing it.
  *
  * Recording runs only while `enabled` (watching, not paused, on the record).
- * Each stretch is cut into segments of at most two minutes, each uploaded when
+ * Each stretch is cut into segments of under a minute or two (shorter at higher quality), each uploaded when
  * it ends with its start and end on the session clock; the backend stores them
  * in Supabase Storage and cuts the clips from them.
  */
@@ -51,11 +65,14 @@ export function useScreenRecording(
     const current = session.current;
     const type = mimeType();
     if (!recording || !track || !current || !type) return;
+    const { bitsPerSecond } = VIDEO_QUALITY[loadSettings().videoQuality];
+    // A new segment as often as the bitrate needs to stay under the Storage limit.
+    const segmentMs = Math.min(MAX_SEGMENT_MS, ((SEGMENT_BYTES * 8) / bitsPerSecond) * 1000);
 
     const segment = () => {
       const recorder = new MediaRecorder(new MediaStream([track]), {
         mimeType: type,
-        videoBitsPerSecond: BITS_PER_SECOND,
+        videoBitsPerSecond: bitsPerSecond,
       });
       const chunks: Blob[] = [];
       const start = current.clock();
@@ -67,11 +84,11 @@ export function useScreenRecording(
       return recorder;
     };
     let recorder = segment();
-    // A fresh segment every couple of minutes keeps each upload under Storage's file limit.
+    // A fresh segment every so often keeps each upload under Storage's file limit.
     const rotate = window.setInterval(() => {
       if (recorder.state !== "inactive") recorder.stop();
       if (track.readyState === "live") recorder = segment();
-    }, SEGMENT_MS);
+    }, segmentMs);
     return () => {
       clearInterval(rotate);
       // Stopping (also when the track ends) flushes the last data, then onstop uploads.

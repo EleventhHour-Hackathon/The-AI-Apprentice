@@ -1,7 +1,7 @@
 """Screen recordings of a work session, and the short clips the Work Map shows.
 
 The pill records the shared screen while the apprentice watches, in segments:
-a new one starts every couple of minutes and whenever the expert comes back on
+a new one starts every minute or so and whenever the expert comes back on
 the record or resumes, so nothing off the record is ever kept. Each segment is
 uploaded when it ends; its start and end are on the session clock, the same
 clock as screen events and Work Map moments.
@@ -35,13 +35,18 @@ LEAD_S = 2.0
 TAIL_S = 1.5
 # Without a span (guardrails on their own, older maps) a clip shows the lead-up to the moment.
 CONTEXT_S = 4.0
-# Long enough to follow, short enough to watch in passing.
-MIN_CLIP_S = 3.0
+# Long enough to follow, short enough to watch in passing: a second of video says nothing.
+MIN_CLIP_S = 6.0
 MAX_CLIP_S = 15.0
 # The Storage bucket's per-file limit (migrations/004).
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
+# Sharp enough to read small text when the clip is enlarged; matches the recording's frame rate.
+MAX_CLIP_WIDTH = 2560
+CLIP_FPS = 15
+
 FFMPEG = os.getenv("FFMPEG", shutil.which("ffmpeg") or "ffmpeg")
+FFPROBE = os.getenv("FFPROBE", shutil.which("ffprobe") or "ffprobe")
 _cutting: Dict[str, "asyncio.Future[Any]"] = {}
 
 
@@ -122,7 +127,10 @@ def clip_window(
     if stop - begin < MIN_CLIP_S:
         pad = (MIN_CLIP_S - (stop - begin)) / 2
         begin, stop = begin - pad, stop + pad
-    return round(max(begin, 0.0), 2), round(stop, 2)
+    if begin < 0:
+        # At the very start of the session: run on further instead.
+        begin, stop = 0.0, stop - begin
+    return round(begin, 2), round(stop, 2)
 
 
 def item_windows(work_map: Dict[str, Any]) -> Dict[int, Tuple[float, float]]:
@@ -155,22 +163,53 @@ def item_windows(work_map: Dict[str, Any]) -> Dict[int, Tuple[float, float]]:
     return windows
 
 
+Piece = Tuple[Dict[str, Any], float, float]
+
+
 def covering(
     segments: List[Dict[str, Any]], at: Optional[float], begin: float, stop: float
-) -> Optional[Tuple[Dict[str, Any], float, float]]:
-    """The segment that shows a moment, where in it the clip starts, and how long it runs.
+) -> Optional[List[Piece]]:
+    """The recording that shows a moment: (segment, offset into it, length) pieces, in order.
 
-    The window is trimmed to that segment (a new one starts every couple of minutes)."""
+    The window is read off the recorded footage, joined end to end across segments (a new one
+    starts every minute or so and on every resume). Where that leaves less than MIN_CLIP_S (a
+    boundary, a pause, a moment off the recording), the clip takes in the recorded footage
+    nearest to the moment until it is MIN_CLIP_S long. Every moment of a recorded session has
+    a clip; None only when nothing was recorded.
+    """
     if not isinstance(at, (int, float)):
         return None
-    for segment in segments:
-        start, end = segment["start_t"], segment["end_t"]
-        if start <= at <= end:
-            first = max(start, begin)
-            length = min(end, stop) - first
-            if length >= min(MIN_CLIP_S, stop - begin):
-                return segment, first - start, length
-    return None
+    footage = sorted(
+        (s for s in segments if s["end_t"] > s["start_t"]), key=lambda s: s["start_t"]
+    )
+    if not footage:
+        return None
+
+    # Recorded time: seconds of footage before a point on the session clock.
+    def recorded(t: float) -> float:
+        return sum(max(0.0, min(s["end_t"], t) - s["start_t"]) for s in footage)
+
+    total = recorded(float("inf"))
+    first, last = recorded(begin), recorded(stop)
+    if last - first < MIN_CLIP_S:
+        point = recorded(at)
+        first, last = min(first, point), max(last, point)
+        # Grow evenly around it, then back inside the footage at either end.
+        pad = max(0.0, MIN_CLIP_S - (last - first)) / 2
+        first, last = first - pad, last + pad
+        if first < 0:
+            first, last = 0.0, last - first
+        if last > total:
+            first, last = max(0.0, first - (last - total)), total
+    pieces: List[Piece] = []
+    passed = 0.0
+    for segment in footage:
+        length = segment["end_t"] - segment["start_t"]
+        lo, hi = max(first, passed), min(last, passed + length)
+        if hi - lo > 0.05:
+            pieces.append((segment, lo - passed, hi - lo))
+        passed += length
+    return pieces or None
 
 
 def _ensure_local(path: str) -> pathlib.Path:
@@ -238,26 +277,62 @@ def _drop(path: str) -> None:
 
 async def _make_clip(session_id: str, at: float, begin: float, stop: float) -> None:
     segments = await asyncio.to_thread(media.recordings, session_id)
-    found = covering(segments, at, begin, stop)
-    if found is None:
-        raise RecordingError("No recording covers this moment")
-    segment, offset, length = found
-    source = await asyncio.to_thread(_ensure_local, segment["object_path"])
+    pieces = covering(segments, at, begin, stop)
+    if not pieces:
+        raise RecordingError("This session has no recording")
+    sources = [
+        (await asyncio.to_thread(_ensure_local, segment["object_path"]), offset, length)
+        for segment, offset, length in pieces
+    ]
     path = _clip_path(session_id, at, begin, stop)
-    await _cut(source, offset, length, _local(path))
+    await _cut(sources, _local(path))
     await asyncio.to_thread(media.add_clip, session_id, at, path)
     await asyncio.to_thread(_push, path, "video/mp4")
 
 
-async def _cut(source: pathlib.Path, offset: float, length: float, out: pathlib.Path) -> None:
+async def _size(source: pathlib.Path) -> Tuple[int, int]:
+    """Width and height of a recording's video."""
+    process = await asyncio.create_subprocess_exec(
+        FFPROBE, "-v", "error", "-select_streams", "v:0",
+        "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", str(source),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    out, _ = await process.communicate()
+    try:
+        width, height = (int(n) for n in out.decode().strip().split("x")[:2])
+    except ValueError as e:
+        raise RecordingError(f"Can't read the size of {source.name}") from e
+    return width, height
+
+
+async def _cut(sources: List[Tuple[pathlib.Path, float, float]], out: pathlib.Path) -> None:
+    """Cut (file, offset, length) pieces and join them into one mp4 at the recording's size."""
     out.parent.mkdir(parents=True, exist_ok=True)
     partial = out.with_suffix(".part.mp4")
+    width, height = await _size(sources[0][0])
+    scale = min(1.0, MAX_CLIP_WIDTH / width)
+    width, height = int(width * scale) // 2 * 2, int(height * scale) // 2 * 2
+    inputs: List[str] = []
+    filters: List[str] = []
+    for i, (source, offset, length) in enumerate(sources):
+        inputs += ["-ss", f"{offset:.2f}", "-t", f"{length:.2f}", "-i", str(source)]
+        # Every piece at one size (a shared window can be resized between segments), and held
+        # on its last frame for its full length: the screen sends frames only when it changes,
+        # and a segment's video can end a little before its clock does.
+        filters.append(
+            f"[{i}:v]scale={width}:{height}:force_original_aspect_ratio=decrease:flags=lanczos,"
+            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={CLIP_FPS},"
+            f"tpad=stop=-1:stop_mode=clone,trim=duration={length:.2f},setpts=PTS-STARTPTS[v{i}]"
+        )
+    joined = "".join(f"[v{i}]" for i in range(len(sources)))
+    filters.append(f"{joined}concat=n={len(sources)}:v=1:a=0,tpad=stop=-1:stop_mode=clone[out]")
+    total = max(sum(length for _, _, length in sources), MIN_CLIP_S)
     process = await asyncio.create_subprocess_exec(
-        FFMPEG, "-y", "-loglevel", "error",
-        "-ss", f"{offset:.2f}", "-i", str(source), "-t", f"{length:.2f}",
-        "-an", "-vf", "scale='min(1280,iw)':-2", "-r", "10",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-pix_fmt", "yuv420p",
-        "-movflags", "+faststart", str(partial),
+        FFMPEG, "-y", "-loglevel", "error", *inputs,
+        "-filter_complex", ";".join(filters), "-map", "[out]", "-t", f"{total:.2f}",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+        "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(partial),
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,
     )

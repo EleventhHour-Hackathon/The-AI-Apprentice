@@ -250,7 +250,7 @@ function Settings() {
                 onCheckedChange={(v) => set("recordVideo", v)}
               />
             </Row>
-            <Row label="Video quality" soon>
+            <Row label="Video quality" hint="Of the recording and the clips in Work Maps.">
               <Segmented
                 value={s.videoQuality}
                 onChange={(v) => set("videoQuality", v)}

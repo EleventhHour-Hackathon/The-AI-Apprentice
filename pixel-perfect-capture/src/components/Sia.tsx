@@ -31,7 +31,8 @@ import { Button } from "@/components/ui/button";
 import { VoiceWave } from "./VoiceWave";
 import { useApprentice, type Capture, type FlowNode } from "@/hooks/use-apprentice";
 import { useScreenEvents } from "@/hooks/use-screen-events";
-import { useScreenRecording } from "@/hooks/use-screen-recording";
+import { loadSettings } from "@/lib/settings";
+import { CAPTURE_FPS, VIDEO_QUALITY, useScreenRecording } from "@/hooks/use-screen-recording";
 import { usePrivacyShield } from "@/hooks/use-privacy-shield";
 import type { Floor } from "@/lib/floor";
 import { count } from "@/lib/work-maps";
@@ -176,10 +177,15 @@ export function Sia({
     setGotit(null);
     setDismissed(-1);
     setScreenError("");
+    const quality = VIDEO_QUALITY[loadSettings().videoQuality];
     let display: MediaStream;
     try {
       display = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: 10, width: { max: 1920 }, height: { max: 1200 } },
+        video: {
+          frameRate: CAPTURE_FPS,
+          width: { max: quality.width },
+          height: { max: quality.height },
+        },
         audio: false,
       });
     } catch {

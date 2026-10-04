@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createWorker, type Worker } from "tesseract.js";
 import { findPii, type Box, type OcrLine } from "@/lib/pii";
+import { CAPTURE_FPS } from "@/hooks/use-screen-recording";
 
 /** Frames per second of the shielded copy (what is recorded and sampled). */
-const FPS = 10;
+const FPS = CAPTURE_FPS;
 /** Width the screen is scaled to for text recognition: small UI text stays legible. */
 const OCR_WIDTH = 1440;
 /** Rest between scans, so recognition doesn't take a whole CPU core. */

@@ -48,7 +48,7 @@ const SPEC = {
   // Capture
   watch: oneOf(["screen", "window", "ask"], "screen"),
   recordVideo: flag(true),
-  videoQuality: oneOf(["720p", "1080p", "native"], "1080p"),
+  videoQuality: oneOf(["720p", "1080p", "native"], "native"),
   screenInterval: oneOf(["2", "5", "10"], "5"),
   blurSensitive: flag(true),
   excludedApps: list(["1Password", "Messages", "Mail"]),

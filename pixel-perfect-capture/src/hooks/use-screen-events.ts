@@ -8,8 +8,9 @@ const SAMPLE_INTERVAL_MS = 1500;
 const ACTIVITY_INTERVAL_MS = 250;
 /** Width we downscale frames to before sending them to the vision model. */
 const FRAME_WIDTH = 1024;
-/** Width of the thumbnails kept as screen moments. */
-const THUMB_WIDTH = 320;
+/** Width of the stills kept as screen moments: sharp enough to read when shown large. */
+const THUMB_WIDTH = 1280;
+const THUMB_QUALITY = 0.85;
 /** Size of the thumbnail used for the cheap "did anything move?" checks. */
 const DIFF_SIZE = 64;
 /**
@@ -124,10 +125,11 @@ export function useScreenEvents(
 
     const thumb = () => {
       const canvas = document.createElement("canvas");
-      canvas.width = THUMB_WIDTH;
-      canvas.height = Math.round(element.videoHeight * (THUMB_WIDTH / element.videoWidth));
+      const scale = Math.min(1, THUMB_WIDTH / element.videoWidth);
+      canvas.width = Math.round(element.videoWidth * scale);
+      canvas.height = Math.round(element.videoHeight * scale);
       canvas.getContext("2d")?.drawImage(element, 0, 0, canvas.width, canvas.height);
-      return canvas.toDataURL("image/jpeg", 0.65);
+      return canvas.toDataURL("image/jpeg", THUMB_QUALITY);
     };
 
     const sample = async () => {
@@ -196,10 +198,11 @@ export function useScreenEvents(
     const element = video.current;
     if (!element?.videoWidth) return null;
     const canvas = document.createElement("canvas");
-    canvas.width = THUMB_WIDTH;
-    canvas.height = Math.round(element.videoHeight * (THUMB_WIDTH / element.videoWidth));
+    const scale = Math.min(1, THUMB_WIDTH / element.videoWidth);
+    canvas.width = Math.round(element.videoWidth * scale);
+    canvas.height = Math.round(element.videoHeight * scale);
     canvas.getContext("2d")?.drawImage(element, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL("image/jpeg", 0.6);
+    return canvas.toDataURL("image/jpeg", THUMB_QUALITY);
   }, []);
 
   return { snapshot };
