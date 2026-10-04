@@ -196,5 +196,18 @@ def test_work_map_text():
     )
 
 
+def test_work_map_text_labels_an_assumed_reason():
+    assumed = {"reason": "it's standard practice", "reason_source": "inferred"}
+    work_map = {
+        "steps": [
+            {"id": "s1", "title": "Match the order", **assumed},
+            {"id": "s2", "title": "Hold it", "reason": "the supplier is new"},
+        ]
+    }
+    text = tutor.work_map_text(work_map)
+    assert "s1. Match the order\n   Assumed reason: it's standard practice" in text
+    assert "s2. Hold it\n   Reason: the supplier is new" in text
+
+
 def test_work_map_text_of_an_empty_map():
     assert tutor.work_map_text({}) == "STEPS (in order)\n\nGUARDRAILS\n(none)"

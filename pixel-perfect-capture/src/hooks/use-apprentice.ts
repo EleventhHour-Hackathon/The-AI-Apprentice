@@ -13,11 +13,16 @@ import {
   MAX_EXPLAIN_REFUSALS,
   notYetReply,
   pauseAsk,
+  pauseCue,
   policyFrom,
+  readInferred,
+  SCREEN_QUIET_MS,
+  SPEECH_QUIET_MS,
   teachBackStatus,
   wrapUpLimit,
   type Floor,
   type FloorPolicy,
+  type Inferred,
   type ScreenKind,
 } from "@/lib/floor";
 import type { ScreenEvent } from "@/hooks/use-screen-events";
@@ -142,6 +147,36 @@ async function post<T = unknown>(path: string, body: unknown): Promise<T> {
   return (await response.json()) as T;
 }
 
+/** How long a pause waits for /infer before the [PAUSE] goes out as usual. */
+const INFER_TIMEOUT_MS = 2500;
+/** The last lines of the conversation /infer reads. */
+const INFER_LINES = 12;
+
+/** What is already clear at this pause, or null if /infer failed or took too long. */
+async function inferPause(
+  sessionId: string,
+  events: string[],
+  transcript: { role: Line["role"]; text: string }[],
+): Promise<Inferred | null> {
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), INFER_TIMEOUT_MS);
+  try {
+    const response = await backendFetch(`/api/v1/sessions/${sessionId}/infer`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ events, transcript }),
+      signal: abort.signal,
+    });
+    if (!response.ok) throw new Error(`/infer answered ${response.status}`);
+    return readInferred(await response.json());
+  } catch (e) {
+    console.warn("[floor] /infer gave nothing, asking as usual", e);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Turn a client tool call from the agent into a Work Map capture for the pill. */
 function toCapture(kind: Capture["kind"], p: Record<string, unknown>): Omit<Capture, keyof Moment> {
   switch (kind) {
@@ -198,6 +233,8 @@ export function useApprentice(options: {
     pending: [] as { at: number; kind: ScreenKind; text: string; t: number }[],
     questionTimes: [] as number[],
     lastPauseAt: -Infinity,
+    /** A pause is waiting for /infer before its [PAUSE] goes out. */
+    inferring: false,
     /** Until when the agent may speak while the expert works, and why. */
     floorOpenUntil: -Infinity,
     grant: null as "start" | "pause" | "answer" | null,
@@ -490,7 +527,7 @@ export function useApprentice(options: {
         console.info(`[teach-back] explanation taken as given after ${x.explainRefusals} refusals`);
       if (status === "explain_first") {
         if (x.node === "teach_back") x.explainRefusals += 1;
-        return `Not saved: ${x.node === "teach_back" ? "" : "call start_teach_back, then "}explain the whole task back first, then ask whether that is right; call confirm_work_map only after the expert says yes.`;
+        return `Not saved: ${x.node === "teach_back" ? "" : "call start_teach_back, then "}sum the task up back first (short is fine), then ask whether that is right; call confirm_work_map only after the expert says yes.`;
       }
       if (status === "await_confirmation")
         return "Not saved: ask the expert whether that is right and wait for their answer.";
@@ -586,6 +623,7 @@ export function useApprentice(options: {
         pending: [],
         questionTimes: [],
         lastPauseAt: -Infinity,
+        inferring: false,
         floorOpenUntil: -Infinity,
         grant: null,
         lastDirectQuestionAt: -Infinity,
@@ -921,19 +959,38 @@ export function useApprentice(options: {
         x.policy,
       );
       setState((st) => (st.floor === floor ? st : { ...st, floor }));
-      if (floor !== "ask") return;
-      const steps = x.pending
-        .slice(-5)
-        .map((e) => `[${mmss(e.t)}] ${e.text}`)
-        .join("; ");
-      x.pending = [];
-      x.lastPauseAt = now;
-      x.floorOpenUntil = now + PAUSE_GRANT_MS;
-      x.grant = "pause";
-      const asked = counted(x);
-      const ask = pauseAsk(asked, guardrailAsked(x), x.policy);
-      console.log(`[floor] pause ${asked + 1} after: ${steps}`);
-      c.sendUserMessage(`[PAUSE] The expert has stopped after: ${steps}. ${ask}`);
+      if (floor !== "ask" || x.inferring) return;
+      // Before offering a question, ask the backend what is already clear (lib/floor pauseCue).
+      const offered = x.pending;
+      const events = offered.slice(-5).map((e) => `[${mmss(e.t)}] ${e.text}`);
+      const lines = x.transcript.slice(-INFER_LINES).map(({ role, text }) => ({ role, text }));
+      const sessionId = x.sessionId;
+      x.inferring = true;
+      void inferPause(sessionId, events, lines).then((inferred) => {
+        const y = s.current;
+        if (y.sessionId !== sessionId) return;
+        y.inferring = false;
+        const now = performance.now();
+        // The moment passed while waiting (End, off the record, talking or typing again):
+        // the events stay pending for the next pause.
+        if (conv.current !== c || y.node !== "observing" || y.wrapUp || y.offRecord) return;
+        if (now - y.lastSpeechAt < SPEECH_QUIET_MS || y.lastActivityAt > now - SCREEN_QUIET_MS)
+          return;
+        y.pending = y.pending.filter((e) => !offered.includes(e));
+        const steps = events.join("; ");
+        const asked = counted(y);
+        const cue = pauseCue(steps, pauseAsk(asked, guardrailAsked(y), y.policy), inferred);
+        if (!cue) {
+          // Nothing worth asking: no [PAUSE], nothing counted. The wrap-up still asks the minimum.
+          console.log(`[floor] pause skipped, nothing worth asking after: ${steps}`);
+          return;
+        }
+        y.lastPauseAt = now;
+        y.floorOpenUntil = now + PAUSE_GRANT_MS;
+        y.grant = "pause";
+        console.log(`[floor] pause ${asked + 1} after: ${steps}`);
+        c.sendUserMessage(cue);
+      });
     }, 400);
     return () => clearInterval(timer);
   }, [state.status, askWrapUp, finishWork]);
