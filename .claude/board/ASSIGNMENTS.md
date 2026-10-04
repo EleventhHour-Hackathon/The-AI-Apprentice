@@ -55,7 +55,7 @@ Commit: "Lock the practice ERP's save buttons while the tutor steps in on a wron
 
 Queued, not assigned this round: B-12 UI lint (reformats whole UI files; collides with S-03's WorkMap.tsx), B-01 rest of backend tests (shares pyproject.toml, uv.lock and test_privacy.py with S-04). Run both next round. Coordinator registers S-06's new router in core/backend/main.py after the merge (main.py belongs to implementer-1 this round).
 
-## S-04 · Presidio as an optional `privacy` extra, with tests and /health · implementer-1 · approved
+## S-04 · Presidio as an optional `privacy` extra, with tests and /health · implementer-1 · merged
 Goal: anyone can `uv sync --extra privacy` to get people's names redacted as [name] in transcripts, quotes and answers; without the extra the regex redaction still works; `/health` says which one is active.
 Brief says: Stretch, "Presidio redacts personal data in transcripts" (docs/CHALLENGE.md).
 Owns: core/backend/pyproject.toml, core/backend/uv.lock, core/backend/src/services/privacy.py, core/backend/main.py, core/backend/tests/test_privacy.py (new).
@@ -80,7 +80,7 @@ Approved (main session, after review 1 language guard + honorific rule): check.s
 Release: worktree .claude/worktrees/agent-a9c5468c7522ba9a7, files core/backend/pyproject.toml, core/backend/uv.lock, core/backend/src/services/privacy.py, core/backend/main.py, core/backend/tests/test_privacy.py.
 Commit: "Redact names with an optional Presidio install, without mistaking German nouns for names"
 
-## S-03 · Export a Work Map as instructions an agent can load · implementer-2 · approved
+## S-03 · Export a Work Map as instructions an agent can load · implementer-2 · merged
 Goal: from a Work Map the user clicks "Export for agents" and gets a Markdown system prompt (steps in order, decision rules, each guardrail as a hard STOP rule, the expert's own words); the same is available as JSON for tool-using agents.
 Brief says: Stretch, "Agent-ready guardrails: export the map as instructions an agent can load" (docs/CHALLENGE.md).
 Owns: core/backend/src/services/agent_export.py (new), core/backend/src/router/path_router.py (two new endpoints only), core/backend/tests/test_agent_export.py (new), pixel-perfect-capture/src/components/WorkMap.tsx, pixel-perfect-capture/src/lib/work-maps.ts, pixel-perfect-capture/src/lib/work-maps.test.ts (new, optional).
@@ -94,7 +94,7 @@ Approved (main session, after review 1 fixes 1-4; fix 5 dropped because removing
 Release: worktree .claude/worktrees/agent-adff85e918185431b, files core/backend/src/services/agent_export.py, core/backend/src/router/path_router.py, core/backend/tests/test_agent_export.py, pixel-perfect-capture/src/lib/work-maps.ts, pixel-perfect-capture/src/lib/work-maps.test.ts, pixel-perfect-capture/src/components/WorkMap.tsx.
 Commit: "Export a Work Map as instructions an agent can load, with every guardrail as a stop rule"
 
-## S-06 · Tutor knowledge base and Procedures payloads from a Work Map · implementer-3 · approved
+## S-06 · Tutor knowledge base and Procedures payloads from a Work Map · implementer-3 · merged
 Goal: for any Work Map the backend returns ready-to-push payloads: a knowledge-base document and one Procedure per judgment step, so the tutor can later read the map from ElevenLabs' knowledge base instead of a prompt variable. Pushing them to ElevenLabs is Needs the user.
 Brief says: Stretch, "Work Map goes into the tutor's knowledge base and Procedures" (docs/CHALLENGE.md).
 Owns: core/backend/src/services/tutor_kb.py (new), core/backend/src/router/tutor_kb_router.py (new), core/backend/tests/test_tutor_kb.py (new).
@@ -109,6 +109,79 @@ Commit: "Turn a Work Map into knowledge-base and Procedures payloads for the tut
 After merge: register the router in core/backend/main.py (from src.router import tutor_kb_router; app.include_router(tutor_kb_router.router)), owned by S-04 this round.
 Needs the user: push the payloads to ElevenLabs (knowledge base + Procedures).
 
-## Integration · register the tutor KB router · main session · approved
+## Integration · register the tutor KB router · main session · merged
 After S-04 and S-06 are both committed: in core/backend/main.py add `from src.router import tutor_kb_router` after the line `from src.router.path_router import router`, and `app.include_router(tutor_kb_router.router)` right after `app.include_router(router)`. Nothing else.
 Commit: "Serve the tutor's knowledge-base payloads from the backend"
+
+Merged (round 2): S-04 98bd04c, S-03 90f7612, S-06 4b490e9, Integration 7f4721f.
+
+# Round 3 · base a306b4c
+
+Not assigned this round:
+- S-06 rest (upload the KB/Procedures to ElevenLabs): skipped. Nothing checkable to derive the endpoints from: the `elevenlabs` SDK isn't a dependency (not in core/backend/uv.lock), and no code in the repo calls the knowledge-base or Procedures APIs (apprentice_agent.py only uses /v1/convai/agents, /tools and /conversation/token; scripts/sync.py talks to Supabase). Written blind it can't be verified offline. Revisit if the SDK is added or the user supplies the API shapes; running it stays with the user.
+- B-01 (dev deps + rest of the backend tests): queued for round 4. Free to run (it owns pyproject.toml/uv.lock and nothing else touches them), but it is fourth in queue order after S-04, B-15 and B-12.
+- S-04's start.sh change uses the existing `privacy` extra as is: no pyproject.toml or uv.lock edits this round.
+
+- Decision on S-04: install the extra by default rather than behind an opt-in `--privacy` flag. Name redaction is part of the trust promise (Apprentice Test 5), and plain `uv sync` is an exact sync: today every `./start.sh` uninstalls the extra even for a user who added it by hand. The cost (a one-time larger install, a few seconds of spaCy load on the first /health) is paid once; offline or failed installs fall back to regex-only with a warning instead of blocking the app, and `--no-privacy` opts out.
+
+## S-04 · Install the privacy extra by default in ./start.sh · implementer-1 · approved
+Base: a306b4c (`git rev-parse --short HEAD` in your worktree must match). Repo /Users/mithra/.builds/sia (you work in your own worktree of it).
+Goal: `./start.sh` gives the user Presidio name redaction out of the box, says which redaction engine is on once the backend is up, falls back to regex-only with a clear warning if the extra can't be installed (offline, GitHub wheel unreachable), and `./start.sh --no-privacy` skips it. DEV.md tells someone running the backend by hand how to get it. A small race in privacy.py that lets names through while Presidio is still loading is fixed.
+Brief says: Stretch, "Presidio redacts personal data in transcripts" (docs/CHALLENGE.md); Apprentice Test 5 (personal data protected).
+Background: core/backend/pyproject.toml already has an optional `privacy` extra (presidio-analyzer, spaCy, the en_core_web_sm wheel by URL), already resolved in uv.lock. `start.sh:38` runs `(cd "$BACKEND" && uv sync --quiet)`, an exact sync, so it removes the extra every launch. `src/services/privacy.py` `_analyzer()` (line ~63) loads Presidio lazily and sets `_presidio_tried = True` *before* loading, so a second thread calling `redact()` or `status()` during the load gets `None` (no name redaction, `/health` says "regex"). `/health` in core/backend/main.py runs `privacy.status` off the loop, and start.sh polls /health with `curl --max-time 2`, so a concurrent call is likely on first start.
+Owns: start.sh, DEV.md, core/backend/src/services/privacy.py, core/backend/tests/test_privacy.py.
+Must not touch: core/backend/pyproject.toml and core/backend/uv.lock (the extra stays exactly as it is), core/backend/tests/conftest.py, core/backend/main.py, USE.md (the test laptop runs no backend), everything under pixel-perfect-capture/ (implementer-2 and implementer-3 own files there).
+Plan:
+1. start.sh: add a `--no-privacy` option to the arg loop (and the header comment's usage list, matching its style). Default: `uv sync --quiet --extra privacy`; if that fails, print a warning like "Couldn't install the privacy extra (Presidio): names won't be redacted, only emails, IBANs, cards and phone numbers. Retry with a network connection, or pass --no-privacy." and run plain `uv sync --quiet`. With `--no-privacy`, plain `uv sync --quiet`. Mind `set -e`: use `if ! (...); then ...; fi`.
+2. start.sh: after the backend answers /health (also when it was already running), read the `privacy.engine` field (`curl --silent --max-time 10 http://localhost:8000/health`; parse with grep/sed or `python3 -c`, no jq dependency) and print one line through `say`: "Name redaction: Presidio" or a warning "Name redaction off (regex only)" (with a hint to drop `--no-privacy` or check app.log). Never fail the launch on this.
+3. privacy.py: make `_analyzer()` thread-safe: a module-level `threading.Lock`; the first caller loads under the lock and sets `_presidio_tried = True` only after `_presidio` is assigned (or the load failed); concurrent callers wait for the lock and then see the result. Keep the fast path lock-free once tried. Keep the existing log lines, the no-download guard and the `status()` shape `{"names", "engine"}`. Existing tests set `_presidio`/`_presidio_tried` via monkeypatch (tests/test_privacy.py `use_analyzer`); keep that working.
+4. tests/test_privacy.py: add a test that two threads calling `_analyzer()` (or `status()`) at once while the load is slow both get the same analyzer: monkeypatch the load step (factor it into a small `_load()` helper in privacy.py if that makes it patchable) with a fake that sleeps briefly and returns a sentinel; reset `_presidio`/`_presidio_tried` via monkeypatch. No real Presidio needed.
+5. DEV.md, "Every session" step 1: before `uv run main.py`, a one-time `uv sync --extra privacy` (note: `uv run` keeps it, a plain `uv sync` removes it again), and that `/health` shows `"privacy": {"names": true, "engine": "presidio"}` when it's on. Mention `./start.sh` does this by default and `--no-privacy` skips it. Keep DEV.md's tone and length; a short paragraph, no new section heading unless it reads better.
+Done when: `bash -n start.sh` passes; `cd core/backend && uv sync --extra privacy --dry-run` resolves from the existing lock without changing uv.lock (`git diff --exit-code core/backend/uv.lock`); do NOT actually run `./start.sh` (it launches the app and Electron); the new concurrency test passes; `/Users/mithra/.builds/sia/.claude/check.sh a306b4c` prints ALL CHECKS PASSED (ruff/format must not regress on privacy.py and test_privacy.py). Report the exact warning texts you chose.
+Contract: none with the other implementers. `/health`'s `privacy` shape stays `{"names": bool, "engine": "presidio" | "regex"}`.
+
+Approved (main session review): start.sh default install with fallback and --no-privacy; thread-safe _analyzer with test; /health wait loop (60 × ~2.5 s) covers the first spaCy load (~0.7 s measured). check.sh a306b4c → ALL CHECKS PASSED.
+Release: worktree .claude/worktrees/agent-ab9f4c575e58cf3fa, files start.sh, DEV.md, core/backend/src/services/privacy.py, core/backend/tests/test_privacy.py.
+Commit: "Install name redaction by default in ./start.sh and say which redaction is on"
+
+## B-15 · Recognize the apprentice's and the expert's questions in every script · implementer-2 · approved
+Base: a306b4c (`git rev-parse --short HEAD` in your worktree must match). Repo /Users/mithra/.builds/sia (you work in your own worktree of it).
+Goal: everywhere the pill decides "is this a question?", it recognizes question marks in every script (? ？ ؟ ՞ and the Greek ; / U+037E), not just ASCII "?". Today a Chinese, Japanese, Arabic, Persian, Urdu, Armenian or Greek session never counts live questions at a pause, never resets the expert's teach-back yes when the apprentice re-asks, and never notices the expert asking the apprentice something directly.
+Brief says: Stretch S-02 "Any language" and Apprentice Tests 2 and 3 (docs/CHALLENGE.md). Round 1 found the same bug in the debrief count (fixed there with `isDebriefQuestion`); these are the remaining sites.
+Background (pixel-perfect-capture/src): `lib/floor.ts` ~line 220 has a private `questionsIn(text)` (regex over every script's question mark; Greek ";" counts only when the text contains Greek script) and the exported `isDebriefQuestion(text)` that additionally drops check-ins ("right?", "oder?") and tags. `hooks/use-apprentice.ts` `onMessage` still tests ASCII only at three sites:
+- ~:642 `if (text.includes("?")) x.teachBackReply = null;` (apprentice re-asks during the teach-back: the expert's earlier answer no longer counts)
+- ~:648 `if (x.node === "observing" && text.includes("?")) countQuestion(text);` (the apprentice's reply to a [PAUSE] counts as a live question only if it is one)
+- ~:666 `if (x.node === "observing" && text.endsWith("?")) x.lastDirectQuestionAt = performance.now();` (the expert asked the apprentice something directly)
+Owns: pixel-perfect-capture/src/lib/floor.ts, pixel-perfect-capture/src/lib/floor.test.ts, pixel-perfect-capture/src/hooks/use-apprentice.ts.
+Must not touch: src/components/Sia.tsx, src/components/VoiceWave.tsx, src/routes/settings.tsx, src/routes/sandbox.tsx, eslint.config.js, src/components/ui/** (implementer-3 is reformatting those), anything under core/, start.sh, DEV.md (implementer-1). Don't change the ElevenLabs agent prompts (core/backend/src/services/apprentice_agent.py).
+Plan:
+1. floor.ts: export `isQuestion(text)`: true when `questionsIn(text)` finds a question with any non-whitespace content (no check-in or [SKIP] rules; "Right?" is a question here). Export `endsWithQuestion(text)`: the trimmed text ends with one of the question marks (? ？ ؟ ՞ and the Greek question mark U+037E, plus `;` only when the text contains Greek script, the same rule `questionsIn` uses). Reuse the same character set; define it once so the two can't drift. Keep `isDebriefQuestion` unchanged in behavior (it may reuse the shared pieces). Short doc comments in the file's style.
+2. use-apprentice.ts: replace :642 and :648 with `isQuestion(text)`, :666 with `endsWithQuestion(text)`; import them from `@/lib/floor` alongside the existing imports. No other changes to the hook.
+3. floor.test.ts: `describe("isQuestion")` and `describe("endsWithQuestion")` with questions and plain statements in English, German, Chinese (？), Japanese (？ and a statement ending in 。), Arabic and Persian (؟), Armenian (՞), Greek (; and U+037E, plus a Latin-script sentence with a semicolon that must NOT count), an empty string and whitespace. Also a case where a question sits mid-text ("Warum? Egal.") to show the difference between the two helpers. Existing isDebriefQuestion tests must still pass unchanged.
+4. Grep the UI for any other ASCII-only question test on transcript text (`includes("?")`, `endsWith("?")`, `/\?/` on speech) outside the files implementer-3 owns; if you find one in a file you don't own, report it instead of editing it.
+Done when: no `"?"` literal tests left in use-apprentice.ts; `cd pixel-perfect-capture && npx vitest run src/lib/floor.test.ts` passes; `npx eslint src/lib/floor.ts src/lib/floor.test.ts src/hooks/use-apprentice.ts` reports 0 problems (they are clean today; keep them prettier-formatted, since B-12 makes the whole UI lint-clean this round); `/Users/mithra/.builds/sia/.claude/check.sh a306b4c` prints ALL CHECKS PASSED.
+Contract: none with the other implementers.
+
+Approved (main session): isQuestion/endsWithQuestion share one character set; 48 floor tests; 0 eslint problems in the 3 files; check.sh a306b4c → ALL CHECKS PASSED.
+Release: worktree .claude/worktrees/agent-a9e456c3b507f3918, files pixel-perfect-capture/src/lib/floor.ts, pixel-perfect-capture/src/lib/floor.test.ts, pixel-perfect-capture/src/hooks/use-apprentice.ts.
+Commit: "Count questions in every script, not just with an English question mark"
+
+## B-12 · UI lint passes · implementer-3 · approved
+Base: a306b4c (`git rev-parse --short HEAD` in your worktree must match). Repo /Users/mithra/.builds/sia (you work in your own worktree of it).
+Goal: `npm run lint` in pixel-perfect-capture exits 0 with no errors and no warnings, with no change in behavior.
+Brief says: Beyond (code quality); keeps the "no new problems" lint gate meaningful.
+Background: at a306b4c `npx eslint .` gives 133 problems (124 errors, 9 warnings). Errors: all `prettier/prettier`, auto-fixable: Sia.tsx 118, VoiceWave.tsx 3, settings.tsx 3. Warnings: `react-refresh/only-export-components` once each in src/components/ui/{badge,button,form,navigation-menu,sidebar,toggle}.tsx (shadcn files that export variants/hooks next to components); `react-hooks/exhaustive-deps` at src/components/Sia.tsx:112 and :113 (`useEffect(() => { voice.setMicEnabled(...) }, [paused, offRecord, voice.status, voice.setMicEnabled])` and the same for `voice.setOffRecord`; missing dep `voice`); and src/routes/sandbox.tsx:115, an effect with no deps array that re-runs `decide(waitingSince)` every render on purpose (the R-14 confirm-wait: a confirm waits for the tutor's late check of the screen, re-evaluated on every render). Note the progress board wrongly said the exhaustive-deps warnings are in VoiceWave.tsx: VoiceWave has only prettier errors.
+Owns: pixel-perfect-capture/src/components/Sia.tsx, pixel-perfect-capture/src/components/VoiceWave.tsx, pixel-perfect-capture/src/routes/settings.tsx, pixel-perfect-capture/src/routes/sandbox.tsx, pixel-perfect-capture/eslint.config.js.
+Must not touch: src/lib/floor.ts, src/lib/floor.test.ts, src/hooks/use-apprentice.ts (implementer-2), src/components/ui/** (fix those through the config), package.json and lockfiles, src/routeTree.gen.ts, anything under core/, start.sh, DEV.md (implementer-1).
+Plan:
+1. `npx eslint --fix src/components/Sia.tsx src/components/VoiceWave.tsx src/routes/settings.tsx` (prettier only). Review the diff: whitespace/formatting only, no token changes.
+2. eslint.config.js: add a config block for `src/components/ui/**/*.{ts,tsx}` that turns `react-refresh/only-export-components` off (generated shadcn components), placed after the main block and before `eslintPluginPrettier`.
+3. Sia.tsx:112-113: destructure the stable setters from `voice` (e.g. `const { setMicEnabled, setOffRecord } = voice;`) and use them in the two effects, keeping `voice.status` in the deps so they still re-apply when the connection status changes. Same deps otherwise, same behavior. Check in src/hooks/use-apprentice.ts (read only) that `setMicEnabled`/`setOffRecord` are stable callbacks, and say so in your report.
+4. sandbox.tsx:115: do NOT add deps (that would change the R-14 wait). Add `// eslint-disable-next-line react-hooks/exhaustive-deps` above the `useEffect(` with a one-line comment saying it re-checks the waiting confirm on every render on purpose.
+5. Run `npm run lint` until it exits 0, then `npm test` and `npm run build`.
+Done when: `cd pixel-perfect-capture && npm run lint` exits 0 with 0 problems; `npm test` and `npm run build` pass; `git diff a306b4c --stat` lists only the five owned files; `/Users/mithra/.builds/sia/.claude/check.sh a306b4c` prints ALL CHECKS PASSED. In your report, give the before/after lint counts and confirm the Sia.tsx diff is formatting plus the deps change only.
+Contract: none. (implementer-2 keeps floor.ts, floor.test.ts and use-apprentice.ts prettier-clean, so lint stays at 0 after both merge.)
+
+Approved (main session): npm run lint 133 → 0 problems; formatting-only diffs verified whitespace-stripped; stable setters confirmed; check.sh a306b4c → ALL CHECKS PASSED.
+Release: worktree .claude/worktrees/agent-aee7ccda080d1fac4, files pixel-perfect-capture/eslint.config.js, pixel-perfect-capture/src/components/Sia.tsx, pixel-perfect-capture/src/components/VoiceWave.tsx, pixel-perfect-capture/src/routes/sandbox.tsx, pixel-perfect-capture/src/routes/settings.tsx.
+Commit: "Make the UI lint clean, with no change in behavior"
