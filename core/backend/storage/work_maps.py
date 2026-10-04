@@ -16,6 +16,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from src.core.config import Config
+from src.utils.logger import logger
 
 _JSON_FIELDS = ("steps", "guardrails", "open_questions", "corrections", "transcript")
 
@@ -107,16 +108,46 @@ def screen_events(session_id: str, with_thumbs: bool = False) -> List[Dict[str, 
         ).fetchall()
 
 
+_has_confirmation: Optional[bool] = None
+
+
+def _confirmation_column(conn: psycopg.Connection) -> bool:
+    """Whether migration 005 (work_maps.confirmation) is applied; checked once per process."""
+    global _has_confirmation
+    if _has_confirmation is None:
+        try:
+            found = conn.execute(
+                "select 1 from information_schema.columns where table_schema = 'public'"
+                " and table_name = 'work_maps' and column_name = 'confirmation'"
+            ).fetchone()
+        except psycopg.Error as e:
+            # Not cached: try again on the next save.
+            conn.rollback()
+            logger.warning(f"Couldn't check for migration 005, saving without confirmation: {e}")
+            return False
+        _has_confirmation = found is not None
+        if not _has_confirmation:
+            logger.info("Migration 005 isn't applied: Work Maps are saved without the confirmation")
+    return _has_confirmation
+
+
 def save_map(session_id: str, work_map: Dict[str, Any], status: str) -> None:
     """Store a merged Work Map (draft or confirmed) over the session's row."""
     with _connect() as conn:
+        # Kept when a later save (an edit in the review) doesn't carry it.
+        confirmation = (
+            ", confirmation = coalesce(%(confirmation)s, confirmation)"
+            if _confirmation_column(conn)
+            else ""
+        )
+        confirmed = work_map.get("confirmation")
         conn.execute(
-            """
+            f"""
             update work_maps set
                 task = coalesce(%(task)s, task), status = %(status)s, confirmed = %(confirmed)s,
                 duration = %(duration)s, steps = %(steps)s, guardrails = %(guardrails)s,
                 open_questions = %(open_questions)s, corrections = %(corrections)s,
-                transcript = %(transcript)s
+                transcript = %(transcript)s{confirmation}
             where id = %(id)s
             """,
             {
@@ -126,6 +157,7 @@ def save_map(session_id: str, work_map: Dict[str, Any], status: str) -> None:
                 "confirmed": status == "confirmed",
                 "duration": work_map.get("duration"),
                 **{field: Jsonb(work_map.get(field) or []) for field in _JSON_FIELDS},
+                "confirmation": Jsonb(confirmed) if confirmed else None,
             },
         )
 

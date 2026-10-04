@@ -113,9 +113,18 @@ SCHEMA = {
 }
 
 
-def mmss(seconds: Optional[float]) -> str:
-    s = max(0, int(seconds or 0))
-    return f"{s // 60:02d}:{s % 60:02d}"
+mmss = links.mmss
+
+
+def _dedupe(questions: List[str]) -> List[str]:
+    """Drop blank and repeated questions (ignoring case), keeping the first."""
+    seen, out = set(), []
+    for q in questions:
+        key = (q or "").strip().lower()
+        if key and key not in seen:
+            seen.add(key)
+            out.append(q.strip())
+    return out
 
 
 def _seconds(value: str) -> Optional[float]:
@@ -209,9 +218,14 @@ async def merge(
         links.place_guardrail(guard, steps, events, _snap(_seconds(guard["at"]), events))
     # Quotes stay in the expert's language; the map shows an English translation beside them.
     await languages.translate_quotes([*work_map["steps"], *work_map["guardrails"]])
-    missing = sum(bool(links.unlinked(i)) for i in [*work_map["steps"], *work_map["guardrails"]])
-    if missing:
-        logger.info(f"{missing} Work Map items lack a screen moment or the expert's words")
+    # Whatever is still unlinked becomes a question: in the draft it is asked first in the
+    # debrief; in the final map it stays open instead of only being flagged.
+    gaps = links.unlinked_gaps(work_map)
+    asked = _dedupe(work_map["open_questions"])
+    work_map["open_questions"] = _dedupe([*asked, *gaps] if final else [*gaps, *asked])
+    if gaps:
+        added = len(work_map["open_questions"]) - len(asked)
+        logger.info(f"Added {added} open questions for Work Map items without a moment or words")
 
     logger.info(
         f"Merged {'final' if final else 'draft'} Work Map: {len(work_map['steps'])} steps, "

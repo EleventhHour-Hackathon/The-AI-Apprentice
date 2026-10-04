@@ -69,7 +69,10 @@ export type WorkMapRecord = {
   transcript?: Record<string, unknown>[];
   /** Questions the apprentice asked at pauses while the expert worked (from the backend). */
   live_questions?: LiveQuestionRecord[];
+  /** The teach-back the expert confirmed, and what they said to confirm it (session clock). */
+  confirmation?: Confirmation | undefined;
 };
+export type Confirmation = { teach_back: string; said: string; t: number | null };
 export type LiveQuestionRecord = {
   t: number | null;
   text: string;
@@ -154,7 +157,12 @@ export function normalizeMap(record: WorkMapRecord): WorkMap {
     const who = role === "expert" || role === "user" ? "expert" : "apprentice";
     return [{ who, text: words, t: num(l["t"]) }];
   });
-  return { ...record, steps, guardrails, transcript };
+  const c = record.confirmation as Record<string, unknown> | null | undefined;
+  const confirmation =
+    c && typeof c === "object" && text(c["said"])
+      ? { teach_back: text(c["teach_back"]), said: text(c["said"]), t: num(c["t"]) }
+      : undefined;
+  return { ...record, steps, guardrails, transcript, confirmation };
 }
 
 export const guardLabel: Record<GuardKind, string> = {
@@ -178,17 +186,21 @@ export type WorkMapSummary = {
   open_questions: number;
 };
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function send(url: string, init?: RequestInit): Promise<Response> {
   let response: Response;
   try {
-    response = await fetch(`${BACKEND_URL}/api/v1${path}`, init);
+    response = await fetch(url, init);
   } catch {
     throw new Error("Couldn’t reach the apprentice backend.");
   }
   if (response.status === 404) throw new Error("This Work Map doesn’t exist.");
   if (response.status === 503) throw new Error("Work Map storage (Supabase) is unavailable.");
   if (!response.ok) throw new Error(`The backend answered ${response.status}.`);
-  return (await response.json()) as T;
+  return response;
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  return (await (await send(`${BACKEND_URL}/api/v1${path}`, init)).json()) as T;
 }
 
 export const fetchWorkMaps = () => request<WorkMapSummary[]>("/work_maps");
@@ -196,6 +208,193 @@ export const fetchWorkMap = (id: string) =>
   request<WorkMapRecord>(`/work_maps/${encodeURIComponent(id)}`);
 export const deleteWorkMap = (id: string) =>
   request<{ deleted: string }>(`/work_maps/${encodeURIComponent(id)}`, { method: "DELETE" });
+/** The Work Map as instructions another agent can load: a Markdown system prompt, or JSON. */
+export const agentExportUrl = (id: string, format: "md" | "json") =>
+  `${BACKEND_URL}/api/v1/work_maps/${encodeURIComponent(id)}/agent.${format}`;
+/** The agent instructions as a Markdown file, ready to download. */
+export const fetchAgentInstructions = async (id: string) =>
+  (await send(agentExportUrl(id, "md"))).blob();
+
+/** How two Work Maps of one task differ (core/backend/src/services/work_map_diff.py). */
+export type DiffWords = { quote: string; quote_translation: string; reason: string };
+export type DiffField = {
+  field: string;
+  kind: "changed" | "missing_a" | "missing_b";
+  a: unknown;
+  b: unknown;
+};
+export type DiffSection = {
+  same: { a: string; b: string; title: string; score: number }[];
+  differs: {
+    a: string;
+    b: string;
+    title_a: string;
+    title_b: string;
+    score: number;
+    fields: DiffField[];
+    words_a: DiffWords;
+    words_b: DiffWords;
+  }[];
+  only_a: { id: string; title: string; words: DiffWords }[];
+  only_b: { id: string; title: string; words: DiffWords }[];
+};
+export type WorkMapDiff = { steps: DiffSection; guardrails: DiffSection };
+/** A question for one expert about one difference; both sides of a difference share its id. */
+export type DiffQuestion = {
+  id: string;
+  section: "steps" | "guardrails";
+  /** The asked expert's own item id. */
+  item: string;
+  /** The matching item in the other map; null when only this expert did it. */
+  other: string | null;
+  /** The diff field asked about, or "only". */
+  field: string;
+  text: string;
+  /** The asked expert's words the question quotes, "" if none. */
+  quote: string;
+};
+export type DiffSide = {
+  id: string;
+  task: string | null;
+  recorded_at: string | null;
+  confirmed: boolean;
+  status: string;
+  steps: number;
+  guardrails: number;
+};
+export type WorkMapDiffResponse = {
+  a: DiffSide;
+  b: DiffSide;
+  diff: WorkMapDiff;
+  questions: { a: DiffQuestion[]; b: DiffQuestion[] };
+};
+
+/** Why the diff couldn't be loaded, from the response status and its `detail`. */
+export function diffError(status: number, detail: unknown): string {
+  if (status === 404) {
+    if (detail === "Work Map a not found") return "Session A no longer exists. Pick another one.";
+    if (detail === "Work Map b not found") return "Session B no longer exists. Pick another one.";
+    return "That isn’t a Work Map id.";
+  }
+  if (status === 422)
+    return Array.isArray(detail)
+      ? "The compare link is incomplete."
+      : "Pick two different sessions.";
+  if (status === 503) return "Work Map storage (Supabase) is unavailable.";
+  return `The backend answered ${status}.`;
+}
+
+/** The difference between two Work Maps, with the questions to ask each expert (at most `limit` each). */
+export async function fetchWorkMapDiff(
+  a: string,
+  b: string,
+  limit?: number,
+  init?: RequestInit,
+): Promise<WorkMapDiffResponse> {
+  const params = new URLSearchParams({ a, b });
+  if (limit !== undefined) params.set("limit", String(limit));
+  let response: Response;
+  try {
+    response = await fetch(`${BACKEND_URL}/api/v1/work_map_diff?${params}`, init);
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") throw e;
+    throw new Error("Couldn’t reach the apprentice backend.");
+  }
+  const body = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!response.ok) throw new Error(diffError(response.status, body?.["detail"]));
+  const result = body as unknown as WorkMapDiffResponse;
+  return { ...result, questions: result.questions ?? { a: [], b: [] } };
+}
+
+// Questions kept for an expert's next session (core/backend/src/router/follow_ups_router.py).
+/** A question waiting for the expert's next session; `from` is the Work Map it came from. */
+export type FollowUp = {
+  question_id: string;
+  text: string;
+  quote: string;
+  from: string;
+  added_at: string;
+};
+/** The endpoint refuses a longer text or quote. */
+export const FOLLOW_UP_MAX_CHARS = 300;
+/** The most questions one request may keep. */
+export const FOLLOW_UP_MAX_BATCH = 10;
+
+/** Why a follow-up question couldn't be listed, kept or withdrawn. */
+export function followUpError(status: number, detail: unknown): string {
+  if (status === 404)
+    return detail === "No such question waiting"
+      ? "That question is no longer waiting."
+      : "That session no longer exists.";
+  if (status === 422)
+    return typeof detail === "string"
+      ? detail
+      : "The question couldn’t be kept: it is too long or incomplete.";
+  if (status === 503) return "Work Map storage (Supabase) is unavailable.";
+  return `The backend answered ${status}.`;
+}
+
+async function followUpRequest<T>(id: string, query: string, init?: RequestInit): Promise<T> {
+  const url = `${BACKEND_URL}/api/v1/work_maps/${encodeURIComponent(id)}/follow_up_questions${query}`;
+  let response: Response;
+  try {
+    response = await fetch(url, init);
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") throw e;
+    throw new Error("Couldn’t reach the apprentice backend.");
+  }
+  const body = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!response.ok) throw new Error(followUpError(response.status, body?.["detail"]));
+  return (body ?? {}) as T;
+}
+
+/** The questions waiting for this Work Map's expert, oldest first. */
+export async function fetchFollowUps(id: string, init?: RequestInit): Promise<FollowUp[]> {
+  const body = await followUpRequest<{ questions?: FollowUp[] }>(id, "", init);
+  return body.questions ?? [];
+}
+
+const cut = (s: string | null | undefined) => (s ?? "").trim().slice(0, FOLLOW_UP_MAX_CHARS);
+
+/** Keep questions (at most 10) for this Work Map's expert; `fromId` is the map it was compared with. */
+export async function postFollowUps(
+  id: string,
+  questions: DiffQuestion[],
+  fromId: string,
+): Promise<{ added: string[]; questions: FollowUp[] }> {
+  const items = questions
+    .filter((q) => cut(q.text))
+    .slice(0, FOLLOW_UP_MAX_BATCH)
+    .map((q) => ({ id: q.id, text: cut(q.text), quote: cut(q.quote), from_work_map_id: fromId }));
+  if (items.length === 0) throw new Error("Nothing to ask.");
+  const body = await followUpRequest<{ added?: string[]; questions?: FollowUp[] }>(id, "", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ questions: items }),
+  });
+  return { added: body.added ?? [], questions: body.questions ?? [] };
+}
+
+/** Withdraw a waiting question. Its id contains ":", so it goes in the query, never the path. */
+export async function withdrawFollowUp(
+  id: string,
+  questionId: string,
+): Promise<{ withdrawn: string; questions: FollowUp[] }> {
+  const params = new URLSearchParams({ question_id: questionId });
+  const body = await followUpRequest<{ withdrawn?: string; questions?: FollowUp[] }>(
+    id,
+    `?${params}`,
+    { method: "DELETE" },
+  );
+  return { withdrawn: body.withdrawn ?? questionId, questions: body.questions ?? [] };
+}
+
+/** A file name from the task: lowercase ASCII words joined by "-", or "work-map". */
+export const fileSlug = (task: string | null) =>
+  (task ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "") || "work-map";
 
 export const taskTitle = (task: string | null) => {
   const t = task?.trim();

@@ -11,9 +11,11 @@
  * and only after something happened on screen that a question can be about:
  * an *action* (a value changed, something saved, held or sent), or, until the
  * first few questions are asked, a document they opened. There is no upper
- * limit: the apprentice asks at least MIN_LIVE_QUESTIONS and keeps asking at
- * later pauses, spaced the way a colleague sitting next to them would.
+ * limit: the apprentice asks at least the policy's minLive (MIN_LIVE_QUESTIONS
+ * by default) and keeps asking at later pauses, spaced the way a colleague
+ * sitting next to them would. The pace comes from Settings via policyFrom.
  */
+import type { Settings } from "./settings";
 
 /** Quiet this long after the expert stops talking. */
 export const SPEECH_QUIET_MS = 2500;
@@ -60,29 +62,99 @@ export type FloorInput = {
  */
 export type Floor = "talking" | "busy" | "reading" | "waiting" | "quiet" | "ask";
 
-export function decideFloor(f: FloorInput): Floor {
+/** How often the apprentice asks: the floor's numbers, from Settings or the defaults. */
+export type FloorPolicy = {
+  minLive: number;
+  earlyGapMs: number;
+  gapMs: number;
+  minDebrief: number;
+};
+
+/** Follow-up questions the apprentice asks in the debrief before the teach-back. */
+export const MIN_DEBRIEF_QUESTIONS = 3;
+
+export const DEFAULT_POLICY: FloorPolicy = {
+  minLive: MIN_LIVE_QUESTIONS,
+  earlyGapMs: EARLY_QUESTION_GAP_MS,
+  gapMs: QUESTION_GAP_MS,
+  minDebrief: MIN_DEBRIEF_QUESTIONS,
+};
+
+/** Curiosity scales the gaps between live questions: shorter gaps, more questions. */
+const GAP_SCALE: Record<Settings["curiosity"], number> = { quiet: 1.5, balanced: 1, curious: 0.66 };
+// The brief's floor is 3 debrief follow-ups, and "standard" keeps today's 3.
+const DEBRIEF_MIN: Record<Settings["debriefDepth"], number> = {
+  short: 3,
+  standard: 3,
+  thorough: 5,
+};
+
+/**
+ * The question pace for the Settings choices. Unknown values fall back to that field's default,
+ * and the live and debrief minimums never drop below the brief's 3.
+ */
+export function policyFrom(
+  s: Pick<Settings, "curiosity" | "minQuestions" | "debriefDepth">,
+): FloorPolicy {
+  const scale = Object.hasOwn(GAP_SCALE, s.curiosity) ? GAP_SCALE[s.curiosity] : 1;
+  const debrief = Object.hasOwn(DEBRIEF_MIN, s.debriefDepth)
+    ? DEBRIEF_MIN[s.debriefDepth]
+    : MIN_DEBRIEF_QUESTIONS;
+  const live = Number(s.minQuestions);
+  return {
+    minLive: Math.max(MIN_LIVE_QUESTIONS, Number.isInteger(live) ? live : MIN_LIVE_QUESTIONS),
+    earlyGapMs: Math.round(EARLY_QUESTION_GAP_MS * scale),
+    gapMs: Math.round(QUESTION_GAP_MS * scale),
+    minDebrief: Math.max(MIN_DEBRIEF_QUESTIONS, debrief),
+  };
+}
+
+export function decideFloor(f: FloorInput, policy: FloorPolicy = DEFAULT_POLICY): Floor {
   if (f.speaking || f.now - f.lastSpeechAt < SPEECH_QUIET_MS) return "talking";
   if (f.now - f.lastActivityAt < SCREEN_QUIET_MS) return "busy";
   const last = f.pending.at(-1);
   if (last?.kind === "navigation" && f.now - last.at < READING_MS) return "reading";
-  const early = f.questionTimes.length < MIN_LIVE_QUESTIONS;
+  const early = f.questionTimes.length < policy.minLive;
   const worthAsking = f.pending.some((e) => e.kind === "action") || (early && f.pending.length > 0);
   if (f.agentSpeaking || !worthAsking) return "quiet";
 
   const lastQuestion = f.questionTimes.at(-1) ?? -Infinity;
   if (
     f.now - f.observingSince < FIRST_QUESTION_AFTER_MS ||
-    f.now - lastQuestion < (early ? EARLY_QUESTION_GAP_MS : QUESTION_GAP_MS) ||
+    f.now - lastQuestion < (early ? policy.earlyGapMs : policy.gapMs) ||
     f.now - f.lastPauseAt < PAUSE_RETRY_MS
   )
     return "waiting";
   return "ask";
 }
 
+/** Enough live questions for the debrief: at least the policy's minLive, one about a guardrail. */
+export function liveQuestionsMet(asked: number, guardrail: boolean, policy = DEFAULT_POLICY) {
+  return asked >= policy.minLive && guardrail;
+}
+
+/** What to ask the agent at a pause: one question while short of minLive, then only if worth it. */
+export function pauseAsk(asked: number, guardrail: boolean, policy = DEFAULT_POLICY) {
+  const ask =
+    asked < policy.minLive
+      ? `You have asked ${asked} of at least ${policy.minLive} questions, so ask one now, about something on screen.`
+      : "Ask one short question if one of these hides a reason, a limit or a moment to stop and ask; otherwise call skip_turn.";
+  const nudge =
+    !guardrail && asked >= policy.minLive - 1
+      ? " No guardrail yet: make this one about a limit, an exception or when they would stop and ask someone."
+      : "";
+  return `${ask}${nudge}`;
+}
+
 /** In the wrap-up, this much silence after an answer before the next question (or the debrief). */
 export const WRAP_UP_QUIET_MS = 2500;
 /** In the wrap-up, how long to wait for an answer that doesn't come. */
 export const WRAP_UP_ANSWER_MS = 20_000;
+
+/** Wrap-up tries: one per missing live question, plus two for ones that don't count or aren't answered. */
+export function wrapUpLimit(asked: number, policy = DEFAULT_POLICY) {
+  return Math.max(policy.minLive - asked, 1) + 2;
+}
 
 export type WrapUpInput = {
   now: number;
@@ -120,4 +192,172 @@ export function decideWrapUp(w: WrapUpInput): "wait" | "ask" | "finish" {
   const answered = askedThisTime && w.lastSpeechAt > w.last!.at;
   if (askedThisTime && !answered && w.now - quietSince < WRAP_UP_ANSWER_MS) return "wait";
   return w.met || w.prompts >= w.limit ? "finish" : "ask";
+}
+
+/*
+ * The debrief and the teach-back, after the task: the agent decides when it moves on, but the
+ * pill checks it first. start_teach_back is refused until the apprentice has asked at least
+ * the policy's minDebrief follow-ups (MIN_DEBRIEF_QUESTIONS by default), and confirm_work_map
+ * until it has explained the task back and the expert has answered.
+ */
+
+/** The teach-back has to explain the task, not just say "got it": at least this many words. */
+export const MIN_TEACH_BACK_WORDS = 25;
+
+const STOP_WORDS = new Set(
+  "about after again also always before could does doing from have into just like more much only should that their them then there these they this those what when where which while will with would your".split(
+    " ",
+  ),
+);
+/** Words that carry the meaning: lowercase, four letters or more, not a common word. */
+const contentWords = (text: string) =>
+  (text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).filter(
+    (w) => w.length >= 4 && !STOP_WORDS.has(w),
+  );
+/** Words in any language, including those written without spaces (Chinese, Japanese, Thai). */
+const words = new Intl.Segmenter(undefined, { granularity: "word" });
+const wordCount = (text: string) => [...words.segment(text)].filter((s) => s.isWordLike).length;
+
+/**
+ * The heuristics below can't be right in every one of the 72 languages, so the gate gives way:
+ * after this many refused start_teach_back calls the teach-back goes ahead, and after this many
+ * "explain first" replies to confirm_work_map the explanation counts as given. A clear no from
+ * the expert, or no answer at all, is never overridden.
+ */
+export const MAX_TEACH_BACK_REFUSALS = 3;
+export const MAX_EXPLAIN_REFUSALS = 2;
+
+/** A gap counts as asked when more than half of its content words appear in one asked question. */
+function alreadyAsked(gap: string, asked: string[]) {
+  const words = [...new Set(contentWords(gap))];
+  if (words.length === 0) return false;
+  return asked.some((q) => {
+    const said = new Set(contentWords(q));
+    return words.filter((w) => said.has(w)).length * 2 > words.length;
+  });
+}
+
+export type DebriefStatus = {
+  /** Enough follow-ups asked to go on to the teach-back (or refused often enough). */
+  met: boolean;
+  /** How many more to ask. */
+  remaining: number;
+  /** Gaps from the draft Work Map to ask about next, at most `remaining`. */
+  next: string[];
+};
+
+/**
+ * asked: the apprentice's debrief questions so far; gaps: the draft Work Map's open questions;
+ * refusals: start_teach_back calls refused so far this session; minDebrief: follow-ups required.
+ */
+export function debriefStatus({
+  asked,
+  gaps,
+  refusals = 0,
+  minDebrief = DEFAULT_POLICY.minDebrief,
+}: {
+  asked: string[];
+  gaps: string[];
+  refusals?: number;
+  minDebrief?: number;
+}): DebriefStatus {
+  const remaining = Math.max(0, minDebrief - asked.length);
+  const next = gaps.filter((g) => g.trim() && !alreadyAsked(g, asked)).slice(0, remaining);
+  return { met: remaining === 0 || refusals >= MAX_TEACH_BACK_REFUSALS, remaining, next };
+}
+
+/** The reply to a start_teach_back refused by debriefStatus: how many are asked and what to ask next. */
+export function notYetReply(asked: number, status: DebriefStatus, minDebrief: number) {
+  const more = `Ask ${status.remaining} more, one at a time, waiting for each answer, then call start_teach_back.`;
+  const about = status.next.length
+    ? `Gaps still open:\n${status.next.map((g) => `- ${g}`).join("\n")}`
+    : "The gaps are covered, so ask about the edges: larger amounts, a new supplier, missing data, and who to ask when unsure.";
+  return `Not yet: you have asked ${asked} of ${minDebrief} follow-up questions. Do not explain the task back yet. ${more}\n${about}`;
+}
+
+/** "Is that right?" and the like: checking in, not asking about the task (English and German). */
+const CHECK_INS = [
+  /^is that (right|correct|ok|okay)$/,
+  /^did i get that right$/,
+  /^does that make sense$/,
+  /^is that how it works$/,
+  /^(right|correct|okay|ok)$/,
+  /^stimmt das$/,
+  /^ist das richtig$/,
+  /^passt das$/,
+  /^(oder|richtig)$/,
+];
+const normalized = (sentence: string) =>
+  sentence
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}' ]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+/**
+ * Question marks: ? ？ (CJK) ؟ (Arabic, Persian, Urdu) ՞ (Armenian) and the Greek question mark,
+ * which is ";" (or U+037E) in Greek script.
+ */
+const QUESTION_MARKS = "?？؟՞\u037E";
+const questionMarks = (text: string) =>
+  /\p{Script=Greek}/u.test(text) ? `${QUESTION_MARKS};` : QUESTION_MARKS;
+const questionsIn = (text: string) => {
+  const marks = questionMarks(text);
+  return text.match(new RegExp(`[^.!。！${marks}]*[${marks}]`, "gu")) ?? [];
+};
+
+/** Any line that asks something, check-ins included ("Right?" counts). */
+export function isQuestion(text: string) {
+  return questionsIn(text).some((q) => normalized(q) !== "");
+}
+
+/** The line ends on a question mark: someone asked a question and is waiting for the answer. */
+export function endsWithQuestion(text: string) {
+  const last = text.trim().at(-1);
+  return last !== undefined && questionMarks(text).includes(last);
+}
+
+/**
+ * An apprentice line asks a debrief question: one of its questions is more than a check-in.
+ * A check-in tagged onto a statement ("The limit is 5,000, right?") is one too.
+ */
+export function isDebriefQuestion(text: string) {
+  return questionsIn(text).some((q) => {
+    const s = normalized(q);
+    const tag = normalized(q.split(/[,，،]/).at(-1) ?? "");
+    return s !== "" && !CHECK_INS.some((c) => c.test(s) || c.test(tag));
+  });
+}
+
+/** The expert's answer to the teach-back says no, or yes with a correction (English and German). */
+const NOT_YES_START =
+  /^(no|nope|not|nein|nee|nicht|but|aber)\b|^(yes|yeah|yep|yup|ja)[\s,.!]*(but|aber)\b/;
+const NOT_YES_ANYWHERE =
+  /\b(not quite|not really|not exactly|that's wrong|that is wrong|not right|not correct|isn't right|except|nicht ganz|nicht richtig|stimmt nicht|falsch)\b|außer/;
+/** "Actually" is a correction only when the answer doesn't start with a clear yes. */
+const CLEAR_YES = /^(yes|yeah|yep|yup|exactly|correct|right|ja|genau|richtig|stimmt|passt)\b/;
+const SOFT_NO = /\b(actually|eigentlich)\b/;
+
+/**
+ * explained: what the apprentice said in the teach-back; confirmedBy: what the expert said after it.
+ * explain_first: it hasn't explained the task yet. await_confirmation: the expert hasn't answered.
+ * not_confirmed: the expert said no or corrected it. Other languages are never blocked.
+ * refusals: "explain first" replies already given this session.
+ */
+export function teachBackStatus({
+  explained,
+  confirmedBy,
+  refusals = 0,
+}: {
+  explained: string[];
+  confirmedBy: string;
+  refusals?: number;
+}): "explain_first" | "await_confirmation" | "not_confirmed" | "ok" {
+  if (wordCount(explained.join(" ")) < MIN_TEACH_BACK_WORDS && refusals < MAX_EXPLAIN_REFUSALS)
+    return "explain_first";
+  if (!confirmedBy.trim()) return "await_confirmation";
+  const said = confirmedBy.toLowerCase().replace(/[’]/g, "'").trim();
+  if (NOT_YES_START.test(said) || NOT_YES_ANYWHERE.test(said)) return "not_confirmed";
+  if (SOFT_NO.test(said) && !CLEAR_YES.test(said)) return "not_confirmed";
+  return "ok";
 }

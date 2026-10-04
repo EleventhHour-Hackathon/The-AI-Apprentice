@@ -52,13 +52,20 @@ the apprentice asks the missing ones first (*Before the debrief*).
 1. On the Work Map: **Teach a new hire**. In Ledgerly switch to **New hire's practice**.
 2. Open **4480** Bauer Hydraulik, **€7,200** CNC tool changer, pre-coded **4711 opex**.
 3. Play the new hire: leave 4711, no asset number, press **Post invoice**.
-4. The tutor stops you before you confirm: "Sabine would stop here. Why do you think?" and
-   replays her screen moment from 4471. Cancel, change to 0400, add an asset number, post.
+4. Press **Post** in the dialog straight away. While a lesson is live, Ledgerly shows
+   *Checking with the tutor…* and waits a few seconds for the tutor to look at the dialog. The
+   tutor steps in: "Sabine would stop here. Why do you think?" and replays her screen moment
+   from 4471. Ledgerly locks **Post**, **Hold…**, **Send for approval…** and the dialog's
+   confirm button with *The tutor wants a word first*, so the mistake can't be saved. Cancel,
+   change to 0400, add an asset number: the tutor confirms the fix and the buttons unlock.
+   Post. A right decision is saved as soon as the tutor has checked it (at most about 8 s).
 5. Do 4481 (Schmidt, December again) and 4482 (Czech subsidiary) or say you're done.
 6. The report: *mastered*, *practice next*, *not covered*, in Sabine's words.
 
-If the tutor is late: stay on the confirm dialog for two or three seconds before
-confirming; it checks every screen change, and the dialog is the last moment to step in.
+The check and the lock only work when the pill and Ledgerly are open in the same app (the
+desktop app's practice ERP) or the same browser; Ledgerly on another laptop saves at once and
+never locks. Ending the lesson or closing the pill releases the lock and stops the check at
+once.
 
 ## Variation: two languages
 

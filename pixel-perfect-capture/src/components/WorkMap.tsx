@@ -25,16 +25,20 @@ import {
 import "@xyflow/react/dist/base.css";
 import {
   ArrowLeft,
+  Bot,
   CheckCheck,
   Clock,
   Download,
+  GitCompare,
   GraduationCap,
   MessageSquareText,
   Play,
+  RotateCcw,
   Trash2,
   Unlink,
   X,
 } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 import { desktop } from "@/lib/desktop";
 import { MIN_LIVE_QUESTIONS } from "@/lib/floor";
 import {
@@ -45,11 +49,14 @@ import {
   storedLanguage,
   type LanguageChoice,
 } from "@/lib/languages";
+import { saveNextSession } from "@/lib/next-session";
 import { ClipPlayer } from "@/components/ClipPlayer";
 import { DeleteWorkMap } from "@/components/DeleteWorkMap";
 import { Button } from "@/components/ui/button";
 import {
   count,
+  fetchAgentInstructions,
+  fileSlug,
   guardLabel,
   mmss,
   normalizeMap,
@@ -412,17 +419,28 @@ function Canvas({ map: record, onClose }: Props) {
     return null;
   };
 
-  const exportMap = () => {
-    const blob = new Blob([JSON.stringify(record, null, 2)], { type: "application/json" });
+  const download = (blob: Blob, name: string) => {
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    const slug = (map.task ?? "work-map")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, "");
-    a.download = `${slug || "work-map"}.json`;
+    a.download = name;
     a.click();
     URL.revokeObjectURL(a.href);
+  };
+
+  const exportMap = () => {
+    const blob = new Blob([JSON.stringify(record, null, 2)], { type: "application/json" });
+    download(blob, `${fileSlug(map.task)}.json`);
+  };
+
+  // Fetched rather than linked: a failed link would navigate the window to a raw error page.
+  const [agentExportError, setAgentExportError] = useState("");
+  const exportForAgents = async () => {
+    setAgentExportError("");
+    try {
+      download(await fetchAgentInstructions(map.id), `${fileSlug(map.task)}.agent.md`);
+    } catch (e) {
+      setAgentExportError((e as Error).message);
+    }
   };
 
   const keys = useRef({ exportMap, onClose, selected });
@@ -503,11 +521,18 @@ function Canvas({ map: record, onClose }: Props) {
         </div>
         <span
           className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] ${map.confirmed ? "" : "text-muted-foreground"}`}
+          title={
+            map.confirmed && map.confirmation
+              ? `The expert said: “${map.confirmation.said}”${map.confirmation.teach_back ? `\n\nTo the teach-back: “${map.confirmation.teach_back}”` : ""}`
+              : undefined
+          }
         >
           {map.confirmed ? (
             <>
               <CheckCheck size={12} className="text-voice-listening" />
-              Confirmed by expert
+              {map.confirmation
+                ? `Confirmed by the expert${map.confirmation.t !== null ? ` at ${mmss(map.confirmation.t)}` : ""}`
+                : "Confirmed by expert"}
             </>
           ) : (
             "Not confirmed"
@@ -554,6 +579,17 @@ function Canvas({ map: record, onClose }: Props) {
               Transcript
             </Button>
           )}
+          <RecordAgain workMapId={map.id} />
+          <Button variant="outline" className="h-8 rounded-full text-xs" asChild>
+            <Link
+              to="/work-maps/compare"
+              search={{ a: map.id }}
+              title="Compare with another session of this task"
+            >
+              <GitCompare size={13} />
+              Compare
+            </Link>
+          </Button>
           <DeleteWorkMap id={map.id} task={map.task} onDeleted={onClose}>
             <Button
               variant="ghost"
@@ -565,6 +601,19 @@ function Canvas({ map: record, onClose }: Props) {
               <Trash2 size={14} />
             </Button>
           </DeleteWorkMap>
+          {agentExportError && (
+            <p role="alert" className="max-w-56 text-xs text-destructive">
+              {agentExportError}
+            </p>
+          )}
+          <Button
+            className="h-8 rounded-full text-xs"
+            title="Download as instructions an AI agent can follow"
+            onClick={() => void exportForAgents()}
+          >
+            <Bot size={13} />
+            Export for agents
+          </Button>
           <Button className="h-8 rounded-full text-xs" title="Export JSON (E)" onClick={exportMap}>
             <Download size={13} />
             Export<Kbd>E</Kbd>
@@ -809,6 +858,29 @@ function teach(workMapId: string, language: LanguageChoice) {
     window.location.assign(
       `/?lesson=${encodeURIComponent(workMapId)}&lang=${encodeURIComponent(language)}`,
     );
+}
+
+/**
+ * Record the task again: the next session the expert starts asks first the questions kept for
+ * them on this map. Starts in the desktop pill, or opens the home page (with the pill) in a browser.
+ */
+function RecordAgain({ workMapId }: { workMapId: string }) {
+  return (
+    <Button
+      variant="outline"
+      className="h-8 rounded-full text-xs"
+      title="Record this task again; questions kept for this expert are asked first"
+      onClick={() => {
+        saveNextSession(workMapId);
+        const bridge = desktop();
+        if (bridge) bridge.pill("start");
+        else window.location.assign("/");
+      }}
+    >
+      <RotateCcw size={13} />
+      Record again
+    </Button>
+  );
 }
 
 /** On a step card: the still, with a few seconds of the expert doing it played on hover. */

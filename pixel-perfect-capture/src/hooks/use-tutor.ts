@@ -3,6 +3,7 @@ import type { LanguageChoice } from "@/lib/languages";
 import { VoiceConversation } from "@elevenlabs/client";
 import { BACKEND_URL } from "@/lib/backend";
 import type { ScreenEvent } from "@/hooks/use-screen-events";
+import { HEARTBEAT_MS, publishChecked, publishHold, publishWatching } from "@/lib/tutor-hold";
 
 /** A step of the Work Map, as the tutor teaches it (with the expert's screen moment). */
 export type LessonStep = {
@@ -150,6 +151,29 @@ export function useTutor() {
   );
   const step = useCallback((id: string) => s.current.steps.find((x) => x.id === id) ?? null, []);
 
+  // The practice ERP listens (lib/tutor-hold): while the lesson is live its confirms wait for
+  // the tutor's check, and while a wrong decision is open its save buttons stay locked. The
+  // heartbeat re-sends both every HEARTBEAT_MS so they lapse on their own if this window goes.
+  // Once the lesson ends (finish, disconnect, unmount) checks still in flight are ignored.
+  const heartbeat = useRef<number | null>(null);
+  const live = useRef(false);
+  const syncHold = useCallback(() => publishHold(s.current.flags), []);
+  const watch = useCallback((on: boolean) => {
+    if (heartbeat.current !== null) clearInterval(heartbeat.current);
+    heartbeat.current = null;
+    live.current = on;
+    if (!on) {
+      publishWatching(true);
+      return;
+    }
+    const beat = () => {
+      publishWatching();
+      if (s.current.flags.length) publishHold(s.current.flags);
+    };
+    beat();
+    heartbeat.current = window.setInterval(beat, HEARTBEAT_MS);
+  }, []);
+
   const attempt = useCallback(
     (a: Record<string, unknown>) => {
       void post(`/lessons/${s.current.lessonId}/attempt`, { ...a, t: clock() }).catch((e) =>
@@ -181,6 +205,9 @@ export function useTutor() {
     },
     finish_lesson: async () => {
       const x = s.current;
+      x.flags = []; // the lesson is over: free the practice ERP
+      watch(false);
+      syncHold();
       setState((st) => ({ ...st, finishing: true, cue: null }));
       try {
         const report = await post<LessonReport>(`/lessons/${x.lessonId}/finish`, {
@@ -196,19 +223,25 @@ export function useTutor() {
     },
   });
 
-  const release = useCallback((error?: string) => {
-    const c = conv.current;
-    conv.current = null;
-    if (c?.isOpen()) void c.endSession().catch(() => undefined);
-    setLevel(0);
-    setState((st) => ({
-      ...st,
-      status: "closed",
-      botSpeaking: false,
-      userSpeaking: false,
-      error: error ?? st.error,
-    }));
-  }, []);
+  const release = useCallback(
+    (error?: string) => {
+      const c = conv.current;
+      conv.current = null;
+      if (c?.isOpen()) void c.endSession().catch(() => undefined);
+      s.current.flags = [];
+      watch(false);
+      syncHold();
+      setLevel(0);
+      setState((st) => ({
+        ...st,
+        status: "closed",
+        botSpeaking: false,
+        userSpeaking: false,
+        error: error ?? st.error,
+      }));
+    },
+    [syncHold, watch],
+  );
 
   const start = useCallback(
     async (workMapId: string, language: LanguageChoice = "en") => {
@@ -234,6 +267,7 @@ export function useTutor() {
           lastCueAt: -Infinity,
           agentSpeaking: false,
         };
+        syncHold();
         setState((st) => ({ ...st, task: lesson.task, steps: lesson.steps }));
         const { token } = await fetch(`${BACKEND_URL}/api/v1/agent/token?role=tutor`).then((r) => {
           if (!r.ok) throw new Error(`token request answered ${r.status}`);
@@ -250,6 +284,7 @@ export function useTutor() {
             s.current.startedAt = performance.now();
             setSession({ id: lesson.lesson_id, clock });
             setState((st) => ({ ...st, status: "connected" }));
+            watch(true);
             void post(`/lessons/${lesson.lesson_id}/start`, {
               conversation_id: conversationId,
             }).catch(() => undefined);
@@ -292,7 +327,7 @@ export function useTutor() {
         );
       }
     },
-    [clock, release],
+    [clock, release, syncHold, watch],
   );
 
   /** Act on the check of one screen event: step in, confirm a fix, or note a step done right. */
@@ -300,13 +335,15 @@ export function useTutor() {
     (r: CheckResult) => {
       const x = s.current;
       const c = conv.current;
-      if (!c) return;
+      // A check that comes back after the lesson ended must not re-lock the practice ERP.
+      if (!c || !live.current) return;
       if (r.step && r.verdict !== "none") {
         x.acted.add(r.step);
         x.queued = x.queued.filter((q) => !(q.kind === "predict" && q.step === r.step));
       }
       if (r.verdict === "intervene") {
         x.flags.push({ step: r.step, what_happened: r.what_happened });
+        syncHold();
         attempt({
           type: "intervention",
           step: r.step,
@@ -333,6 +370,7 @@ export function useTutor() {
         );
       } else if (r.verdict === "fixed") {
         x.flags = x.flags.filter((f) => f.step !== r.step);
+        syncHold();
         attempt({ type: "fixed", step: r.step });
         setState((st) => ({ ...st, cue: { type: "fixed", step: r.step }, replay: null }));
         c.sendUserMessage(`[FIXED step=${r.step}] They corrected it: ${r.what_happened}.`);
@@ -346,7 +384,7 @@ export function useTutor() {
         if (!x.queued.some((q) => q.step === next.id))
           x.queued.push({ kind: "predict", step: next.id });
     },
-    [attempt, step],
+    [attempt, step, syncHold],
   );
 
   /** Something changed on the new hire's screen: tell the tutor, and check it against the Work Map. */
@@ -356,6 +394,8 @@ export function useTutor() {
       const c = conv.current;
       if (!c) return;
       const t = clock();
+      // When the checked frame was grabbed, so the practice ERP knows whether it showed the dialog.
+      const seen = e.capturedAt ?? Date.now();
       c.sendContextualUpdate(`[SCREEN ${mmss(t)}] ${e.event}`);
       const history = x.history.slice(-12);
       const flags = () => x.flags;
@@ -371,6 +411,9 @@ export function useTutor() {
           act(r);
         } catch (err) {
           console.warn("[tutor] check failed", err);
+        } finally {
+          // After any hold act() sent; also on failure, so the practice ERP never waits on it.
+          publishChecked(seen);
         }
       });
     },
@@ -449,9 +492,21 @@ export function useTutor() {
       const c = conv.current;
       conv.current = null;
       if (c?.isOpen()) void c.endSession().catch(() => undefined);
+      watch(false);
+      publishHold([]);
     },
-    [],
+    [watch],
   );
+
+  // Closing the window skips unmount effects: free the practice ERP here too.
+  useEffect(() => {
+    const free = () => {
+      watch(false);
+      publishHold([]);
+    };
+    window.addEventListener("pagehide", free);
+    return () => window.removeEventListener("pagehide", free);
+  }, [watch]);
 
   return {
     ...state,

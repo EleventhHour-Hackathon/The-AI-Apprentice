@@ -248,3 +248,43 @@ def unlinked(item: Dict[str, Any]) -> List[str]:
     if not item.get("quote"):
         missing.append("words")
     return missing
+
+
+def mmss(seconds: Optional[float]) -> str:
+    s = max(0, int(seconds or 0))
+    return f"{s // 60:02d}:{s % 60:02d}"
+
+
+def _label(*texts: Any) -> str:
+    """The first non-empty text, quoted for a question, or "" if there is none."""
+    for text in texts:
+        text = str(text or "").strip().rstrip(".").strip()
+        if text:
+            return f"'{text}'"
+    return ""
+
+
+def gap_question(item: Dict[str, Any], kind: str) -> str:
+    """One short question that would link an unlinked "step" or "guardrail".
+
+    The label is quoted as written, so verb and noun phrases both read right.
+    """
+    missing = unlinked(item)
+    if kind == "guardrail":
+        label = _label(item.get("rule")) or "this rule"
+        if "words" in missing:
+            return f"When does {label} apply, in your words?"
+        return f"When in the task does {label} come up?"
+    label = _label(item.get("decision"), item.get("title")) or "this step"
+    if "words" in missing:
+        when = f" at {mmss(item['at'])}" if item.get("at") is not None else ""
+        return f"Why {label}{when}?"
+    return f"When in the task does {label} come up?"
+
+
+def unlinked_gaps(work_map: Dict[str, Any]) -> List[str]:
+    """A debrief question for every step, then every guardrail, still missing a link."""
+    kinds = (("step", work_map.get("steps")), ("guardrail", work_map.get("guardrails")))
+    return [
+        gap_question(item, kind) for kind, items in kinds for item in items or [] if unlinked(item)
+    ]

@@ -1,13 +1,16 @@
+import math
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 
-from src.services import apprentice_agent, recordings, tutor
+from src.services import agent_export, apprentice_agent, recordings, tutor
 from src.services.screen_vision import get_backend as get_vision_backend, log_frame
-from src.services import live_questions, work_map_edit, work_map_links
+from src.services import follow_ups, live_questions, living_map, work_map_edit, work_map_links
+from src.services import work_map_update
 from src.services.privacy import redact, redact_deep
 from src.services.work_map_merge import brief_for_agent, merge
 from src.utils.logger import logger
@@ -102,8 +105,27 @@ async def screen_event(payload: dict = Body(...)):
 
 @router.post("/sessions/{session_id}/start")
 def start_session(session_id: str, payload: dict = Body(default={})):
+    """Open a session. With parent_work_map_id ("Record again"), the debrief first asks the
+    questions kept for the expert on that Work Map; the first parent given is the one kept."""
+    session_id = _uuid(session_id)
+    parent = payload.get("parent_work_map_id")
+    if parent:
+        parent = _uuid(parent, "Work Map")
+        if parent == session_id:
+            detail = "A session can't be recorded again from itself"
+            raise HTTPException(status_code=422, detail=detail)
     try:
-        work_map_store.start_session(_uuid(session_id), payload.get("conversation_id"))
+        if parent:
+            parent_row = work_map_store.get(parent)
+            if parent_row is None or parent_row.get("status") == "recording":
+                raise HTTPException(status_code=404, detail="Work Map not found")
+        work_map_store.start_session(session_id, payload.get("conversation_id"))
+        if parent:
+            row = work_map_store.get(session_id) or {}
+            # The pill posts start twice (before and after connecting): one parent capture only.
+            if follow_ups.parent_of(row.get("captures") or []) is None:
+                capture = {"kind": follow_ups.PARENT, "work_map_id": parent}
+                work_map_store.add_capture(session_id, capture)
     except HTTPException:
         raise
     except Exception as e:
@@ -147,6 +169,18 @@ def set_task(session_id: str, payload: dict = Body(...)):
 @router.post("/sessions/{session_id}/capture")
 def add_capture(session_id: str, payload: dict = Body(...)):
     """Something the agent recorded live through a client tool (record_step, record_guardrail, ...)."""
+    # Follow-up questions and living updates have their own endpoints, so a client tool can't
+    # forge them.
+    reserved = (
+        follow_ups.QUESTION,
+        follow_ups.WITHDRAWN,
+        follow_ups.DELIVERED,
+        follow_ups.PARENT,
+        follow_ups.LIVING_UPDATE,
+        follow_ups.LIVING_APPLIED,
+    )
+    if payload.get("kind") in reserved:
+        raise HTTPException(status_code=422, detail="That kind of capture can't be recorded here")
     try:
         found = work_map_store.add_capture(_uuid(session_id), redact_deep(payload))
     except HTTPException:
@@ -199,7 +233,9 @@ async def merge_session(session_id: str, payload: dict = Body(...)):
     """Merge the session into a Work Map: the draft for the debrief, or the final confirmed map.
 
     Body: {"transcript": [{"role": "expert"|"apprentice", "text", "t", "phase"}],
-           "final": bool, "duration": seconds}
+           "final": bool, "duration": seconds,
+           "confirmation": {"teach_back", "said", "t"}}
+    confirmation (final only): the teach-back and the expert's words confirming it.
     """
     session_id = _uuid(session_id)
     final = bool(payload.get("final"))
@@ -218,13 +254,36 @@ async def merge_session(session_id: str, payload: dict = Body(...)):
     except Exception as e:
         raise _store_unavailable(e)
 
+    # Recorded again from another Work Map ("Record again"): the questions kept there for this
+    # expert lead the debrief, and are marked delivered there once the new map is confirmed.
+    parent_id = follow_ups.parent_of(session.get("captures") or [])
+    parent: Optional[Dict[str, Any]] = None
+    pending: List[Dict[str, Any]] = []
+    if parent_id:
+        # Either way the session still merges and saves, just without the kept questions.
+        try:
+            parent = work_map_store.get(parent_id)
+            if parent is None:
+                logger.warning(f"Work Map {parent_id}, recorded again from, is gone")
+        except Exception as e:
+            logger.warning(f"Couldn't read Work Map {parent_id}, recorded again from: {e}")
+            parent = None
+        if parent is None:
+            parent_id = None
+        else:
+            # Redacted again: these go to the agent and back to the UI.
+            kept = follow_ups.pending(parent.get("captures") or [])
+            pending = [{**q, "text": redact(q["text"])} for q in kept]
+
     try:
         work_map = await merge(
             task=session.get("task"),
             events=events,
             transcript=transcript,
-            # Live questions are the apprentice's, not what it learned; the transcript has them.
-            captures=[c for c in session.get("captures") or [] if c.get("kind") != "live_question"],
+            # Live questions are the apprentice's and follow-up questions belong to the expert's
+            # next session, so neither is what the apprentice learned; the transcript has the live
+            # ones.
+            captures=follow_ups.for_merge(session.get("captures") or []),
             final=final,
         )
     except Exception as e:
@@ -238,11 +297,69 @@ async def merge_session(session_id: str, payload: dict = Body(...)):
         duration=payload.get("duration"),
         corrections=[c["correction"] for c in session.get("captures") or [] if c.get("kind") == "correction"],
     )
+    confirmation = payload.get("confirmation")
+    if (
+        final
+        and isinstance(confirmation, dict)
+        and isinstance(confirmation.get("teach_back"), str)
+        and isinstance(confirmation.get("said"), str)
+        and isinstance(confirmation.get("t"), (int, float))
+        and not isinstance(confirmation.get("t"), bool)
+        # JSON allows Infinity and NaN; jsonb doesn't.
+        and math.isfinite(confirmation["t"])
+        and confirmation["t"] >= 0
+    ):
+        # The teach-back the expert confirmed, and their words confirming it.
+        work_map["confirmation"] = {
+            "teach_back": redact(confirmation["teach_back"]),
+            "said": redact(confirmation["said"]),
+            "t": round(float(confirmation["t"]), 2),
+        }
+    # Recorded again from a confirmed map: what would change on it, so the debrief asks only
+    # about that, and the confirmed result is kept for someone to apply to that map.
+    living: Optional[Dict[str, Any]] = None
+    if parent is not None and parent.get("status") == "confirmed":
+        try:
+            living = work_map_update.update(parent, work_map)
+        except Exception as e:
+            logger.warning(f"Couldn't update Work Map {parent_id} from session {session_id}: {e}")
+    if living is not None and not final:
+        # Kept questions first, then what changed, then the draft's own gaps.
+        work_map["open_questions"] = follow_ups.lead_with(pending, living["map"]["open_questions"])
+    elif pending and not final:
+        work_map["open_questions"] = follow_ups.lead_with(pending, work_map["open_questions"])
     try:
         work_map_store.save_map(session_id, work_map, "confirmed" if final else "draft")
     except Exception as e:
         raise _store_unavailable(e)
-    return {**work_map, "brief": brief_for_agent(work_map), "summary": work_map_edit.summary_for_agent(work_map)}
+    if pending and final:
+        # The debrief asked what its saved draft listed; anything kept later stays pending.
+        asked = session.get("open_questions") or []
+        now = datetime.now(timezone.utc)
+        try:
+            for c in follow_ups.delivered(pending, asked, session_id, now):
+                work_map_store.add_capture(parent_id, c)
+        except Exception as e:
+            # The new map is saved; the questions are asked again next time at worst.
+            logger.error(f"Couldn't mark follow-up questions delivered on {parent_id}: {e}")
+    if living is not None and final:
+        now = datetime.now(timezone.utc)
+        try:
+            kept = living_map.capture(parent_id, parent, living, now)
+            if not work_map_store.add_capture(session_id, kept):
+                raise LookupError("the session is gone")
+        except Exception as e:
+            # The session's own map is saved; there is just no update to apply.
+            logger.error(f"Couldn't keep the update for Work Map {parent_id} on {session_id}: {e}")
+            living = None
+    response = {
+        **work_map,
+        "brief": brief_for_agent(work_map),
+        "summary": work_map_edit.summary_for_agent(work_map),
+    }
+    if living is not None:
+        response["living_update"] = {"parent_work_map_id": parent_id, "changes": living["changes"]}
+    return response
 
 
 def _saved_map(session_id: str) -> Dict[str, Any]:
@@ -328,6 +445,35 @@ def get_work_map(work_map_id: str):
     return _with_moments(work_map_id, work_map, events, segments)
 
 
+def _stored_map(work_map_id: str) -> Dict[str, Any]:
+    work_map_id = _uuid(work_map_id, "Work Map")
+    try:
+        work_map = work_map_store.get(work_map_id)
+    except Exception as e:
+        raise _store_unavailable(e) from e
+    if work_map is None:
+        raise HTTPException(status_code=404, detail="Work Map not found")
+    return work_map
+
+
+@router.get("/work_maps/{work_map_id}/agent.md")
+def get_agent_markdown(work_map_id: str):
+    """The Work Map as a Markdown system prompt another agent can load, as a download."""
+    work_map = _stored_map(work_map_id)
+    name = agent_export.filename(work_map)
+    return PlainTextResponse(
+        agent_export.to_markdown(work_map),
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )
+
+
+@router.get("/work_maps/{work_map_id}/agent.json")
+def get_agent_json(work_map_id: str):
+    """The same instructions as structured JSON, for tool-using agents."""
+    return agent_export.to_json(_stored_map(work_map_id))
+
+
 def _with_moments(
     session_id: str,
     work_map: Dict[str, Any],
@@ -340,6 +486,9 @@ def _with_moments(
     windows = recordings.item_windows(work_map)
     for item in [*(work_map.get("steps") or []), *(work_map.get("guardrails") or [])]:
         if not isinstance(item, dict):
+            continue
+        if item.get("from_session"):
+            # Applied from a repeat session: its "at" is a moment of that recording, not this one.
             continue
         moment = by_time.get(item.get("at"))
         if moment:

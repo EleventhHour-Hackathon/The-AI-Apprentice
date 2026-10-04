@@ -20,12 +20,23 @@ class EditError(Exception):
 
 
 def _normalize(work_map: Dict[str, Any]) -> Dict[str, Any]:
-    """Maps saved before ids existed (imported JSON) get s1.. / g1.. and a step title."""
+    """Maps saved before ids existed (imported JSON) get s1.. / g1.. and a step title.
+
+    An id-less item gets its position (s3) unless another item already has that id; then it
+    gets the next number above every id taken, so ids stay unique. Existing ids never change.
+    """
     for prefix, key in (("s", "steps"), ("g", "guardrails")):
-        for n, item in enumerate(work_map.get(key) or [], 1):
+        items = work_map.get(key) or []
+        taken = {str(item["id"]) for item in items if item.get("id")}
+        for n, item in enumerate(items, 1):
             item.setdefault("id", None)
             if not item["id"]:
-                item["id"] = f"{prefix}{n}"
+                new_id = f"{prefix}{n}"
+                if new_id in taken:
+                    numbers = [int(t[1:]) for t in taken if t[1:].isdigit()]
+                    new_id = f"{prefix}{max(numbers, default=0) + 1}"
+                item["id"] = new_id
+                taken.add(new_id)
             if key == "steps" and not item.get("title"):
                 item["title"] = item.get("step") or ""
     return work_map

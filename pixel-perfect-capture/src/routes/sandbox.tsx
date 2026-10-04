@@ -1,6 +1,14 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { RotateCcw } from "lucide-react";
+import { Bot, RotateCcw } from "lucide-react";
+import type { ForYou } from "@/lib/autopilot";
+import {
+  applyPlan,
+  decideRemote,
+  fetchAgentExport,
+  runAutopilot,
+  type Log,
+} from "@/lib/autopilot-api";
 import {
   APPROVERS,
   COST_CENTERS,
@@ -12,7 +20,18 @@ import {
   type Invoice,
   type Status,
 } from "@/lib/sandbox";
+import {
+  NO_SIGNALS,
+  applyMessage,
+  decideConfirm,
+  isHeld,
+  isWatching,
+  subscribeHold,
+  type HoldMessage,
+  type TutorSignals,
+} from "@/lib/tutor-hold";
 import { cn } from "@/lib/utils";
+import { fetchWorkMaps, type WorkMapSummary } from "@/lib/work-maps";
 
 export const Route = createFileRoute("/sandbox")({
   head: () => ({ meta: [{ title: "Ledgerly · Accounts payable" }] }),
@@ -20,7 +39,6 @@ export const Route = createFileRoute("/sandbox")({
 });
 
 type SetName = keyof typeof DATASETS;
-type Log = { at: string; text: string };
 type Saved = { invoices: Invoice[]; log: Log[] };
 type Dialog = { kind: "post" | "hold" | "approval"; choice: string } | null;
 
@@ -47,6 +65,11 @@ function Sandbox() {
   const [data, setData] = useState<Saved>(() => fresh("expert"));
   const [selected, setSelected] = useState("");
   const [dialog, setDialog] = useState<Dialog>(null);
+  // When the dialog opened, and since when a pressed confirm waits for the tutor's check.
+  const [openedAt, setOpenedAt] = useState(0);
+  const [waitingSince, setWaitingSince] = useState<number | null>(null);
+  const tutor = useTutorSignals(waitingSince !== null);
+  const hold = tutor.hold;
 
   // ?set=newhire opens the new hire's practice set; work is kept per set across reloads.
   useEffect(() => {
@@ -78,10 +101,142 @@ function Sandbox() {
     const next = fresh(set);
     setData(next);
     setSelected(next.invoices[0]?.id ?? "");
+    setAutopilot(null);
   };
 
+  // Autopilot: the backend's agent posts the routine invoices against a confirmed Work Map and
+  // hands the rest to a person. The ERP itself applies none of the expert's rules.
+  const [maps, setMaps] = useState<WorkMapSummary[] | null>(null);
+  const [mapsError, setMapsError] = useState<string | null>(null);
+  const [mapId, setMapId] = useState("");
+  const [running, setRunning] = useState(false);
+  const [checking, setChecking] = useState<string | null>(null);
+  const [autopilot, setAutopilot] = useState<AutopilotResult | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetchWorkMaps()
+      .then((all) => {
+        if (!live) return;
+        const confirmed = all
+          .filter((m) => m.confirmed)
+          .sort((a, b) => (b.recorded_at ?? "").localeCompare(a.recorded_at ?? ""));
+        setMaps(confirmed);
+        setMapId((id) => id || confirmed[0]?.id || "");
+      })
+      .catch((e: unknown) => {
+        if (live) setMapsError(e instanceof Error ? e.message : String(e));
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+  useEffect(() => setAutopilot(null), [set]);
+  // The run outlives the render that started it: it applies its plan to the latest invoices,
+  // and checks the latest tutor signals and practice set first.
+  const latest = useRef({ data, set, tutor });
+  useEffect(() => {
+    latest.current = { data, set, tutor };
+  });
+  const lessonLive = () => {
+    const t = latest.current.tutor;
+    const at = Date.now();
+    return isWatching(t.watchingAt, at) || isHeld(t.last, at);
+  };
+  const runAutopilotNow = async () => {
+    if (running || !mapId) return;
+    if (lessonLive()) {
+      setAutopilot({ message: "A lesson is live, so the autopilot waits.", forYou: [] });
+      return;
+    }
+    const startSet = set;
+    setRunning(true);
+    setAutopilot(null);
+    try {
+      const exp = await fetchAgentExport(mapId);
+      const remote = decideRemote(mapId);
+      const { plan, unavailable } = await runAutopilot(
+        latest.current.data.invoices,
+        exp,
+        (invoice, guardrails) => {
+          setChecking(invoice.id);
+          return remote(invoice, guardrails);
+        },
+      );
+      if (latest.current.set !== startSet) {
+        setAutopilot({ message: "The practice set changed, so nothing was posted.", forYou: [] });
+        return;
+      }
+      // An agent that dropped out partway posts nothing at all, as its message says.
+      if (unavailable) {
+        setAutopilot({
+          message: `Autopilot unavailable: ${unavailable}`,
+          unavailable: true,
+          forYou: [],
+        });
+        return;
+      }
+      if (lessonLive()) {
+        setAutopilot({
+          message: "A lesson started, so the autopilot posted nothing.",
+          forYou: plan.forYou,
+        });
+        return;
+      }
+      const current = latest.current.data;
+      const applied = applyPlan(current.invoices, plan, now());
+      if (applied.log.length) {
+        const next = { invoices: applied.invoices, log: [...applied.log, ...current.log] };
+        latest.current = { ...latest.current, data: next };
+        save(next);
+      }
+      const posted = applied.log.length;
+      setAutopilot({
+        message: `Autopilot posted ${posted} invoice${posted === 1 ? "" : "s"}. ${plan.forYou.length} left for you.`,
+        forYou: plan.forYou,
+      });
+    } catch (e) {
+      setAutopilot({
+        message: `Autopilot stopped: ${e instanceof Error ? e.message : String(e)} Nothing was posted.`,
+        unavailable: true,
+        forYou: [],
+      });
+    } finally {
+      setChecking(null);
+      setRunning(false);
+    }
+  };
+  const lessonBlocks = tutor.watchingAt !== null || !!hold;
+
+  // The tutor reacts to the screen a few seconds late, so while a lesson is live a confirm waits
+  // for its check of the dialog's screen (or a hold) before saving; see decideConfirm.
+  const decide = (confirmedAt: number) =>
+    decideConfirm({
+      now: Date.now(),
+      openedAt,
+      confirmedAt,
+      last: tutor.last,
+      watchingAt: tutor.watchingAt,
+      checkedSeen: tutor.checkedSeen,
+    });
   const confirm = () => {
-    if (!invoice || !dialog) return;
+    if (!invoice || !dialog || hold || waitingSince !== null) return;
+    const now = Date.now();
+    const next = decide(now);
+    if (next === "save") commit();
+    else if (next === "wait") setWaitingSince(now);
+  };
+  // No deps on purpose: re-check the waiting confirm on every render (R-14).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (waitingSince === null) return;
+    const next = decide(waitingSince);
+    if (next === "wait") return;
+    setWaitingSince(null);
+    if (next === "save") commit();
+  });
+
+  const commit = () => {
+    if (!invoice || !dialog || isHeld(tutor.last, Date.now())) return;
     const cc = COST_CENTERS.find((c) => c.code === invoice.costCenter);
     if (dialog.kind === "post")
       update(
@@ -126,8 +281,50 @@ function Sandbox() {
           >
             <RotateCcw size={12} /> Reset
           </button>
+          <span className="ml-3 text-slate-400">Work Map</span>
+          {maps && maps.length === 0 ? (
+            <span className="text-slate-300">No confirmed Work Map yet</span>
+          ) : (
+            <select
+              value={mapId}
+              onChange={(e) => setMapId(e.target.value)}
+              disabled={!maps || running}
+              aria-label="Work Map for the autopilot"
+              className="max-w-56 truncate rounded bg-slate-700 px-2 py-1 text-white"
+            >
+              {!maps && <option value="">{mapsError ? "Unavailable" : "Loading…"}</option>}
+              {maps?.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.task || "Untitled task"}
+                  {m.recorded_at ? ` · ${m.recorded_at.slice(0, 10)}` : ""}
+                </option>
+              ))}
+            </select>
+          )}
+          <button
+            onClick={() => void runAutopilotNow()}
+            disabled={running || !mapId || lessonBlocks}
+            title={
+              lessonBlocks
+                ? "Not while a lesson is live"
+                : "Post the routine invoices and hand the judgment calls to you"
+            }
+            className="flex items-center gap-1 rounded bg-sky-600 px-2.5 py-1 font-medium text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-sky-600"
+          >
+            <Bot size={13} /> Autopilot
+          </button>
         </div>
       </header>
+
+      {(running || mapsError || autopilot) && (
+        <AutopilotPanel
+          checking={running ? (checking ?? "") : null}
+          mapsError={mapsError}
+          result={autopilot}
+          selected={selected}
+          onSelect={setSelected}
+        />
+      )}
 
       <div className="flex min-h-0 flex-1">
         <aside className="w-72 shrink-0 border-r bg-white">
@@ -162,14 +359,16 @@ function Sandbox() {
           <main className="min-w-0 flex-1 overflow-y-auto p-6">
             <InvoiceView
               invoice={invoice}
+              hold={hold}
               onChange={(patch) => update(patch)}
-              onAction={(kind) =>
+              onAction={(kind) => {
+                setOpenedAt(Date.now());
                 setDialog({
                   kind,
                   choice:
                     kind === "hold" ? HOLD_REASONS[0]! : kind === "approval" ? APPROVERS[0]! : "",
-                })
-              }
+                });
+              }}
             />
             <section className="mt-6 max-w-4xl">
               <h3 className="mb-2 text-[12px] font-medium uppercase tracking-wide text-slate-500">
@@ -200,12 +399,125 @@ function Sandbox() {
         <ConfirmDialog
           dialog={dialog}
           invoice={invoice}
+          hold={hold}
+          checking={waitingSince !== null}
           onChoice={(choice) => setDialog({ ...dialog, choice })}
-          onCancel={() => setDialog(null)}
+          onCancel={() => {
+            setWaitingSince(null);
+            setDialog(null);
+          }}
           onConfirm={confirm}
         />
       )}
     </div>
+  );
+}
+
+type AutopilotResult = { message: string; unavailable?: boolean; forYou: ForYou[] };
+
+/** What the autopilot is doing, what it posted, and the invoices it left for a person. */
+function AutopilotPanel({
+  checking,
+  mapsError,
+  result,
+  selected,
+  onSelect,
+}: {
+  /** The invoice being checked ("" before the first), or null when not running. */
+  checking: string | null;
+  mapsError: string | null;
+  result: AutopilotResult | null;
+  selected: string;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <section className="shrink-0 border-b bg-white px-5 py-3">
+      {checking !== null ? (
+        <p role="status" className="text-slate-600">
+          {checking ? `Autopilot is checking invoice ${checking}…` : "Autopilot is starting…"}
+        </p>
+      ) : (
+        mapsError &&
+        !result && (
+          <p role="status" className="text-slate-600">
+            Couldn’t load the Work Maps: {mapsError}
+          </p>
+        )
+      )}
+      {checking === null && result && (
+        <p
+          role="status"
+          className={cn(
+            result.unavailable
+              ? "rounded border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900"
+              : "text-slate-700",
+          )}
+        >
+          {result.message}
+        </p>
+      )}
+      {checking === null && result && result.forYou.length > 0 && (
+        <div className="mt-2">
+          <h2 className="mb-1 text-[12px] font-medium uppercase tracking-wide text-slate-500">
+            For you
+          </h2>
+          <ul className="space-y-1">
+            {result.forYou.map((f) => (
+              <li key={f.invoiceId}>
+                <button
+                  onClick={() => onSelect(f.invoiceId)}
+                  className={cn(
+                    "w-full rounded border px-3 py-2 text-left hover:bg-slate-50",
+                    f.invoiceId === selected && "border-sky-300 bg-sky-50 hover:bg-sky-50",
+                  )}
+                >
+                  <span className="font-medium">Invoice {f.invoiceId}</span>
+                  {f.rule && <span className="text-slate-700"> · {f.rule}</span>}
+                  {f.askWhom && <span className="text-slate-500"> · Ask {f.askWhom}</span>}
+                  {f.expertWords && (
+                    <span className="block italic text-slate-600">“{f.expertWords}”</span>
+                  )}
+                  <span className="block text-slate-600">Why: {f.why}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/**
+ * What the tutor's pill (another window of this app) says: whether a lesson is live, the newest
+ * frame it has checked, and its open flags while it has stepped in on a wrong decision.
+ * Ticks while a hold is open (so it lapses once the pill stops refreshing it) or while a confirm
+ * waits for the tutor.
+ */
+function useTutorSignals(waiting: boolean) {
+  const [signals, setSignals] = useState<TutorSignals>(NO_SIGNALS);
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => subscribeHold((m) => setSignals((s) => applyMessage(s, m))), []);
+  const ticking = waiting || !!signals.last?.flags.length;
+  useEffect(() => {
+    if (!ticking) return;
+    setClock(Date.now());
+    const timer = window.setInterval(() => setClock(Date.now()), 250);
+    return () => clearInterval(timer);
+  }, [ticking]);
+  return { ...signals, hold: isHeld(signals.last, clock) ? signals.last : null };
+}
+
+/** Why the save buttons are locked. */
+function HoldNote({ hold }: { hold: HoldMessage }) {
+  const what = hold.flags[hold.flags.length - 1]?.what_happened ?? "";
+  return (
+    <p
+      role="status"
+      className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900"
+    >
+      The tutor wants a word first{what && what.length <= 120 ? `: ${what}` : "."}
+    </p>
   );
 }
 
@@ -220,10 +532,12 @@ function StatusChip({ status }: { status: Status }) {
 
 function InvoiceView({
   invoice,
+  hold,
   onChange,
   onAction,
 }: {
   invoice: Invoice;
+  hold: HoldMessage | null;
   onChange: (patch: Partial<Invoice>) => void;
   onAction: (kind: "post" | "hold" | "approval") => void;
 }) {
@@ -357,23 +671,31 @@ function InvoiceView({
         )}
       </Card>
 
+      {editable && hold && (
+        <div className="mt-5">
+          <HoldNote hold={hold} />
+        </div>
+      )}
       {editable && (
         <div className="mt-5 flex gap-2">
           <button
             onClick={() => onAction("post")}
-            className="rounded bg-sky-700 px-4 py-2 font-medium text-white hover:bg-sky-800"
+            disabled={!!hold}
+            className="rounded bg-sky-700 px-4 py-2 font-medium text-white hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-sky-700"
           >
             Post invoice
           </button>
           <button
             onClick={() => onAction("hold")}
-            className="rounded border bg-white px-4 py-2 font-medium hover:bg-slate-50"
+            disabled={!!hold}
+            className="rounded border bg-white px-4 py-2 font-medium hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-white"
           >
             Hold…
           </button>
           <button
             onClick={() => onAction("approval")}
-            className="rounded border bg-white px-4 py-2 font-medium hover:bg-slate-50"
+            disabled={!!hold}
+            className="rounded border bg-white px-4 py-2 font-medium hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-white"
           >
             Send for approval…
           </button>
@@ -415,12 +737,17 @@ function Field({ label, value }: { label: string; value: string }) {
 function ConfirmDialog({
   dialog,
   invoice,
+  hold,
+  checking,
   onChoice,
   onCancel,
   onConfirm,
 }: {
   dialog: NonNullable<Dialog>;
   invoice: Invoice;
+  hold: HoldMessage | null;
+  /** Confirm was pressed and waits for the tutor's check. */
+  checking: boolean;
   onChoice: (choice: string) => void;
   onCancel: () => void;
   onConfirm: () => void;
@@ -468,13 +795,25 @@ function ConfirmDialog({
             ))}
           </select>
         )}
+        {hold ? (
+          <div className="mt-4">
+            <HoldNote hold={hold} />
+          </div>
+        ) : (
+          checking && (
+            <p role="status" className="mt-4 text-slate-500">
+              Checking with the tutor…
+            </p>
+          )
+        )}
         <div className="mt-5 flex justify-end gap-2">
           <button onClick={onCancel} className="rounded border px-4 py-2 hover:bg-slate-50">
             Cancel
           </button>
           <button
             onClick={onConfirm}
-            className="rounded bg-sky-700 px-4 py-2 font-medium text-white hover:bg-sky-800"
+            disabled={!!hold || checking}
+            className="rounded bg-sky-700 px-4 py-2 font-medium text-white hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-sky-700"
           >
             {dialog.kind === "post" ? "Post" : dialog.kind === "hold" ? "Hold" : "Send"}
           </button>
