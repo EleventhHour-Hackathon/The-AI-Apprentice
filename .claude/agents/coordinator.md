@@ -58,8 +58,10 @@ Input: the current `docs/PROGRESS.md` (run by `progress-auditor`) and the board.
    shape, prop names), written out exactly, so both sides build against the same thing.
    ```
 
-4. Reply with the three briefs exactly as written, each labelled with the implementer to dispatch it
-   to, ready to paste in as a prompt.
+4. Also write each full brief to `.claude/board/briefs/round-<N>-implementer-<1|2|3>.md` (main
+   checkout; create the folder if needed), then reply with a short summary: the three picks, the
+   file each brief is in, and anything the main session must know. The main session points each
+   implementer at its brief file instead of pasting it.
 
 ## Job 2: review
 
