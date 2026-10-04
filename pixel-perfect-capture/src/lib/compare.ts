@@ -35,21 +35,6 @@ export function pickerGroups(maps: WorkMapSummary[], aId: string | undefined) {
   return { sameTask: same, otherTasks: others.filter((m) => !same.includes(m)) };
 }
 
-/** Why the diff couldn't be loaded, from the response status and its `detail`. */
-export function diffError(status: number, detail: unknown): string {
-  if (status === 404) {
-    if (detail === "Work Map a not found") return "Session A no longer exists. Pick another one.";
-    if (detail === "Work Map b not found") return "Session B no longer exists. Pick another one.";
-    return "That isn’t a Work Map id.";
-  }
-  if (status === 422)
-    return Array.isArray(detail)
-      ? "The compare link is incomplete."
-      : "Pick two different sessions.";
-  if (status === 503) return "Work Map storage (Supabase) is unavailable.";
-  return `The backend answered ${status}.`;
-}
-
 /** The expert's words for an item: the English translation, else the quote, else the reason. */
 export const words = (w: Partial<DiffWords> | null | undefined) =>
   w?.quote_translation || w?.quote || w?.reason || "";
@@ -76,13 +61,52 @@ const number = (v: string) =>
     ? Number(v).toLocaleString("en-US", { maximumFractionDigits: 20 })
     : v;
 
-/** One side's value of a differing field, as words. */
-export function fieldValue(field: string, v: unknown): string {
+const list = <T>(v: T[] | null | undefined): T[] => (Array.isArray(v) ? v : []);
+
+/** One side's step titles and rule texts by id. */
+export type Labels = { steps: Record<string, string>; guardrails: Record<string, string> };
+
+const labelId = (v: unknown) => (v === null || v === undefined || v === "" ? "-" : String(v));
+
+/**
+ * One side's step titles and rule texts by id, from every list in the diff, as the backend's
+ * diff_questions._labels does. Blank titles and the id "-" are left out.
+ */
+export function labels(diff: Partial<WorkMapDiff> | null | undefined, side: "a" | "b"): Labels {
+  const out: Labels = { steps: {}, guardrails: {} };
+  for (const section of ["steps", "guardrails"] as const) {
+    const s: Partial<DiffSection> = diff?.[section] ?? {};
+    const names: Record<string, string> = {};
+    for (const m of list(s.same)) names[labelId(m?.[side])] = String(m?.title || "");
+    for (const d of list(s.differs))
+      names[labelId(d?.[side])] = String((side === "a" ? d?.title_a : d?.title_b) || "");
+    for (const o of list(side === "a" ? s.only_a : s.only_b))
+      names[labelId(o?.id)] = String(o?.title || "");
+    for (const [id, title] of Object.entries(names))
+      if (id !== "-" && title.trim()) out[section][id] = title;
+  }
+  return out;
+}
+
+// A rule text in curly quotes, cut to 60 characters with "…" when longer.
+const quoted = (text: string) => {
+  const chars = Array.from(text.trim());
+  const cut = chars.length > 60 ? `${chars.slice(0, 60).join("").trimEnd()}…` : chars.join("");
+  return `“${cut}”`;
+};
+
+/** One side's value of a differing field, as words; with that side's labels, ids become names. */
+export function fieldValue(field: string, v: unknown, names?: Labels): string {
   if (v === null || v === undefined || v === "") return "Not said";
   if (Array.isArray(v)) {
-    const items = v.map((x) => (field === "numbers" ? number(String(x)) : String(x)));
+    const items = v.map((x) => {
+      if (field === "numbers") return number(String(x));
+      const rule = field === "guardrails" ? names?.guardrails[String(x)] : undefined;
+      return rule ? quoted(rule) : String(x);
+    });
     return items.length ? items.join(", ") : "Not said";
   }
+  if (field === "step" && typeof v === "string" && names?.steps[v]) return names.steps[v];
   if (field === "judgment" && typeof v === "boolean") return v ? "Judgment call" : "Routine";
   if (field === "kind" && typeof v === "string" && v in guardLabel)
     return guardLabel[v as GuardKind];
@@ -106,9 +130,11 @@ export type CompareRow = {
   wordsB: string;
 };
 
-const list = <T>(v: T[] | null | undefined): T[] => (Array.isArray(v) ? v : []);
-
-function sectionRows(section: Partial<DiffSection> | null | undefined): CompareRow[] {
+function sectionRows(
+  section: Partial<DiffSection> | null | undefined,
+  namesA: Labels,
+  namesB: Labels,
+): CompareRow[] {
   const s = section ?? {};
   return [
     ...list(s.differs).map((d): CompareRow => ({
@@ -119,8 +145,8 @@ function sectionRows(section: Partial<DiffSection> | null | undefined): CompareR
       fields: list<DiffField>(d.fields).map((f) => ({
         field: f.field,
         label: fieldLabel(f.field),
-        a: fieldValue(f.field, f.a),
-        b: fieldValue(f.field, f.b),
+        a: fieldValue(f.field, f.a, namesA),
+        b: fieldValue(f.field, f.b, namesB),
         kind: f.kind,
       })),
       wordsA: words(d.words_a),
@@ -157,10 +183,14 @@ function sectionRows(section: Partial<DiffSection> | null | undefined): CompareR
 }
 
 /** The diff as rows per section: differences first, then items only one session has, then the same ones. */
-export const compareRows = (diff: Partial<WorkMapDiff> | null | undefined) => ({
-  steps: sectionRows(diff?.steps),
-  guardrails: sectionRows(diff?.guardrails),
-});
+export const compareRows = (diff: Partial<WorkMapDiff> | null | undefined) => {
+  const namesA = labels(diff, "a");
+  const namesB = labels(diff, "b");
+  return {
+    steps: sectionRows(diff?.steps, namesA, namesB),
+    guardrails: sectionRows(diff?.guardrails, namesA, namesB),
+  };
+};
 
 /** The questions for one side's expert; none when the backend sent no questions. */
 export const questionsFor = (

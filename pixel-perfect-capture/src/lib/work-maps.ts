@@ -1,5 +1,4 @@
 import { BACKEND_URL } from "@/lib/backend";
-import { diffError } from "@/lib/compare";
 
 // Saved by the backend (core/backend/src/services/work_map_merge.py). Maps from before the
 // merge existed have fewer fields; normalizeMap fills them in so both open the same way.
@@ -269,6 +268,21 @@ export type WorkMapDiffResponse = {
   diff: WorkMapDiff;
   questions: { a: DiffQuestion[]; b: DiffQuestion[] };
 };
+
+/** Why the diff couldn't be loaded, from the response status and its `detail`. */
+export function diffError(status: number, detail: unknown): string {
+  if (status === 404) {
+    if (detail === "Work Map a not found") return "Session A no longer exists. Pick another one.";
+    if (detail === "Work Map b not found") return "Session B no longer exists. Pick another one.";
+    return "That isn’t a Work Map id.";
+  }
+  if (status === 422)
+    return Array.isArray(detail)
+      ? "The compare link is incomplete."
+      : "Pick two different sessions.";
+  if (status === 503) return "Work Map storage (Supabase) is unavailable.";
+  return `The backend answered ${status}.`;
+}
 
 /** The difference between two Work Maps, with the questions to ask each expert (at most `limit` each). */
 export async function fetchWorkMapDiff(

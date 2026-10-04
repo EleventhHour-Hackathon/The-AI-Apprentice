@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   compareRows,
-  diffError,
   fieldValue,
+  labels,
   pickerGroups,
   questionsFor,
   sameTask,
@@ -248,6 +248,109 @@ describe("fieldValue", () => {
     expect(fieldValue("numbers", [])).toBe("Not said");
     expect(fieldValue("numbers", ["0", "2.5", "1250000"])).toBe("0, 2.5, 1,250,000");
   });
+
+  const names = {
+    steps: { s2: "Code the cost account" },
+    guardrails: {
+      g1: "Over 5,000 is capex",
+      g3: "  Ask the controller before booking anything to an account you have never used  ",
+    },
+  };
+
+  it("names a step's rules by their texts, quoted and cut to 60 characters", () => {
+    expect(fieldValue("guardrails", ["g1", "g3"], names)).toBe(
+      "“Over 5,000 is capex”, “Ask the controller before booking anything to an account you…”",
+    );
+    expect(fieldValue("guardrails", ["g1", "g9"], names)).toBe("“Over 5,000 is capex”, g9");
+    expect(fieldValue("guardrails", [], names)).toBe("Not said");
+    expect(fieldValue("guardrails", null, names)).toBe("Not said");
+  });
+
+  it("names a guardrail's step by its title", () => {
+    expect(fieldValue("step", "s2", names)).toBe("Code the cost account");
+    expect(fieldValue("step", "s7", names)).toBe("s7");
+    expect(fieldValue("step", "s2")).toBe("s2");
+    expect(fieldValue("step", null, names)).toBe("Not said");
+  });
+});
+
+describe("labels", () => {
+  it("names each side's own ids from the same, differing and one-side lists", () => {
+    expect(labels(FIXTURE.diff, "a")).toEqual({
+      steps: {
+        s1: "Open the invoice",
+        s3: "Approve the invoice for payment",
+        s2: "Code the cost account",
+      },
+      guardrails: { g1: "Equipment over 5,000 goes to capex account 0400." },
+    });
+    expect(labels(FIXTURE.diff, "b")).toEqual({
+      steps: {
+        s1: "Open the invoice",
+        s4: "Approve the invoice for payment",
+        s3: "Code the cost account",
+        s2: "Check the supplier against the approved vendor list",
+      },
+      guardrails: { g1: "Equipment over 10,000 goes to capex account 0400." },
+    });
+  });
+
+  it('skips blank titles and the id "-"', () => {
+    const diff = {
+      steps: {
+        same: [{ a: "s1", b: "s1", title: "  " }],
+        differs: [{ a: "-", b: "s2", title_a: "Lost", title_b: "Pay" }],
+        only_a: [
+          { id: "s5", title: "" },
+          { id: null, title: "No id" },
+        ],
+      },
+    } as unknown as WorkMapDiff;
+    expect(labels(diff, "a")).toEqual({ steps: {}, guardrails: {} });
+    expect(labels(diff, "b")).toEqual({ steps: { s2: "Pay" }, guardrails: {} });
+  });
+
+  it("copes with missing sections and lists", () => {
+    expect(labels(null, "a")).toEqual({ steps: {}, guardrails: {} });
+    expect(labels({}, "b")).toEqual({ steps: {}, guardrails: {} });
+    expect(labels({ steps: { same: null } } as unknown as WorkMapDiff, "a")).toEqual({
+      steps: {},
+      guardrails: {},
+    });
+  });
+});
+
+describe("compareRows with ids in fields", () => {
+  // The fixture, with a step whose rules differ and a guardrail that moved to another step.
+  const diff = structuredClone(FIXTURE.diff);
+  diff.steps.differs[0].fields.push({
+    field: "guardrails",
+    kind: "changed",
+    a: ["g1"],
+    b: [],
+  });
+  diff.guardrails.differs[0].fields.push({ field: "step", kind: "changed", a: "s2", b: "s3" });
+  const rows = compareRows(diff);
+
+  it("shows rule texts instead of guardrail ids on a step", () => {
+    const step = rows.steps.find((r) => r.kind === "differs")!;
+    expect(step.fields.find((f) => f.field === "guardrails")).toEqual({
+      field: "guardrails",
+      label: "Rules on this step",
+      a: "“Equipment over 5,000 goes to capex account 0400.”",
+      b: "Not said",
+      kind: "changed",
+    });
+  });
+
+  it("shows each side's step title instead of its step id on a guardrail", () => {
+    const guard = rows.guardrails.find((r) => r.kind === "differs")!;
+    expect(guard.fields.find((f) => f.field === "step")).toMatchObject({
+      label: "Step",
+      a: "Code the cost account",
+      b: "Code the cost account",
+    });
+  });
 });
 
 describe("words", () => {
@@ -270,32 +373,5 @@ describe("questionsFor", () => {
     expect(questionsFor({ questions: null }, "b")).toEqual([]);
     expect(questionsFor({ questions: { a: [] } }, "b")).toEqual([]);
     expect(questionsFor(null, "a")).toEqual([]);
-  });
-});
-
-describe("diffError", () => {
-  it("says which session is gone", () => {
-    expect(diffError(404, "Work Map a not found")).toBe(
-      "Session A no longer exists. Pick another one.",
-    );
-    expect(diffError(404, "Work Map b not found")).toBe(
-      "Session B no longer exists. Pick another one.",
-    );
-    expect(diffError(404, "Work Map not found")).toBe("That isn’t a Work Map id.");
-    expect(diffError(404, undefined)).toBe("That isn’t a Work Map id.");
-  });
-
-  it("tells a same-session pick from an incomplete link", () => {
-    expect(diffError(422, "Pick two different Work Maps")).toBe("Pick two different sessions.");
-    expect(diffError(422, [{ loc: ["query", "b"], msg: "Field required" }])).toBe(
-      "The compare link is incomplete.",
-    );
-  });
-
-  it("names storage trouble and any other status", () => {
-    expect(diffError(503, "Work Map storage is unavailable")).toBe(
-      "Work Map storage (Supabase) is unavailable.",
-    );
-    expect(diffError(500, null)).toBe("The backend answered 500.");
   });
 });

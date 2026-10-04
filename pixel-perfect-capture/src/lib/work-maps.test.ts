@@ -1,8 +1,50 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BACKEND_URL } from "./backend";
-import { agentExportUrl, fetchAgentInstructions, fetchWorkMapDiff, fileSlug } from "./work-maps";
+import {
+  agentExportUrl,
+  diffError,
+  fetchAgentInstructions,
+  fetchWorkMapDiff,
+  fileSlug,
+} from "./work-maps";
+import source from "./work-maps.ts?raw";
 
 const id = "6f1c2b9e-3d4a-4c5b-8e7f-0a1b2c3d4e5f";
+
+describe("work-maps imports", () => {
+  it("doesn't import lib/compare, which imports this module", () => {
+    const imports = [...source.matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1]);
+    expect(imports.length).toBeGreaterThan(0);
+    expect(imports.filter((p) => /^(@\/lib\/|\.\/)compare(\.ts)?$/.test(p))).toEqual([]);
+  });
+});
+
+describe("diffError", () => {
+  it("says which session is gone", () => {
+    expect(diffError(404, "Work Map a not found")).toBe(
+      "Session A no longer exists. Pick another one.",
+    );
+    expect(diffError(404, "Work Map b not found")).toBe(
+      "Session B no longer exists. Pick another one.",
+    );
+    expect(diffError(404, "Work Map not found")).toBe("That isn’t a Work Map id.");
+    expect(diffError(404, undefined)).toBe("That isn’t a Work Map id.");
+  });
+
+  it("tells a same-session pick from an incomplete link", () => {
+    expect(diffError(422, "Pick two different Work Maps")).toBe("Pick two different sessions.");
+    expect(diffError(422, [{ loc: ["query", "b"], msg: "Field required" }])).toBe(
+      "The compare link is incomplete.",
+    );
+  });
+
+  it("names storage trouble and any other status", () => {
+    expect(diffError(503, "Work Map storage is unavailable")).toBe(
+      "Work Map storage (Supabase) is unavailable.",
+    );
+    expect(diffError(500, null)).toBe("The backend answered 500.");
+  });
+});
 
 describe("agentExportUrl", () => {
   it("points at the Markdown and JSON exports of one Work Map", () => {
