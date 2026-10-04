@@ -10,7 +10,14 @@ the same diff always gives the same questions:
 - A matched pair that differs gives one question per side, about its most telling field; the
   other fields fold into that one, so no item is asked about twice. Both sides get a
   question with the same id, also when one of them left the field empty: the empty side is
-  asked for theirs, the other side whether theirs always holds.
+  asked for theirs, the other side whether theirs always holds. When the next field down is
+  a hard one too (numbers, rule, kind, person to ask, judgment call), one short sentence says
+  so ("The person to ask differs too.").
+- Numbers name only those that differ: with 0400 and 5,000 against 0400 and 10,000 the
+  question is about 5,000 against 10,000.
+- Rules on a step and the step a rule comes in at are named by their own text, looked up in
+  the diff itself (at most two rules, then "and N more"); without a name the question says
+  "2 rules" or "a different step" instead.
 - A step or rule only one expert has asks that expert when it is needed.
 
 Ranking, best first: a different number, a flipped rule, a different kind of rule, a
@@ -43,8 +50,11 @@ PRIORITY = {
 }
 TEXT_FIELDS = {"decision", "reason", "applies_when"}
 SECTIONS = ("guardrails", "steps")
-# Long values are cut at a word boundary near this many characters.
+# Long values are cut at a word boundary near this many characters; rule names in a list
+# shorter, and at most MAX_NAMES of them before "and N more".
 MAX_CHARS = 80
+NAME_CHARS = 50
+MAX_NAMES = 2
 
 KINDS = {
     "limit": "a hard limit",
@@ -106,6 +116,22 @@ TEMPLATES: Dict[str, Tuple[str, str, str]] = {
 }
 # Judgment reads like kind: "You treat this as a judgment call; in another session it was routine."
 TEMPLATES["judgment"] = TEMPLATES["kind"]
+# The step a rule comes in at, when the steps have titles; else TEMPLATES["step"].
+STEP_NAMED = (
+    'You tied this rule to "{mine}"; in another session it came in at "{theirs}". '
+    "Where does it come in, and why?",
+    'In another session this rule came in at "{theirs}". Where does it come in for you?',
+    'You tied this rule to "{mine}"; in another session it wasn\'t tied to one. Why there?',
+)
+
+# Said after the question when the pair's next field by priority differs as well.
+ALSO = {
+    "numbers": "The numbers differ too.",
+    "rule": "The rule reads the other way too.",
+    "kind": "The kind of rule differs too.",
+    "ask_whom": "The person to ask differs too.",
+    "judgment": "Whether it's a judgment call differs too.",
+}
 
 ONLY = {
     "steps": (
@@ -172,7 +198,23 @@ def _as_list(value: Any) -> List[Any]:
     return [] if _empty(value) else [value]
 
 
-def _say(field: str, value: Any) -> str:
+# Per section, an item id to its title (steps) or rule text (guardrails), for one side.
+Labels = Dict[str, Dict[str, str]]
+
+
+def _rules(ids: List[Any], labels: Optional[Labels]) -> str:
+    """Rules named in quotes, at most MAX_NAMES, then "and N more"; else "one rule"/"N rules"."""
+    names = (labels or {}).get("guardrails", {})
+    named = [names.get(str(i), "") for i in ids]
+    named = [trim(" ".join(n.split()).rstrip(".;:,"), NAME_CHARS) for n in named if n.strip()]
+    if not named:
+        return "one rule" if len(ids) == 1 else f"{len(ids)} rules"
+    shown = [f'"{n}"' for n in named[:MAX_NAMES]]
+    rest = len(ids) - len(shown)
+    return _and(shown + ([f"{rest} more"] if rest else []))
+
+
+def _say(field: str, value: Any, labels: Optional[Labels] = None) -> str:
     """A field's value the way the apprentice says it."""
     if field == "numbers":
         return _and([number(v) for v in _as_list(value)])
@@ -181,8 +223,12 @@ def _say(field: str, value: Any) -> str:
     if field == "judgment":
         return "a judgment call" if value else "routine"
     if field == "guardrails":
-        n = len(_as_list(value))
-        return "one rule" if n == 1 else f"{n} rules"
+        return _rules(_as_list(value), labels)
+    if field == "step":
+        # The step's title, or "" when it has none (the question then doesn't name it).
+        if _empty(value):
+            return ""
+        return _inner((labels or {}).get("steps", {}).get(str(value), ""))
     if isinstance(value, (list, tuple, set)):
         return trim(", ".join(str(v) for v in value))
     return _inner(value)
@@ -213,20 +259,43 @@ def _lower_first(text: str) -> str:
 
 
 def _field_question(
-    section: str, f: Dict[str, Any], mine: Any, theirs: Any, title: str, quote: str
+    section: str,
+    f: Dict[str, Any],
+    mine: Any,
+    theirs: Any,
+    title: str,
+    quote: str,
+    labels: Tuple[Optional[Labels], Optional[Labels]] = (None, None),
+    also: str = "",
 ) -> Optional[Tuple[str, str]]:
-    """The text of one side's question about one field, and the words it quotes."""
+    """The text of one side's question about one field, and the words it quotes.
+
+    labels are the asked side's and the other side's; also is a sentence said after the question.
+    """
     field = str(f.get("field") or "")
     if field not in TEMPLATES or (_empty(mine) and _empty(theirs)):
         return None
+    if field == "numbers" and not _empty(mine) and not _empty(theirs):
+        # Only the numbers that differ; a side left with none keeps its full list.
+        mine_all, theirs_all = _as_list(mine), _as_list(theirs)
+        mine = [n for n in mine_all if n not in theirs_all] or mine_all
+        theirs = [n for n in theirs_all if n not in mine_all] or theirs_all
+    said_mine, said_theirs = _say(field, mine, labels[0]), _say(field, theirs, labels[1])
     changed, mine_empty, theirs_empty = TEMPLATES[field]
+    if field == "step":
+        # Name the steps when every step the sentence mentions has a title.
+        changed = STEP_NAMED[0] if said_mine and said_theirs else changed
+        mine_empty = STEP_NAMED[1] if said_theirs else mine_empty
+        theirs_empty = STEP_NAMED[2] if said_mine else theirs_empty
     if _empty(mine):
         template = mine_empty
     elif _empty(theirs):
         template = theirs_empty
     else:
         template = changed
-    body = template.format(mine=_say(field, mine), theirs=_say(field, theirs))
+    body = template.format(mine=said_mine, theirs=said_theirs)
+    if also:
+        body = f"{body} {also}"
     # Words quoted up front would be said twice when the question is about those very words
     # (a reason): then the question names the item instead, and the body quotes them.
     if quote and quote != " ".join(str(mine or "").split()):
@@ -262,13 +331,26 @@ def _id(value: Any) -> str:
 Candidate = Tuple[Tuple[int, int, float, int], Question]
 
 
-def _differs(section: str, order: int, entry: Dict[str, Any]) -> Dict[str, Candidate]:
+def _also(rest: List[Dict[str, Any]]) -> str:
+    """The sentence for the next field down, when it is a hard one with a value on a side."""
+    for f in rest:
+        if _empty(f.get("a")) and _empty(f.get("b")):
+            continue
+        field = str(f.get("field") or "")
+        return "" if field in TEXT_FIELDS else ALSO.get(field, "")
+    return ""
+
+
+def _differs(
+    section: str, order: int, entry: Dict[str, Any], labels: Dict[str, Labels]
+) -> Dict[str, Candidate]:
     """One question per side about the pair's most telling field, keyed by side."""
     fields = [f for f in entry.get("fields") or [] if isinstance(f, dict)]
     fields.sort(key=_priority)  # stable: diff's field order breaks ties
     id_a, id_b = _id(entry.get("a")), _id(entry.get("b"))
-    for f in fields:
+    for k, f in enumerate(fields):
         out: Dict[str, Candidate] = {}
+        also = _also(fields[k + 1 :])
         for side, other in (("a", "b"), ("b", "a")):
             asked = _field_question(
                 section,
@@ -277,6 +359,8 @@ def _differs(section: str, order: int, entry: Dict[str, Any]) -> Dict[str, Candi
                 f.get(other),
                 str(entry.get(f"title_{side}") or entry.get(f"title_{other}") or ""),
                 _words(entry, f"words_{side}"),
+                (labels[side], labels[other]),
+                also,
             )
             if asked is None:
                 continue
@@ -325,13 +409,29 @@ def _only(section: str, side: str, order: int, entry: Dict[str, Any]) -> Candida
     )
 
 
+def _labels(d: Any, side: str) -> Labels:
+    """One side's step titles and rule texts by id, from every list in the diff."""
+    out: Labels = {}
+    for section in SECTIONS:
+        names: Dict[str, str] = {}
+        for entry in _list(d, section, "same"):
+            names[_id(entry.get(side))] = str(entry.get("title") or "")
+        for entry in _list(d, section, "differs"):
+            names[_id(entry.get(side))] = str(entry.get(f"title_{side}") or "")
+        for entry in _list(d, section, f"only_{side}"):
+            names[_id(entry.get("id"))] = str(entry.get("title") or "")
+        out[section] = {k: v for k, v in names.items() if k != "-" and v.strip()}
+    return out
+
+
 def questions(d: Dict[str, Any], limit: int = 5) -> Dict[str, List[Question]]:
     """For each expert, up to limit questions about where their map differs, best first."""
     found: Dict[str, List[Candidate]] = {"a": [], "b": []}
+    labels = {"a": _labels(d, "a"), "b": _labels(d, "b")}
     for section in SECTIONS:
         order = 0
         for entry in _list(d, section, "differs"):
-            for side, candidate in _differs(section, order, entry).items():
+            for side, candidate in _differs(section, order, entry, labels).items():
                 found[side].append(candidate)
             order += 1
         for side in ("a", "b"):

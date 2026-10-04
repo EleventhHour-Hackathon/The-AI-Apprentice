@@ -369,11 +369,211 @@ def test_end_to_end_two_sessions():
         "steps:s3:s3:reason",
         "steps:-:s9:only",
     ]
+    # The person to ask differs as well: one sentence after the question says so.
     assert out["a"][0]["text"] == (
         'You said "Over 10,000 I always ask Petra." You went with 10,000; '
-        "in another session it was 5,000. Which holds, and when?"
+        "in another session it was 5,000. Which holds, and when? The person to ask differs too."
     )
     assert out["b"][0]["text"] == (
         'You said "From 5,000 on I ask Petra." You went with 5,000; '
+        "in another session it was 10,000. Which holds, and when? The person to ask differs too."
+    )
+
+
+def test_numbers_name_only_those_that_differ():
+    d = _differs(
+        "guardrails",
+        "g1",
+        "g1",
+        [_field("numbers", ["0400", "5000"], ["0400", "10000"])],
+        title="Equipment over 5,000 goes to capex account 0400.",
+    )
+    out = questions(d)
+    assert out["a"][0]["text"] == (
+        'On "Equipment over 5,000 goes to capex account 0400", you went with 5,000; '
         "in another session it was 10,000. Which holds, and when?"
+    )
+    assert "you went with 10,000; in another session it was 5,000." in out["b"][0]["text"]
+    # A side with nothing of its own keeps its full list.
+    d = _differs("guardrails", "g1", "g1", [_field("numbers", ["0400", "5000"], ["5000"])])
+    out = questions(d)
+    assert out["a"][0]["text"].startswith("On this rule, you went with 0400; ")
+    assert "in another session it was 5,000." in out["a"][0]["text"]
+    assert out["b"][0]["text"].startswith("On this rule, you went with 5,000; ")
+    assert "in another session it was 0400." in out["b"][0]["text"]
+    # One side without numbers: the empty-side templates as before.
+    d = _differs("guardrails", "g1", "g1", [_field("numbers", ["5000"], None, "missing_b")])
+    out = questions(d)
+    assert out["b"][0]["text"] == (
+        "On this rule, in another session the number here was 5,000. Is there one for you?"
+    )
+
+
+def test_a_second_hard_field_adds_one_sentence():
+    d = _differs(
+        "guardrails",
+        "g1",
+        "g1",
+        [_field("ask_whom", "the controller", "Petra"), _field("numbers", ["5000"], ["10000"])],
+    )
+    out = questions(d)
+    assert out["a"][0]["field"] == out["b"][0]["field"] == "numbers"
+    assert out["a"][0]["text"] == (
+        "On this rule, you went with 5,000; in another session it was 10,000. "
+        "Which holds, and when? The person to ask differs too."
+    )
+    assert out["b"][0]["text"].endswith("Which holds, and when? The person to ask differs too.")
+    assert out["a"][0]["id"] == "guardrails:g1:g1:numbers"
+
+
+def test_no_extra_sentence_for_a_reworded_field():
+    d = _differs(
+        "steps",
+        "s2",
+        "s2",
+        [_field("decision", "Coded to capex.", "Kept opex."), _field("judgment", True, False)],
+    )
+    out = questions(d)
+    assert out["a"][0]["field"] == "judgment"
+    assert out["a"][0]["text"] == (
+        "On this step, you treat this as a judgment call; in another session it was routine. Why?"
+    )
+    d = _differs(
+        "guardrails",
+        "g1",
+        "g1",
+        [
+            _field("applies_when", "the invoice is big", None, "missing_b"),
+            _field("numbers", ["5000"], ["10000"]),
+        ],
+    )
+    assert questions(d)["a"][0]["text"].endswith("Which holds, and when?")
+
+
+def test_only_one_extra_sentence_with_three_hard_fields():
+    d = _differs(
+        "guardrails",
+        "g1",
+        "g1",
+        [
+            _field("kind", "limit", "stop_and_ask"),
+            _field("ask_whom", "the controller", "Petra"),
+            _field("numbers", ["5000"], ["10000"]),
+        ],
+    )
+    [qa] = questions(d)["a"]
+    assert qa["field"] == "numbers"
+    assert qa["text"].endswith("Which holds, and when? The kind of rule differs too.")
+    assert qa["text"].count("too.") == 1
+
+
+def _rules_on_a_step(ids_a, ids_b, rules_a):
+    d = _differs("steps", "s2", "s2", [_field("guardrails", ids_a, ids_b)], title="Code it")
+    d["guardrails"] = {
+        "same": [],
+        "differs": [],
+        "only_a": [{"id": g, "title": t, "words": _words()} for g, t in rules_a.items()],
+        "only_b": [],
+    }
+    return d
+
+
+def test_rules_on_a_step_are_named():
+    d = _rules_on_a_step(
+        ["g1", "g2"],
+        None,
+        {
+            "g1": "Equipment over 5,000 goes to capex account 0400.",
+            "g2": "Never pay an unlisted vendor.",
+        },
+    )
+    [qa] = [q for q in questions(d)["a"] if q["section"] == "steps"]
+    assert qa["text"] == (
+        'On "Code it", you had "Equipment over 5,000 goes to capex account 0400" and '
+        '"Never pay an unlisted vendor" here; in another session there were none. '
+        "Why do they matter here?"
+    )
+    [qb] = questions(d)["b"]
+    assert qb["text"] == (
+        'On "Code it", in another session "Equipment over 5,000 goes to capex account 0400" and '
+        '"Never pay an unlisted vendor" applied here. Do any apply for you?'
+    )
+
+
+def test_more_than_two_rules_and_rules_without_a_name():
+    long = "Anything over five thousand euros is a fixed asset unless it is a licence"
+    d = _rules_on_a_step(
+        ["g1", "g2", "g3"], ["g9"], {"g1": long, "g2": "Never pay an unlisted vendor", "g3": "X"}
+    )
+    [qa] = [q for q in questions(d)["a"] if q["section"] == "steps"]
+    assert qa["text"].startswith(
+        'On "Code it", you had "Anything over five thousand euros is a fixed asset...", '
+        '"Never pay an unlisted vendor" and 1 more here;'
+    )
+    [qb] = questions(d)["b"]
+    # b's rule g9 has no name anywhere in the diff: counted, not named.
+    assert qb["text"].startswith('On "Code it", you had one rule here;')
+    # A rule without a name next to named ones counts toward "N more".
+    d = _rules_on_a_step(["g1", "g7", "g2"], None, {"g1": "Rule one", "g2": "Rule two"})
+    [qa] = [q for q in questions(d)["a"] if q["section"] == "steps"]
+    assert 'you had "Rule one", "Rule two" and 1 more here;' in qa["text"]
+    d = _rules_on_a_step(["g7", "g8"], None, {})
+    [qa] = questions(d)["a"]
+    assert qa["text"].startswith('On "Code it", you had 2 rules here;')
+
+
+def _rule_on_a_step(step_a, step_b, titles_a, titles_b):
+    d = _differs("guardrails", "g1", "g1", [_field("step", step_a, step_b)], title="Ask Petra")
+    d["steps"] = {
+        "same": [],
+        "differs": [],
+        "only_a": [{"id": s, "title": t, "words": _words()} for s, t in titles_a.items()],
+        "only_b": [{"id": s, "title": t, "words": _words()} for s, t in titles_b.items()],
+    }
+    return d
+
+
+def test_the_step_a_rule_comes_in_at_is_named():
+    d = _rule_on_a_step(
+        "s2",
+        "s4",
+        {"s2": "Code the cost account"},
+        {"s4": "Approve the invoice for payment"},
+    )
+    out = questions(d)
+    [qa] = [q for q in out["a"] if q["section"] == "guardrails"]
+    assert qa["text"] == (
+        'On "Ask Petra", you tied this rule to "Code the cost account"; in another session it '
+        'came in at "Approve the invoice for payment". Where does it come in, and why?'
+    )
+    [qb] = [q for q in out["b"] if q["section"] == "guardrails"]
+    assert qb["text"] == (
+        'On "Ask Petra", you tied this rule to "Approve the invoice for payment"; in another '
+        'session it came in at "Code the cost account". Where does it come in, and why?'
+    )
+    d = _rule_on_a_step("s2", None, {"s2": "Code the cost account"}, {})
+    out = questions(d)
+    [qb] = [q for q in out["b"] if q["section"] == "guardrails"]
+    assert qb["text"] == (
+        'On "Ask Petra", in another session this rule came in at "Code the cost account". '
+        "Where does it come in for you?"
+    )
+
+
+def test_the_step_without_titles_keeps_the_old_wording():
+    d = _differs("guardrails", "g1", "g1", [_field("step", "s2", "s4")], title="Ask Petra")
+    [qa] = questions(d)["a"]
+    assert qa["text"] == (
+        'On "Ask Petra", in another session this rule came in at a different step. '
+        "Where does it come in for you, and why?"
+    )
+    # Only one side has a title: both sides keep the old wording.
+    d = _rule_on_a_step("s2", "s4", {"s2": "Code the cost account"}, {})
+    [qa] = [q for q in questions(d)["a"] if q["section"] == "guardrails"]
+    assert "a different step" in qa["text"]
+    d = _rule_on_a_step("s2", None, {}, {})
+    [qa] = [q for q in questions(d)["a"] if q["section"] == "guardrails"]
+    assert qa["text"] == (
+        'On "Ask Petra", you tied this rule to a step; in another session it wasn\'t tied to one. '
+        "Why there?"
     )
