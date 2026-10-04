@@ -40,7 +40,7 @@ const SPEC = {
   // Apprentice
   voice: oneOf(VOICES, "ivy"),
   curiosity: oneOf(["quiet", "balanced", "curious"], "balanced"),
-  minQuestions: oneOf(["2", "3", "5"], "3"),
+  minQuestions: oneOf(["3", "4", "5"], "3"),
   speakingSpeed: range(75, 125, 5, 100),
   debriefDepth: oneOf(["short", "standard", "thorough"], "standard"),
   vocabulary: list(["GL code", "3-way match", "Net 30"]),

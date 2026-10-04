@@ -152,8 +152,8 @@ function Settings() {
                 value={s.minQuestions}
                 onChange={(v) => set("minQuestions", v)}
                 options={[
-                  ["2", "At least 2"],
                   ["3", "At least 3"],
+                  ["4", "At least 4"],
                   ["5", "At least 5"],
                 ]}
               />

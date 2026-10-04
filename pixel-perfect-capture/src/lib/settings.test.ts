@@ -78,6 +78,14 @@ describe("settings storage", () => {
     expect("evil" in s).toBe(false);
   });
 
+  it("moves a stored minimum of 2 questions up to 3, and keeps 4", () => {
+    localStorage.setItem(KEY, JSON.stringify({ minQuestions: "2" }));
+    expect(loadSettings().minQuestions).toBe("3");
+    saveSettings({ minQuestions: "4" });
+    expect(loadSettings().minQuestions).toBe("4");
+    expect(JSON.parse(localStorage.getItem(KEY) ?? "{}").minQuestions).toBe("4");
+  });
+
   it("rejects a speed off the slider's steps", () => {
     localStorage.setItem(KEY, JSON.stringify({ speakingSpeed: 102 }));
     expect(loadSettings().speakingSpeed).toBe(100);

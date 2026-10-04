@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_POLICY,
   debriefStatus,
   decideFloor,
   decideWrapUp,
@@ -10,10 +11,12 @@ import {
   MAX_TEACH_BACK_REFUSALS,
   MIN_DEBRIEF_QUESTIONS,
   MIN_TEACH_BACK_WORDS,
+  policyFrom,
   teachBackStatus,
   type FloorInput,
   type WrapUpInput,
 } from "./floor";
+import { defaultSettings, type Settings } from "./settings";
 
 const MIN = 60_000;
 // Five minutes in, after a step, with everything quiet: the moment to ask.
@@ -402,5 +405,116 @@ describe("endsWithQuestion", () => {
   it("ignores empty lines", () => {
     expect(endsWithQuestion("")).toBe(false);
     expect(endsWithQuestion("   ")).toBe(false);
+  });
+});
+
+describe("policyFrom", () => {
+  const pace = (s: Partial<Pick<Settings, "curiosity" | "minQuestions" | "debriefDepth">>) =>
+    policyFrom({ ...defaultSettings(), ...s });
+
+  it("gives today's pace for the default settings", () => {
+    expect(policyFrom(defaultSettings())).toEqual(DEFAULT_POLICY);
+    expect(DEFAULT_POLICY).toEqual({
+      minLive: 3,
+      earlyGapMs: 40_000,
+      gapMs: 75_000,
+      minDebrief: 3,
+    });
+  });
+
+  it("never asks fewer than the brief's 3 live and 3 debrief questions", () => {
+    let combos = 0;
+    for (const curiosity of ["quiet", "balanced", "curious"] as const)
+      for (const minQuestions of ["3", "4", "5"] as const)
+        for (const debriefDepth of ["short", "standard", "thorough"] as const) {
+          const p = policyFrom({ curiosity, minQuestions, debriefDepth });
+          expect(p.minLive).toBeGreaterThanOrEqual(3);
+          expect(p.minLive).toBe(Number(minQuestions));
+          expect(p.minDebrief).toBeGreaterThanOrEqual(3);
+          expect(p.earlyGapMs).toBeGreaterThan(0);
+          expect(p.gapMs).toBeGreaterThan(0);
+          expect(Number.isInteger(p.earlyGapMs) && Number.isInteger(p.gapMs)).toBe(true);
+          combos++;
+        }
+    expect(combos).toBe(27);
+  });
+
+  it("maps debrief depth to 3, 3 and 5 follow-ups", () => {
+    expect(pace({ debriefDepth: "short" }).minDebrief).toBe(3);
+    expect(pace({ debriefDepth: "standard" }).minDebrief).toBe(3);
+    expect(pace({ debriefDepth: "thorough" }).minDebrief).toBe(5);
+  });
+
+  it("asks sooner when curious and later when quiet", () => {
+    const curious = pace({ curiosity: "curious" });
+    const quiet = pace({ curiosity: "quiet" });
+    expect(curious).toMatchObject({ earlyGapMs: 26_400, gapMs: 49_500 });
+    expect(quiet).toMatchObject({ earlyGapMs: 60_000, gapMs: 112_500 });
+
+    // Early: one question 30 s ago, then 45 s ago.
+    const after = (ms: number) => ({ ...ready, questionTimes: [ready.now - ms] });
+    expect(decideFloor(after(30_000), curious)).toBe("ask");
+    expect(decideFloor(after(30_000))).toBe("waiting");
+    expect(decideFloor(after(45_000))).toBe("ask");
+    expect(decideFloor(after(45_000), quiet)).toBe("waiting");
+    expect(decideFloor(after(60_000), quiet)).toBe("ask");
+
+    // After the minimum: three questions, the last 60 s ago, then 90 s ago.
+    const late = (ms: number) => ({
+      ...ready,
+      questionTimes: [ready.now - 3 * MIN, ready.now - 2 * MIN, ready.now - ms],
+    });
+    expect(decideFloor(late(60_000), curious)).toBe("ask");
+    expect(decideFloor(late(60_000))).toBe("waiting");
+    expect(decideFloor(late(90_000))).toBe("ask");
+    expect(decideFloor(late(90_000), quiet)).toBe("waiting");
+    expect(decideFloor(late(120_000), quiet)).toBe("ask");
+  });
+
+  it("keeps the early pace and asks about what they opened until 5 questions with minLive 5", () => {
+    const five = pace({ minQuestions: "5" });
+    expect(five.minLive).toBe(5);
+    const looked = { ...ready, pending: [{ at: 0, kind: "navigation" as const }] };
+    const asked = (n: number) =>
+      Array.from({ length: n }, (_, i) => ready.now - 45_000 - (n - 1 - i) * MIN);
+    // Three asked, the last 45 s ago: the default has moved on to the longer gap and to actions only.
+    expect(decideFloor({ ...ready, questionTimes: asked(3) })).toBe("waiting");
+    expect(decideFloor({ ...ready, questionTimes: asked(3) }, five)).toBe("ask");
+    expect(decideFloor({ ...looked, questionTimes: asked(3) })).toBe("quiet");
+    expect(decideFloor({ ...looked, questionTimes: asked(4) }, five)).toBe("ask");
+    // Five asked: the same as the default after three.
+    expect(decideFloor({ ...ready, questionTimes: asked(5) }, five)).toBe("waiting");
+    expect(decideFloor({ ...looked, questionTimes: asked(5) }, five)).toBe("quiet");
+  });
+
+  it("needs five debrief follow-ups when minDebrief is 5", () => {
+    const four = ["a?", "b?", "c?", "d?"];
+    expect(debriefStatus({ asked: four.slice(0, 3), gaps: [], minDebrief: 5 })).toEqual({
+      met: false,
+      remaining: 2,
+      next: [],
+    });
+    expect(debriefStatus({ asked: four, gaps: [], minDebrief: 5 }).remaining).toBe(1);
+    expect(debriefStatus({ asked: [...four, "e?"], gaps: [], minDebrief: 5 }).met).toBe(true);
+    expect(debriefStatus({ asked: four.slice(0, 3), gaps: [] }).met).toBe(true);
+  });
+
+  it("falls back to each field's default for unknown values", () => {
+    const bogus = policyFrom({
+      curiosity: "chatty",
+      minQuestions: "2",
+      debriefDepth: "toString",
+    } as unknown as Settings);
+    expect(bogus).toEqual(DEFAULT_POLICY);
+    expect(policyFrom({ ...defaultSettings(), minQuestions: "x" } as unknown as Settings)).toEqual(
+      DEFAULT_POLICY,
+    );
+    expect(
+      policyFrom({
+        ...defaultSettings(),
+        minQuestions: "1.5",
+        curiosity: "quiet",
+      } as unknown as Settings).minLive,
+    ).toBe(3);
   });
 });

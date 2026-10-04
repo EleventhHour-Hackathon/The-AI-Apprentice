@@ -11,9 +11,11 @@
  * and only after something happened on screen that a question can be about:
  * an *action* (a value changed, something saved, held or sent), or, until the
  * first few questions are asked, a document they opened. There is no upper
- * limit: the apprentice asks at least MIN_LIVE_QUESTIONS and keeps asking at
- * later pauses, spaced the way a colleague sitting next to them would.
+ * limit: the apprentice asks at least the policy's minLive (MIN_LIVE_QUESTIONS
+ * by default) and keeps asking at later pauses, spaced the way a colleague
+ * sitting next to them would. The pace comes from Settings via policyFrom.
  */
+import type { Settings } from "./settings";
 
 /** Quiet this long after the expert stops talking. */
 export const SPEECH_QUIET_MS = 2500;
@@ -60,19 +62,66 @@ export type FloorInput = {
  */
 export type Floor = "talking" | "busy" | "reading" | "waiting" | "quiet" | "ask";
 
-export function decideFloor(f: FloorInput): Floor {
+/** How often the apprentice asks: the floor's numbers, from Settings or the defaults. */
+export type FloorPolicy = {
+  minLive: number;
+  earlyGapMs: number;
+  gapMs: number;
+  minDebrief: number;
+};
+
+/** Follow-up questions the apprentice asks in the debrief before the teach-back. */
+export const MIN_DEBRIEF_QUESTIONS = 3;
+
+export const DEFAULT_POLICY: FloorPolicy = {
+  minLive: MIN_LIVE_QUESTIONS,
+  earlyGapMs: EARLY_QUESTION_GAP_MS,
+  gapMs: QUESTION_GAP_MS,
+  minDebrief: MIN_DEBRIEF_QUESTIONS,
+};
+
+/** Curiosity scales the gaps between live questions: shorter gaps, more questions. */
+const GAP_SCALE: Record<Settings["curiosity"], number> = { quiet: 1.5, balanced: 1, curious: 0.66 };
+// The brief's floor is 3 debrief follow-ups, and "standard" keeps today's 3.
+const DEBRIEF_MIN: Record<Settings["debriefDepth"], number> = {
+  short: 3,
+  standard: 3,
+  thorough: 5,
+};
+
+/**
+ * The question pace for the Settings choices. Unknown values fall back to that field's default,
+ * and the live and debrief minimums never drop below the brief's 3.
+ */
+export function policyFrom(
+  s: Pick<Settings, "curiosity" | "minQuestions" | "debriefDepth">,
+): FloorPolicy {
+  const scale = Object.hasOwn(GAP_SCALE, s.curiosity) ? GAP_SCALE[s.curiosity] : 1;
+  const debrief = Object.hasOwn(DEBRIEF_MIN, s.debriefDepth)
+    ? DEBRIEF_MIN[s.debriefDepth]
+    : MIN_DEBRIEF_QUESTIONS;
+  const live = Number(s.minQuestions);
+  return {
+    minLive: Math.max(MIN_LIVE_QUESTIONS, Number.isInteger(live) ? live : MIN_LIVE_QUESTIONS),
+    earlyGapMs: Math.round(EARLY_QUESTION_GAP_MS * scale),
+    gapMs: Math.round(QUESTION_GAP_MS * scale),
+    minDebrief: Math.max(MIN_DEBRIEF_QUESTIONS, debrief),
+  };
+}
+
+export function decideFloor(f: FloorInput, policy: FloorPolicy = DEFAULT_POLICY): Floor {
   if (f.speaking || f.now - f.lastSpeechAt < SPEECH_QUIET_MS) return "talking";
   if (f.now - f.lastActivityAt < SCREEN_QUIET_MS) return "busy";
   const last = f.pending.at(-1);
   if (last?.kind === "navigation" && f.now - last.at < READING_MS) return "reading";
-  const early = f.questionTimes.length < MIN_LIVE_QUESTIONS;
+  const early = f.questionTimes.length < policy.minLive;
   const worthAsking = f.pending.some((e) => e.kind === "action") || (early && f.pending.length > 0);
   if (f.agentSpeaking || !worthAsking) return "quiet";
 
   const lastQuestion = f.questionTimes.at(-1) ?? -Infinity;
   if (
     f.now - f.observingSince < FIRST_QUESTION_AFTER_MS ||
-    f.now - lastQuestion < (early ? EARLY_QUESTION_GAP_MS : QUESTION_GAP_MS) ||
+    f.now - lastQuestion < (early ? policy.earlyGapMs : policy.gapMs) ||
     f.now - f.lastPauseAt < PAUSE_RETRY_MS
   )
     return "waiting";
@@ -125,12 +174,10 @@ export function decideWrapUp(w: WrapUpInput): "wait" | "ask" | "finish" {
 /*
  * The debrief and the teach-back, after the task: the agent decides when it moves on, but the
  * pill checks it first. start_teach_back is refused until the apprentice has asked at least
- * MIN_DEBRIEF_QUESTIONS follow-ups, and confirm_work_map until it has explained the task back
- * and the expert has answered.
+ * the policy's minDebrief follow-ups (MIN_DEBRIEF_QUESTIONS by default), and confirm_work_map
+ * until it has explained the task back and the expert has answered.
  */
 
-/** Follow-up questions the apprentice asks in the debrief before the teach-back. */
-export const MIN_DEBRIEF_QUESTIONS = 3;
 /** The teach-back has to explain the task, not just say "got it": at least this many words. */
 export const MIN_TEACH_BACK_WORDS = 25;
 
@@ -178,18 +225,20 @@ export type DebriefStatus = {
 
 /**
  * asked: the apprentice's debrief questions so far; gaps: the draft Work Map's open questions;
- * refusals: start_teach_back calls refused so far this session.
+ * refusals: start_teach_back calls refused so far this session; minDebrief: follow-ups required.
  */
 export function debriefStatus({
   asked,
   gaps,
   refusals = 0,
+  minDebrief = DEFAULT_POLICY.minDebrief,
 }: {
   asked: string[];
   gaps: string[];
   refusals?: number;
+  minDebrief?: number;
 }): DebriefStatus {
-  const remaining = Math.max(0, MIN_DEBRIEF_QUESTIONS - asked.length);
+  const remaining = Math.max(0, minDebrief - asked.length);
   const next = gaps.filter((g) => g.trim() && !alreadyAsked(g, asked)).slice(0, remaining);
   return { met: remaining === 0 || refusals >= MAX_TEACH_BACK_REFUSALS, remaining, next };
 }
