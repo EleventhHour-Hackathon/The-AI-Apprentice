@@ -8,6 +8,7 @@ from src.core.config import Config
 from src.router.path_router import router
 from src.router import tutor_kb_router
 from src.router import work_map_diff_router
+from src.router import follow_ups_router
 from src.services import privacy, recordings
 from storage import work_maps as work_map_store
 from src.utils.logger import intercept_standard_logging, logger
@@ -40,6 +41,7 @@ async def root():
 app.include_router(router)
 app.include_router(tutor_kb_router.router)
 app.include_router(work_map_diff_router.router)
+app.include_router(follow_ups_router.router)
 
 
 @app.on_event("startup")

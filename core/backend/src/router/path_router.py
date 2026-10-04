@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 
 from src.services import agent_export, apprentice_agent, recordings, tutor
 from src.services.screen_vision import get_backend as get_vision_backend, log_frame
-from src.services import live_questions, work_map_edit, work_map_links
+from src.services import follow_ups, live_questions, work_map_edit, work_map_links
 from src.services.privacy import redact, redact_deep
 from src.services.work_map_merge import brief_for_agent, merge
 from src.utils.logger import logger
@@ -148,6 +148,10 @@ def set_task(session_id: str, payload: dict = Body(...)):
 @router.post("/sessions/{session_id}/capture")
 def add_capture(session_id: str, payload: dict = Body(...)):
     """Something the agent recorded live through a client tool (record_step, record_guardrail, ...)."""
+    # Follow-up questions have their own endpoints, so a client tool can't forge them.
+    reserved = (follow_ups.QUESTION, follow_ups.WITHDRAWN, follow_ups.DELIVERED, follow_ups.PARENT)
+    if payload.get("kind") in reserved:
+        raise HTTPException(status_code=422, detail="That kind of capture can't be recorded here")
     try:
         found = work_map_store.add_capture(_uuid(session_id), redact_deep(payload))
     except HTTPException:
@@ -226,8 +230,10 @@ async def merge_session(session_id: str, payload: dict = Body(...)):
             task=session.get("task"),
             events=events,
             transcript=transcript,
-            # Live questions are the apprentice's, not what it learned; the transcript has them.
-            captures=[c for c in session.get("captures") or [] if c.get("kind") != "live_question"],
+            # Live questions are the apprentice's and follow-up questions belong to the expert's
+            # next session, so neither is what the apprentice learned; the transcript has the live
+            # ones.
+            captures=follow_ups.for_merge(session.get("captures") or []),
             final=final,
         )
     except Exception as e:
