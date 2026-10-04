@@ -76,33 +76,6 @@
     onScroll();
   }
 
-  // Try it: switch between the embedded apps. Panels are hidden, not reloaded, so each app keeps
-  // its state when you switch back. Without JavaScript the first app shows.
-  document.querySelectorAll("[data-embed]").forEach(function (embed) {
-    var tabs = Array.prototype.slice.call(embed.querySelectorAll('[role="tab"]'));
-    function select(tab) {
-      tabs.forEach(function (t) {
-        var on = t === tab;
-        t.setAttribute("aria-selected", on ? "true" : "false");
-        t.tabIndex = on ? 0 : -1;
-        document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
-      });
-    }
-    tabs.forEach(function (tab, i) {
-      tab.addEventListener("click", function () {
-        select(tab);
-      });
-      tab.addEventListener("keydown", function (e) {
-        var next = e.key === "ArrowRight" ? i + 1 : e.key === "ArrowLeft" ? i - 1 : null;
-        if (next === null) return;
-        var target = tabs[(next + tabs.length) % tabs.length];
-        select(target);
-        target.focus();
-        e.preventDefault();
-      });
-    });
-  });
-
   document.querySelectorAll("[data-year]").forEach(function (el) {
     el.textContent = String(new Date().getFullYear());
   });
