@@ -1,18 +1,51 @@
-// Electron shell for the AI Apprentice: a normal app window, plus the voice
+// Electron shell for Tacit: a normal app window, plus the voice
 // pill floating above every other window on the desktop.
 const {
   app,
   BrowserWindow,
   desktopCapturer,
   ipcMain,
+  protocol,
   screen,
   session,
   systemPreferences,
 } = require("electron");
+const fs = require("node:fs");
 const path = require("node:path");
 
-// The UI is served by the Vite dev server (`bun run desktop` starts both).
-const APP_URL = (process.env.APP_URL || "http://localhost:8080").replace(/\/+$/, "");
+app.setName("Tacit");
+
+// In development the UI is served by the Vite dev server (`npm run desktop` starts both).
+// The installed app ships the static UI build (`npm run build:desktop`, in dist-desktop/client)
+// and serves it itself from app://tacit: no server, and one fixed origin, so what the UI keeps in
+// localStorage (the backend URL, the access key, the settings) survives restarts.
+// TACIT_STATIC=1 serves the static build in development too, to try it without packaging.
+const STATIC_DIR = path.join(__dirname, "..", "dist-desktop", "client");
+const useStatic = !process.env.APP_URL && (app.isPackaged || process.env.TACIT_STATIC === "1");
+const APP_URL = useStatic
+  ? "app://tacit"
+  : (process.env.APP_URL || "http://localhost:8081").replace(/\/+$/, "");
+if (useStatic) {
+  // A standard, secure scheme: a real origin with localStorage, fetch and CORS, and allowed to
+  // use the microphone and screen capture like https.
+  protocol.registerSchemesAsPrivileged([
+    {
+      scheme: "app",
+      privileges: {
+        standard: true,
+        secure: true,
+        supportFetchAPI: true,
+        corsEnabled: true,
+        stream: true,
+        codeCache: true,
+      },
+    },
+  ]);
+} else {
+  // Chromium only allows the mic and screen capture on https or localhost. Treat APP_URL as
+  // secure too, so the app works when its UI is served from another laptop over plain http.
+  app.commandLine.appendSwitch("unsafely-treat-insecure-origin-as-secure", APP_URL);
+}
 const PILL_WIDTH = 480;
 const PILL_MIN_HEIGHT = 96;
 const BOTTOM_GAP = 12;
@@ -20,16 +53,52 @@ const BOTTOM_GAP = 12;
 let mainWindow = null;
 let pillWindow = null;
 let pillHeight = PILL_MIN_HEIGHT;
+// Where the expert dragged the pill: the bottom centre of its window, in screen points.
+// null keeps it at the bottom centre of the primary display. The pill grows upwards from here.
+let pillAnchor = null;
+let dragFrom = null;
 
 const preload = path.join(__dirname, "preload.cjs");
+const anchorFile = () => path.join(app.getPath("userData"), "pill-position.json");
+
+function loadAnchor() {
+  try {
+    const { x, y } = JSON.parse(fs.readFileSync(anchorFile(), "utf8"));
+    if (Number.isFinite(x) && Number.isFinite(y)) pillAnchor = { x, y };
+  } catch {
+    pillAnchor = null;
+  }
+}
+
+function saveAnchor() {
+  try {
+    if (pillAnchor) fs.writeFileSync(anchorFile(), JSON.stringify(pillAnchor));
+    else fs.rmSync(anchorFile(), { force: true });
+  } catch {
+    // Only a convenience; the pill still works where it is.
+  }
+}
+
+function defaultAnchor() {
+  const { workArea } = screen.getPrimaryDisplay();
+  return { x: workArea.x + workArea.width / 2, y: workArea.y + workArea.height - BOTTOM_GAP };
+}
 
 function placePill() {
   if (!pillWindow) return;
-  const { workArea } = screen.getPrimaryDisplay();
-  const height = Math.min(pillHeight, workArea.height - BOTTOM_GAP);
+  const anchor = pillAnchor ?? defaultAnchor();
+  // Keep the whole window on the display it was dropped on, even if that display changed.
+  const { workArea } = screen.getDisplayNearestPoint({
+    x: Math.round(anchor.x),
+    y: Math.round(anchor.y),
+  });
+  const height = Math.min(pillHeight, workArea.height);
+  const clamp = (v, min, max) => Math.min(Math.max(v, min), max);
   pillWindow.setBounds({
-    x: Math.round(workArea.x + (workArea.width - PILL_WIDTH) / 2),
-    y: Math.round(workArea.y + workArea.height - height - BOTTOM_GAP),
+    x: Math.round(
+      clamp(anchor.x - PILL_WIDTH / 2, workArea.x, workArea.x + workArea.width - PILL_WIDTH),
+    ),
+    y: Math.round(clamp(anchor.y - height, workArea.y, workArea.y + workArea.height - height)),
     width: PILL_WIDTH,
     height,
   });
@@ -73,14 +142,63 @@ function createMain() {
   mainWindow = new BrowserWindow({
     width: 1100,
     height: 720,
-    title: "AI Apprentice",
+    title: "Tacit",
     webPreferences: { preload },
   });
   mainWindow.loadURL(`${APP_URL}/`);
+  mainWindow.webContents.on("did-finish-load", () =>
+    console.log(`[tacit] app window loaded ${mainWindow?.webContents.getURL()}`),
+  );
+  mainWindow.webContents.on("did-fail-load", (_event, code, description, url) =>
+    console.error(`[tacit] app window failed to load ${url}: ${description} (${code})`),
+  );
   mainWindow.on("closed", () => {
     mainWindow = null;
     app.quit();
   });
+}
+
+const MIME = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".ico": "image/x-icon",
+  ".webp": "image/webp",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".wasm": "application/wasm",
+  ".txt": "text/plain; charset=utf-8",
+  ".map": "application/json",
+};
+
+/** app://tacit/<path>: a file of the static build, or the app's page for any route (/pill, /work-maps/<id>). */
+async function serveStatic(request) {
+  const { pathname } = new URL(request.url);
+  const rel = path.normalize(decodeURIComponent(pathname)).replace(/^[/\\]+/, "");
+  let file = path.join(STATIC_DIR, rel);
+  if (file !== STATIC_DIR && !file.startsWith(STATIC_DIR + path.sep)) {
+    return new Response("Not found", { status: 404 });
+  }
+  const isFile = (f) => {
+    try {
+      return fs.statSync(f).isFile();
+    } catch {
+      return false;
+    }
+  };
+  if (!isFile(file)) {
+    // A missing asset is a 404; anything else is a route the router draws in the page.
+    if (path.extname(rel)) return new Response("Not found", { status: 404 });
+    file = path.join(STATIC_DIR, "index.html");
+  }
+  const body = await fs.promises.readFile(file);
+  const type = MIME[path.extname(file).toLowerCase()] || "application/octet-stream";
+  return new Response(body, { headers: { "content-type": type } });
 }
 
 /** Run a pill command as if it came from a click, so screen capture and audio are allowed. */
@@ -101,6 +219,28 @@ ipcMain.on("pill:resize", (_event, height) => {
   pillHeight = Math.max(PILL_MIN_HEIGHT, Math.ceil(height));
   placePill();
 });
+// Dragging: the renderer sends how far the cursor has moved since the drag began.
+ipcMain.on("pill:drag-start", () => {
+  dragFrom = pillAnchor ?? defaultAnchor();
+});
+ipcMain.on("pill:drag", (_event, dx, dy) => {
+  if (!dragFrom || !Number.isFinite(dx) || !Number.isFinite(dy)) return;
+  pillAnchor = { x: dragFrom.x + dx, y: dragFrom.y + dy };
+  placePill();
+});
+ipcMain.on("pill:drag-end", () => {
+  if (!dragFrom || !pillWindow) return;
+  dragFrom = null;
+  // Store where it actually landed, after clamping to the screen.
+  const b = pillWindow.getBounds();
+  pillAnchor = { x: b.x + b.width / 2, y: b.y + b.height };
+  saveAnchor();
+});
+ipcMain.on("pill:reset-position", () => {
+  pillAnchor = null;
+  saveAnchor();
+  placePill();
+});
 ipcMain.on("pill:interactive", (_event, interactive) => {
   pillWindow?.setIgnoreMouseEvents(!interactive, { forward: true });
 });
@@ -111,7 +251,11 @@ ipcMain.on("pill:command", (_event, command) => {
   } else if (command === "hide") pillWindow?.hide();
   else if (command === "start") commandPill("start");
   else if (command === "app") showMain();
-  else if (typeof command === "string" && command.startsWith("lesson:")) {
+  else if (typeof command === "string" && command.startsWith("open:/")) {
+    // Bring the app window forward on a page of the app, e.g. open:/work-maps/<id>.
+    mainWindow?.loadURL(`${APP_URL}${command.slice("open:".length)}`);
+    showMain();
+  } else if (typeof command === "string" && command.startsWith("lesson:")) {
     // A new hire works their own screen: get the app window out of the way.
     commandPill(command);
     mainWindow?.minimize();
@@ -132,11 +276,7 @@ function showMain() {
 }
 
 app.whenReady().then(async () => {
-  if (process.platform === "darwin") {
-    // Ask up front; macOS only lists screen recording in System Settings once the app has asked.
-    await systemPreferences.askForMediaAccess("microphone").catch(() => false);
-  }
-
+  if (useStatic) protocol.handle("app", serveStatic);
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
     callback(permission === "media" || permission === "display-capture");
   });
@@ -152,9 +292,15 @@ app.whenReady().then(async () => {
     }
   });
 
+  loadAnchor();
   screen.on("display-metrics-changed", placePill);
+  screen.on("display-removed", placePill);
   createMain();
   createPill();
+  // Show the interface before a permission prompt can delay startup.
+  if (process.platform === "darwin") {
+    void systemPreferences.askForMediaAccess("microphone").catch(() => false);
+  }
 });
 
 app.on("window-all-closed", () => app.quit());

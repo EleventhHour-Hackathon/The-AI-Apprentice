@@ -1,0 +1,12 @@
+.venv
+.env
+.env.*
+uploads
+tests
+scripts
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache
+.pre-commit-config.yaml
+setup_pre_commit.sh

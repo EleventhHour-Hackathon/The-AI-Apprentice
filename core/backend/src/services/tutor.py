@@ -28,6 +28,11 @@ def _step_title(step: Dict[str, Any]) -> str:
     return step.get("title") or step.get("step") or ""
 
 
+def _in_english(item: Dict[str, Any]) -> str:
+    """The English translation of a quote the expert gave in another language."""
+    return f' (in English: "{item["quote_translation"]}")' if item.get("quote_translation") else ""
+
+
 def work_map_text(work_map: Dict[str, Any]) -> str:
     lines = ["STEPS (in order)"]
     for i, s in enumerate(work_map.get("steps") or [], 1):
@@ -37,10 +42,17 @@ def work_map_text(work_map: Dict[str, Any]) -> str:
             line += " [judgment call]"
         if s.get("decision"):
             line += f"\n   Decision the expert made on their case: {s['decision']}"
-        if s.get("quote"):
-            line += f'\n   Expert\'s words: "{s["quote"]}"'
+        narration = s.get("quote_kind") == "narration"
+        if s.get("quote") and not narration:
+            line += f'\n   Expert\'s words: "{s["quote"]}"{_in_english(s)}'
         elif s.get("reason"):
-            line += f"\n   Reason: {s['reason']}"
+            # A reason the merge assumed (work_map_merge), not one the expert gave.
+            label = "Assumed reason" if s.get("reason_source") == "inferred" else "Reason"
+            line += f"\n   {label}: {s['reason']}"
+        if s.get("quote") and narration:
+            # What they said while doing it: context, not a reason to teach.
+            line += f'\n   Said while doing it (not a reason): "{s["quote"]}"{_in_english(s)}'
+
         lines.append(line)
     lines.append("\nGUARDRAILS")
     for i, g in enumerate(work_map.get("guardrails") or [], 1):
@@ -54,7 +66,7 @@ def work_map_text(work_map: Dict[str, Any]) -> str:
         if g.get("ask_whom"):
             line += f"\n   Ask: {g['ask_whom']}"
         if g.get("quote"):
-            line += f'\n   Expert\'s words: "{g["quote"]}"'
+            line += f'\n   Expert\'s words: "{g["quote"]}"{_in_english(g)}'
         lines.append(line)
     if len(lines) == 2:
         lines.append("(none)")
@@ -72,6 +84,8 @@ Judge only the LATEST event:
 - "fixed": it corrects one of the already-flagged problems.
 - "ok": it is a step done the way the expert does it.
 - "none": nothing to judge (opening, viewing, scrolling, or not covered by the Work Map).
+
+A confirmation or review dialog before saving, posting, approving or sending is the last moment to step in: judge the values it shows (including ones that were pre-filled and never changed) and intervene if the expert's rules say they are wrong for this case. Merely opening a record with wrong pre-filled values is "none"; the mistake is going ahead with them.
 
 Only intervene when the Work Map clearly says so; never on a hunch, and never twice for the same flagged problem.
 
@@ -157,7 +171,9 @@ def report(work_map: Dict[str, Any], attempts: List[Dict[str, Any]]) -> Dict[str
                     **entry,
                     "why": "; ".join(why) + ".",
                     "expected": caught[0].get("expected", "") if caught else step.get("decision", ""),
-                    "expert_words": step.get("quote") or step.get("reason") or "",
+                    "expert_words": (step.get("quote") if step.get("quote_kind") != "narration" else "")
+                    or step.get("reason")
+                    or "",
                 }
             )
         elif right:

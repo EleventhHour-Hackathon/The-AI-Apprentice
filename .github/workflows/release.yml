@@ -1,0 +1,179 @@
+# Build the Tacit desktop app for macOS, Windows and Linux and publish the installers as a
+# release in the PUBLIC repo GsnMithra/tacit-app, where the website's download links point:
+#   https://github.com/GsnMithra/tacit-app/releases/latest/download/<artifact>
+#
+# Runs on a pushed tag v* (e.g. `git tag v0.2.0 && git push origin v0.2.0`) or by hand from the
+# Actions tab. Keep the tag in step with "version" in pixel-perfect-capture/package.json.
+#
+# Needs, in this (private) repo's Settings > Secrets and variables > Actions:
+#   Variable  TACIT_BACKEND_URL     the hosted backend, e.g. https://tacit-backend.onrender.com
+#   Secret    PUBLIC_RELEASE_TOKEN  a fine-grained PAT with "Contents: Read and write" on
+#                                   GsnMithra/tacit-app only (the default GITHUB_TOKEN can't
+#                                   write to another repo)
+name: Release desktop app
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, e.g. v0.2.0 (empty: v + the version in package.json)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PUBLIC_REPO: GsnMithra/tacit-app
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            tag="$GITHUB_REF_NAME"
+          elif [ -n "$INPUT_TAG" ]; then
+            tag="$INPUT_TAG"
+          else
+            tag="v$(node -p "require('./pixel-perfect-capture/package.json').version")"
+          fi
+          case "$tag" in
+            v[0-9]*) ;;
+            *) echo "::error::Tag must look like v1.2.3, got '$tag'"; exit 1 ;;
+          esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Releasing $tag"
+
+  build:
+    needs: meta
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: mac
+            files: |
+              pixel-perfect-capture/release/Tacit-mac-arm64.dmg
+              pixel-perfect-capture/release/Tacit-mac-x64.dmg
+          - os: windows-latest
+            target: win
+            files: pixel-perfect-capture/release/Tacit-win-x64.exe
+          - os: ubuntu-latest
+            target: linux
+            files: pixel-perfect-capture/release/Tacit-linux-x86_64.AppImage
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: pixel-perfect-capture
+    env:
+      VITE_BACKEND_URL: ${{ vars.TACIT_BACKEND_URL }}
+      # Optional: a key built into the installers so they connect without asking (secret TACIT_ACCESS_KEY).
+      VITE_ACCESS_KEY: ${{ secrets.TACIT_ACCESS_KEY }}
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the backend URL is set
+        run: |
+          if [ -z "$VITE_BACKEND_URL" ]; then
+            echo "::error::Set the repository variable TACIT_BACKEND_URL (the hosted backend URL)."
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The project's lockfile is bun.lock. If a package-lock.json is added later, npm ci wins.
+      - uses: oven-sh/setup-bun@v2
+        if: ${{ hashFiles('pixel-perfect-capture/package-lock.json') == '' }}
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            bun install --frozen-lockfile || {
+              echo "::warning::bun.lock is out of date with package.json; installing without it. Update bun.lock."
+              bun install
+            }
+          fi
+
+      # --publish never: electron-builder would otherwise try to publish on a tag build.
+      - name: Build the installer
+        run: npm run dist:${{ matrix.target }} -- --publish never
+
+      - name: List the artifacts
+        run: ls -la release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tacit-${{ matrix.target }}
+          path: ${{ matrix.files }}
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: [meta, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish to ${{ env.PUBLIC_REPO }}
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
+          TAG: ${{ needs.meta.outputs.tag }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::Add the secret PUBLIC_RELEASE_TOKEN (a PAT with Contents: write on $PUBLIC_REPO)."
+            exit 1
+          fi
+          ls -la dist
+          files=(
+            dist/Tacit-mac-arm64.dmg
+            dist/Tacit-mac-x64.dmg
+            dist/Tacit-win-x64.exe
+            dist/Tacit-linux-x86_64.AppImage
+          )
+          for f in "${files[@]}"; do
+            [ -f "$f" ] || { echo "::error::Missing $f"; exit 1; }
+          done
+          base="https://github.com/$PUBLIC_REPO/releases/latest/download"
+          cat > notes.md <<EOF
+          Tacit $TAG
+
+          | Computer | Download |
+          |---|---|
+          | Mac, Apple silicon | [Tacit-mac-arm64.dmg]($base/Tacit-mac-arm64.dmg) |
+          | Mac, Intel | [Tacit-mac-x64.dmg]($base/Tacit-mac-x64.dmg) |
+          | Windows 10 or 11 | [Tacit-win-x64.exe]($base/Tacit-win-x64.exe) |
+          | Linux | [Tacit-linux-x86_64.AppImage]($base/Tacit-linux-x86_64.AppImage) |
+
+          The installers aren't signed yet. How to open them the first time:
+          https://gsnmithra.github.io/tacit-app/install.html#install
+          EOF
+          if gh release view "$TAG" --repo "$PUBLIC_REPO" >/dev/null 2>&1; then
+            echo "Release $TAG exists; replacing its files."
+            gh release upload "$TAG" "${files[@]}" --repo "$PUBLIC_REPO" --clobber
+            gh release edit "$TAG" --repo "$PUBLIC_REPO" --latest --notes-file notes.md
+          else
+            gh release create "$TAG" "${files[@]}" --repo "$PUBLIC_REPO" \
+              --title "Tacit $TAG" --notes-file notes.md --latest
+          fi

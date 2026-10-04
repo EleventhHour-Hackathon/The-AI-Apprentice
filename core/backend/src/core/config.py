@@ -60,6 +60,9 @@ class Config:
     SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
     # Postgres connection for Work Maps (storage/work_maps.py); server-side only.
     SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL", "")
+    # Supabase Storage for screen recordings and clips (storage/media.py); server-side only.
+    # The secret key (sb_secret_...) or the legacy service_role key; never ship it to the UI.
+    SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY", "") or os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 
     # Daily.co Configuration
     DAILY_ROOM_EXPIRY_MINUTES = 30  # Hardcoded instead of env
@@ -93,19 +96,9 @@ class Config:
     LLM_MODEL = os.getenv("LLM_MODEL", LLMModels.GPT_4_1)
 
     # CORS Configuration
-    CORS_ORIGINS = [
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "http://localhost:8010",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:8010",
-        "http://127.0.0.1:3001",
-        "http://localhost:8080",
-        "http://127.0.0.1:8080",
-        "https://recruiter.sivera.io",
-        "https://api.sivera.io",
-        "https://app.sivera.io",
-    ]  # Allow all origins in development
+    # Any origin: the desktop app (file:// or app://) and dev servers all call the backend, and
+    # access is checked with the X-Tacit-Key header (src/core/access.py), not cookies.
+    CORS_ORIGINS = ["*"]
 
     # Chat and Document Processing
     CHUNK_SIZE = 512

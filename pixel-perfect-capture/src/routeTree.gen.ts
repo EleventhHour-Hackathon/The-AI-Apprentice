@@ -10,18 +10,37 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as PillRouteImport } from './routes/pill'
+import { Route as SandboxRouteImport } from './routes/sandbox'
+import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as WorkMapsIndexRouteImport } from './routes/work-maps.index'
 import { Route as WorkMapsIdRouteImport } from './routes/work-maps.$id'
+import { Route as WorkMapsCompareRouteImport } from './routes/work-maps.compare'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ConnectRoute = ConnectRouteImport.update({
+  id: '/connect',
+  path: '/connect',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PillRoute = PillRouteImport.update({
   id: '/pill',
   path: '/pill',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SandboxRoute = SandboxRouteImport.update({
+  id: '/sandbox',
+  path: '/sandbox',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
 const WorkMapsIndexRoute = WorkMapsIndexRouteImport.update({
@@ -34,38 +53,84 @@ const WorkMapsIdRoute = WorkMapsIdRouteImport.update({
   path: '/work-maps/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const WorkMapsCompareRoute = WorkMapsCompareRouteImport.update({
+  id: '/work-maps/compare',
+  path: '/work-maps/compare',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/connect': typeof ConnectRoute
   '/pill': typeof PillRoute
+  '/sandbox': typeof SandboxRoute
+  '/settings': typeof SettingsRoute
   '/work-maps/$id': typeof WorkMapsIdRoute
+  '/work-maps/compare': typeof WorkMapsCompareRoute
   '/work-maps/': typeof WorkMapsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/connect': typeof ConnectRoute
   '/pill': typeof PillRoute
+  '/sandbox': typeof SandboxRoute
+  '/settings': typeof SettingsRoute
   '/work-maps/$id': typeof WorkMapsIdRoute
+  '/work-maps/compare': typeof WorkMapsCompareRoute
   '/work-maps': typeof WorkMapsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/connect': typeof ConnectRoute
   '/pill': typeof PillRoute
+  '/sandbox': typeof SandboxRoute
+  '/settings': typeof SettingsRoute
   '/work-maps/$id': typeof WorkMapsIdRoute
+  '/work-maps/compare': typeof WorkMapsCompareRoute
   '/work-maps/': typeof WorkMapsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/pill' | '/work-maps/$id' | '/work-maps/'
+  fullPaths:
+    | '/'
+    | '/connect'
+    | '/pill'
+    | '/sandbox'
+    | '/settings'
+    | '/work-maps/$id'
+    | '/work-maps/compare'
+    | '/work-maps/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/pill' | '/work-maps/$id' | '/work-maps'
-  id: '__root__' | '/' | '/pill' | '/work-maps/$id' | '/work-maps/'
+  to:
+    | '/'
+    | '/connect'
+    | '/pill'
+    | '/sandbox'
+    | '/settings'
+    | '/work-maps/$id'
+    | '/work-maps/compare'
+    | '/work-maps'
+  id:
+    | '__root__'
+    | '/'
+    | '/connect'
+    | '/pill'
+    | '/sandbox'
+    | '/settings'
+    | '/work-maps/$id'
+    | '/work-maps/compare'
+    | '/work-maps/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ConnectRoute: typeof ConnectRoute
   PillRoute: typeof PillRoute
+  SandboxRoute: typeof SandboxRoute
+  SettingsRoute: typeof SettingsRoute
   WorkMapsIdRoute: typeof WorkMapsIdRoute
+  WorkMapsCompareRoute: typeof WorkMapsCompareRoute
   WorkMapsIndexRoute: typeof WorkMapsIndexRoute
 }
 
@@ -78,11 +143,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/connect': {
+      id: '/connect'
+      path: '/connect'
+      fullPath: '/connect'
+      preLoaderRoute: typeof ConnectRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/pill': {
       id: '/pill'
       path: '/pill'
       fullPath: '/pill'
       preLoaderRoute: typeof PillRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sandbox': {
+      id: '/sandbox'
+      path: '/sandbox'
+      fullPath: '/sandbox'
+      preLoaderRoute: typeof SandboxRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/work-maps/': {
@@ -99,13 +185,24 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WorkMapsIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/work-maps/compare': {
+      id: '/work-maps/compare'
+      path: '/work-maps/compare'
+      fullPath: '/work-maps/compare'
+      preLoaderRoute: typeof WorkMapsCompareRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ConnectRoute: ConnectRoute,
   PillRoute: PillRoute,
+  SandboxRoute: SandboxRoute,
+  SettingsRoute: SettingsRoute,
   WorkMapsIdRoute: WorkMapsIdRoute,
+  WorkMapsCompareRoute: WorkMapsCompareRoute,
   WorkMapsIndexRoute: WorkMapsIndexRoute,
 }
 export const routeTree = rootRouteImport
