@@ -131,7 +131,7 @@ function Settings() {
                 options={VOICE_OPTIONS}
               />
             </Row>
-            <Row label="Curiosity" hint="How often it raises a question while you work." soon>
+            <Row label="Curiosity" hint="How often it raises a question while you work.">
               <Segmented
                 value={s.curiosity}
                 onChange={(v) => set("curiosity", v)}
@@ -145,7 +145,6 @@ function Settings() {
             <Row
               label="Questions during the session"
               hint="At least this many before the debrief, one of them about a guardrail."
-              soon
             >
               <Choice
                 label="Questions during the session"
@@ -169,7 +168,7 @@ function Settings() {
                 unit="%"
               />
             </Row>
-            <Row label="Debrief" hint="How deep it goes once you end the session." soon>
+            <Row label="Debrief" hint="How deep it goes once you end the session.">
               <Segmented
                 value={s.debriefDepth}
                 onChange={(v) => set("debriefDepth", v)}

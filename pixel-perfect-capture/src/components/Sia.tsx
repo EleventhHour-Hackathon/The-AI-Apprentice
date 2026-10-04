@@ -33,7 +33,7 @@ import { useApprentice, type Capture, type FlowNode } from "@/hooks/use-apprenti
 import { useScreenEvents } from "@/hooks/use-screen-events";
 import { useScreenRecording } from "@/hooks/use-screen-recording";
 import { usePrivacyShield } from "@/hooks/use-privacy-shield";
-import { MIN_DEBRIEF_QUESTIONS, type Floor } from "@/lib/floor";
+import type { Floor } from "@/lib/floor";
 import { count } from "@/lib/work-maps";
 import { desktop } from "@/lib/desktop";
 import { storedLanguage } from "@/lib/languages";
@@ -380,7 +380,7 @@ export function Sia({
             ? "Before the debrief"
             : floorLabels[voice.floor]
           : state === "debriefing" && voice.node === "debrief"
-            ? `Debrief ${Math.min(voice.debriefAsked, MIN_DEBRIEF_QUESTIONS)}/${MIN_DEBRIEF_QUESTIONS}`
+            ? `Debrief ${Math.min(voice.debriefAsked, voice.minDebrief)}/${voice.minDebrief}`
             : labels[state];
   const answer = (current?.answer ? `${current.answer} ${voice.partial}` : voice.partial).trim();
   const speechLabel = offRecord

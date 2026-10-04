@@ -5,18 +5,24 @@ import {
   debriefStatus,
   decideFloor,
   decideWrapUp,
+  DEFAULT_POLICY,
   endsWithQuestion,
   isDebriefQuestion,
   isQuestion,
+  liveQuestionsMet,
   MAX_EXPLAIN_REFUSALS,
-  MIN_DEBRIEF_QUESTIONS,
-  MIN_LIVE_QUESTIONS,
+  notYetReply,
+  pauseAsk,
+  policyFrom,
   teachBackStatus,
+  wrapUpLimit,
   type Floor,
+  type FloorPolicy,
   type ScreenKind,
 } from "@/lib/floor";
 import type { ScreenEvent } from "@/hooks/use-screen-events";
 import type { LanguageChoice } from "@/lib/languages";
+import { loadSettings } from "@/lib/settings";
 
 /** Phases of a session. The agent moves between them by calling client tools. */
 export type FlowNode = "session_start" | "observing" | "debrief" | "teach_back" | "end";
@@ -67,12 +73,14 @@ type ApprenticeState = {
   exchanges: Exchange[];
   captures: Capture[];
   liveQuestions: LiveQuestion[];
-  /** At least MIN_LIVE_QUESTIONS counted, one of them about a guardrail. */
+  /** At least the policy's minLive counted, one of them about a guardrail. */
   guardrailAsked: boolean;
   /** End was pressed before that: the apprentice is asking what is missing before the debrief. */
   wrapUp: boolean;
-  /** Follow-up questions asked in the debrief; the teach-back waits for MIN_DEBRIEF_QUESTIONS. */
+  /** Follow-up questions asked in the debrief; the teach-back waits for minDebrief of them. */
   debriefAsked: number;
+  /** Follow-ups required before the teach-back, from Settings for this session. */
+  minDebrief: number;
 };
 
 const initialState: ApprenticeState = {
@@ -93,6 +101,7 @@ const initialState: ApprenticeState = {
   guardrailAsked: false,
   wrapUp: false,
   debriefAsked: 0,
+  minDebrief: DEFAULT_POLICY.minDebrief,
 };
 
 /** After [PAUSE], how long the agent has to start asking before the floor closes again. */
@@ -112,12 +121,13 @@ const str = (value: unknown) => (typeof value === "string" ? value.trim() : "");
 type Tally = {
   asked: { kind: LiveQuestion["kind"]; deferred: boolean }[];
   guardrailCaptured: boolean;
+  policy: FloorPolicy;
 };
 /** Live questions that count: asked at a pause, not put off with Later. */
 const counted = (x: Tally) => x.asked.filter((q) => !q.deferred).length;
 const guardrailAsked = (x: Tally) =>
   x.guardrailCaptured || x.asked.some((q) => q.kind === "guardrail" && !q.deferred);
-const questionsMet = (x: Tally) => counted(x) >= MIN_LIVE_QUESTIONS && guardrailAsked(x);
+const questionsMet = (x: Tally) => liveQuestionsMet(counted(x), guardrailAsked(x), x.policy);
 
 const live = (node: FlowNode) => node === "session_start" || node === "observing";
 
@@ -221,6 +231,8 @@ export function useApprentice(options: {
     /** Refused start_teach_back calls, and "explain first" replies to confirm_work_map (see floor.ts). */
     teachBackRefusals: 0,
     explainRefusals: 0,
+    /** The question pace from Settings, read once when the session starts. */
+    policy: DEFAULT_POLICY as FloorPolicy,
   });
   const clock = useCallback(
     () => (s.current.startedAt ? (performance.now() - s.current.startedAt) / 1000 : 0),
@@ -432,20 +444,17 @@ export function useApprentice(options: {
           asked: x.debriefQuestions,
           gaps: x.gaps,
           refusals: x.teachBackRefusals,
+          minDebrief: x.policy.minDebrief,
         });
         const asked = x.debriefQuestions.length;
         if (status.met && status.remaining > 0)
           console.info(
-            `[debrief] teach-back let through after ${x.teachBackRefusals} refusals: ${asked} of ${MIN_DEBRIEF_QUESTIONS} questions counted`,
+            `[debrief] teach-back let through after ${x.teachBackRefusals} refusals: ${asked} of ${x.policy.minDebrief} questions counted`,
           );
         if (!status.met) {
           x.teachBackRefusals += 1;
-          const more = `Ask ${status.remaining} more, one at a time, waiting for each answer, then call start_teach_back.`;
-          const about = status.next.length
-            ? `Gaps still open:\n${status.next.map((g) => `- ${g}`).join("\n")}`
-            : "The gaps are covered, so ask about the edges: larger amounts, a new supplier, missing data, and who to ask when unsure.";
-          console.log(`[debrief] teach-back refused: ${asked} of ${MIN_DEBRIEF_QUESTIONS}`);
-          const reply = `Not yet: you have asked ${asked} of ${MIN_DEBRIEF_QUESTIONS} follow-up questions. Do not explain the task back yet. ${more}\n${about}`;
+          console.log(`[debrief] teach-back refused: ${asked} of ${x.policy.minDebrief}`);
+          const reply = notYetReply(asked, status, x.policy.minDebrief);
           // The agent doesn't wait for this tool's reply, so it also hears it as a message.
           conv.current?.sendUserMessage(`[NOT YET] ${reply}`);
           return reply;
@@ -559,6 +568,8 @@ export function useApprentice(options: {
     async (language: LanguageChoice = "auto") => {
       if (conv.current) return;
       const sessionId = crypto.randomUUID();
+      // Read once per session: changing Settings mid-session doesn't move the goalposts.
+      const policy = policyFrom(loadSettings());
       s.current = {
         ...s.current,
         sessionId,
@@ -592,8 +603,9 @@ export function useApprentice(options: {
         teachBackReply: null,
         teachBackRefusals: 0,
         explainRefusals: 0,
+        policy,
       };
-      setState({ ...initialState, status: "connecting" });
+      setState({ ...initialState, status: "connecting", minDebrief: policy.minDebrief });
       try {
         const { token } = await fetch(`${BACKEND_URL}/api/v1/agent/token`).then((r) => {
           if (!r.ok) throw new Error(`token request answered ${r.status}`);
@@ -740,7 +752,7 @@ export function useApprentice(options: {
     x.taskDone = true;
     if (x.wrapUp && !questionsMet(x))
       console.log(
-        `[floor] debrief with ${counted(x)} of ${MIN_LIVE_QUESTIONS} live questions, guardrail ${guardrailAsked(x) ? "asked" : "not asked"}`,
+        `[floor] debrief with ${counted(x)} of ${x.policy.minLive} live questions, guardrail ${guardrailAsked(x) ? "asked" : "not asked"}`,
       );
     x.wrapUp = false;
     setState((st) => ({ ...st, wrapUp: false }));
@@ -752,7 +764,7 @@ export function useApprentice(options: {
   /** Ask one of the questions still missing, about what the expert just did. */
   const askWrapUp = useCallback(() => {
     const x = s.current;
-    const need = MIN_LIVE_QUESTIONS - counted(x);
+    const need = x.policy.minLive - counted(x);
     const howMany =
       need > 0 ? `${need} more live question${need === 1 ? "" : "s"}` : "one more live question";
     const guardrail = guardrailAsked(x)
@@ -775,8 +787,7 @@ export function useApprentice(options: {
     const x = s.current;
     x.wrapUp = true;
     x.wrapUpPrompts = 0;
-    // One try per missing question, plus two for questions that don't count or aren't answered.
-    x.wrapUpLimit = Math.max(MIN_LIVE_QUESTIONS - counted(x), 1) + 2;
+    x.wrapUpLimit = wrapUpLimit(counted(x), x.policy);
     setState((st) => ({ ...st, wrapUp: true }));
     askWrapUp();
   }, [askWrapUp]);
@@ -881,17 +892,20 @@ export function useApprentice(options: {
         else if (next === "finish") finishWork();
         return;
       }
-      const floor = decideFloor({
-        now,
-        observingSince: x.observingSince,
-        speaking,
-        lastSpeechAt: x.lastSpeechAt,
-        lastActivityAt: x.lastActivityAt,
-        agentSpeaking: x.agentSpeaking,
-        pending: x.pending,
-        questionTimes: x.questionTimes,
-        lastPauseAt: x.lastPauseAt,
-      });
+      const floor = decideFloor(
+        {
+          now,
+          observingSince: x.observingSince,
+          speaking,
+          lastSpeechAt: x.lastSpeechAt,
+          lastActivityAt: x.lastActivityAt,
+          agentSpeaking: x.agentSpeaking,
+          pending: x.pending,
+          questionTimes: x.questionTimes,
+          lastPauseAt: x.lastPauseAt,
+        },
+        x.policy,
+      );
       setState((st) => (st.floor === floor ? st : { ...st, floor }));
       if (floor !== "ask") return;
       const steps = x.pending
@@ -903,16 +917,9 @@ export function useApprentice(options: {
       x.floorOpenUntil = now + PAUSE_GRANT_MS;
       x.grant = "pause";
       const asked = counted(x);
-      const ask =
-        asked < MIN_LIVE_QUESTIONS
-          ? `You have asked ${asked} of at least ${MIN_LIVE_QUESTIONS} questions, so ask one now, about something on screen.`
-          : "Ask one short question if one of these hides a reason, a limit or a moment to stop and ask; otherwise call skip_turn.";
-      const guardrail =
-        !guardrailAsked(x) && asked >= MIN_LIVE_QUESTIONS - 1
-          ? " No guardrail yet: make this one about a limit, an exception or when they would stop and ask someone."
-          : "";
+      const ask = pauseAsk(asked, guardrailAsked(x), x.policy);
       console.log(`[floor] pause ${asked + 1} after: ${steps}`);
-      c.sendUserMessage(`[PAUSE] The expert has stopped after: ${steps}. ${ask}${guardrail}`);
+      c.sendUserMessage(`[PAUSE] The expert has stopped after: ${steps}. ${ask}`);
     }, 400);
     return () => clearInterval(timer);
   }, [state.status, askWrapUp, finishWork]);

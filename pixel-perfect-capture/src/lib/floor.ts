@@ -128,10 +128,33 @@ export function decideFloor(f: FloorInput, policy: FloorPolicy = DEFAULT_POLICY)
   return "ask";
 }
 
+/** Enough live questions for the debrief: at least the policy's minLive, one about a guardrail. */
+export function liveQuestionsMet(asked: number, guardrail: boolean, policy = DEFAULT_POLICY) {
+  return asked >= policy.minLive && guardrail;
+}
+
+/** What to ask the agent at a pause: one question while short of minLive, then only if worth it. */
+export function pauseAsk(asked: number, guardrail: boolean, policy = DEFAULT_POLICY) {
+  const ask =
+    asked < policy.minLive
+      ? `You have asked ${asked} of at least ${policy.minLive} questions, so ask one now, about something on screen.`
+      : "Ask one short question if one of these hides a reason, a limit or a moment to stop and ask; otherwise call skip_turn.";
+  const nudge =
+    !guardrail && asked >= policy.minLive - 1
+      ? " No guardrail yet: make this one about a limit, an exception or when they would stop and ask someone."
+      : "";
+  return `${ask}${nudge}`;
+}
+
 /** In the wrap-up, this much silence after an answer before the next question (or the debrief). */
 export const WRAP_UP_QUIET_MS = 2500;
 /** In the wrap-up, how long to wait for an answer that doesn't come. */
 export const WRAP_UP_ANSWER_MS = 20_000;
+
+/** Wrap-up tries: one per missing live question, plus two for ones that don't count or aren't answered. */
+export function wrapUpLimit(asked: number, policy = DEFAULT_POLICY) {
+  return Math.max(policy.minLive - asked, 1) + 2;
+}
 
 export type WrapUpInput = {
   now: number;
@@ -241,6 +264,15 @@ export function debriefStatus({
   const remaining = Math.max(0, minDebrief - asked.length);
   const next = gaps.filter((g) => g.trim() && !alreadyAsked(g, asked)).slice(0, remaining);
   return { met: remaining === 0 || refusals >= MAX_TEACH_BACK_REFUSALS, remaining, next };
+}
+
+/** The reply to a start_teach_back refused by debriefStatus: how many are asked and what to ask next. */
+export function notYetReply(asked: number, status: DebriefStatus, minDebrief: number) {
+  const more = `Ask ${status.remaining} more, one at a time, waiting for each answer, then call start_teach_back.`;
+  const about = status.next.length
+    ? `Gaps still open:\n${status.next.map((g) => `- ${g}`).join("\n")}`
+    : "The gaps are covered, so ask about the edges: larger amounts, a new supplier, missing data, and who to ask when unsure.";
+  return `Not yet: you have asked ${asked} of ${minDebrief} follow-up questions. Do not explain the task back yet. ${more}\n${about}`;
 }
 
 /** "Is that right?" and the like: checking in, not asking about the task (English and German). */

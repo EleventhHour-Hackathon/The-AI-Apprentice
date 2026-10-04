@@ -7,12 +7,16 @@ import {
   endsWithQuestion,
   isDebriefQuestion,
   isQuestion,
+  liveQuestionsMet,
   MAX_EXPLAIN_REFUSALS,
   MAX_TEACH_BACK_REFUSALS,
   MIN_DEBRIEF_QUESTIONS,
   MIN_TEACH_BACK_WORDS,
+  notYetReply,
+  pauseAsk,
   policyFrom,
   teachBackStatus,
+  wrapUpLimit,
   type FloorInput,
   type WrapUpInput,
 } from "./floor";
@@ -516,5 +520,71 @@ describe("policyFrom", () => {
         curiosity: "quiet",
       } as unknown as Settings).minLive,
     ).toBe(3);
+  });
+});
+
+describe("the pace in what the agent is told", () => {
+  // Copied from use-apprentice.ts before the pace came from Settings: the defaults must not change them.
+  const ASK_EARLY = (n: number) =>
+    `You have asked ${n} of at least 3 questions, so ask one now, about something on screen.`;
+  const ASK_LATE =
+    "Ask one short question if one of these hides a reason, a limit or a moment to stop and ask; otherwise call skip_turn.";
+  const NUDGE =
+    " No guardrail yet: make this one about a limit, an exception or when they would stop and ask someone.";
+  const five = policyFrom({ curiosity: "balanced", minQuestions: "5", debriefDepth: "thorough" });
+
+  it("sends today's [PAUSE] text with the default pace", () => {
+    expect(pauseAsk(0, false)).toBe(ASK_EARLY(0));
+    expect(pauseAsk(1, false)).toBe(ASK_EARLY(1));
+    expect(pauseAsk(2, false)).toBe(ASK_EARLY(2) + NUDGE);
+    expect(pauseAsk(2, true)).toBe(ASK_EARLY(2));
+    expect(pauseAsk(3, false)).toBe(ASK_LATE + NUDGE);
+    expect(pauseAsk(4, true, DEFAULT_POLICY)).toBe(ASK_LATE);
+  });
+
+  it("counts to the chosen minimum and nudges for the guardrail one before it", () => {
+    expect(pauseAsk(2, false, five)).toBe(
+      "You have asked 2 of at least 5 questions, so ask one now, about something on screen.",
+    );
+    expect(pauseAsk(3, false, five)).not.toContain("No guardrail yet");
+    expect(pauseAsk(4, false, five)).toBe(
+      "You have asked 4 of at least 5 questions, so ask one now, about something on screen." +
+        NUDGE,
+    );
+    expect(pauseAsk(5, true, five)).toBe(ASK_LATE);
+  });
+
+  it("holds the debrief until the chosen minimum, with a guardrail", () => {
+    expect(liveQuestionsMet(3, true)).toBe(true);
+    expect(liveQuestionsMet(2, true)).toBe(false);
+    expect(liveQuestionsMet(5, false)).toBe(false);
+    expect(liveQuestionsMet(3, true, five)).toBe(false);
+    expect(liveQuestionsMet(4, true, five)).toBe(false);
+    expect(liveQuestionsMet(5, true, five)).toBe(true);
+    expect(liveQuestionsMet(5, false, five)).toBe(false);
+  });
+
+  it("gives the wrap-up one try per missing question plus two", () => {
+    expect([0, 1, 2, 3, 4].map((n) => wrapUpLimit(n))).toEqual([5, 4, 3, 3, 3]);
+    expect([0, 3, 4, 5, 6].map((n) => wrapUpLimit(n, five))).toEqual([7, 4, 3, 3, 3]);
+  });
+
+  it("sends today's [NOT YET] text with the default and the chosen number otherwise", () => {
+    const status = debriefStatus({ asked: ["a?"], gaps: ["Who approves a refund over 500?"] });
+    expect(notYetReply(1, status, DEFAULT_POLICY.minDebrief)).toBe(
+      "Not yet: you have asked 1 of 3 follow-up questions. Do not explain the task back yet. Ask 2 more, one at a time, waiting for each answer, then call start_teach_back.\nGaps still open:\n- Who approves a refund over 500?",
+    );
+    const covered = debriefStatus({ asked: ["a?", "b?"], gaps: [], minDebrief: five.minDebrief });
+    expect(notYetReply(2, covered, five.minDebrief)).toBe(
+      "Not yet: you have asked 2 of 5 follow-up questions. Do not explain the task back yet. Ask 3 more, one at a time, waiting for each answer, then call start_teach_back.\nThe gaps are covered, so ask about the edges: larger amounts, a new supplier, missing data, and who to ask when unsure.",
+    );
+  });
+
+  it("changes when the floor asks when Settings change the curiosity", () => {
+    const after = { ...ready, questionTimes: [ready.now - 30_000] };
+    expect(decideFloor(after, policyFrom({ ...defaultSettings(), curiosity: "curious" }))).toBe(
+      "ask",
+    );
+    expect(decideFloor(after, policyFrom(defaultSettings()))).toBe("waiting");
   });
 });
