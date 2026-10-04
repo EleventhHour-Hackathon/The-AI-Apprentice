@@ -14,6 +14,7 @@ ROOT="$(git rev-parse --show-toplevel)"
 UI="$ROOT/pixel-perfect-capture"
 BACKEND="$ROOT/core/backend"
 FAIL=0
+LOGS="$(mktemp -d /tmp/check.XXXXXX)"
 pass() { printf '  \033[32mpass\033[0m %s\n' "$*"; }
 fail() { printf '  \033[31mFAIL\033[0m %s\n' "$*"; FAIL=1; }
 
@@ -32,8 +33,8 @@ if [ ! -d "$UI/node_modules" ]; then
 fi
 
 echo "UI"
-(cd "$UI" && npm test --silent >/tmp/check-ui-test.log 2>&1) && pass "tests" || { fail "tests (see /tmp/check-ui-test.log)"; tail -30 /tmp/check-ui-test.log; }
-(cd "$UI" && npm run build --silent >/tmp/check-ui-build.log 2>&1) && pass "build" || { fail "build (see /tmp/check-ui-build.log)"; tail -30 /tmp/check-ui-build.log; }
+(cd "$UI" && npm test --silent >$LOGS/ui-test.log 2>&1) && pass "tests" || { fail "tests (see $LOGS/ui-test.log)"; tail -30 $LOGS/ui-test.log; }
+(cd "$UI" && npm run build --silent >$LOGS/ui-build.log 2>&1) && pass "build" || { fail "build (see $LOGS/ui-build.log)"; tail -30 $LOGS/ui-build.log; }
 
 count_eslint() { node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).reduce((n,f)=>n+f.errorCount,0))}catch{console.log(0)}})'; }
 for f in $(echo "$CHANGED" | grep -E '^pixel-perfect-capture/src/.*\.(ts|tsx)$' | grep -v routeTree.gen.ts); do
@@ -70,10 +71,10 @@ for f in $PY; do
   fi
 done
 if [ -n "$PY" ]; then
-  (cd "$BACKEND" && OPENAI_API_KEY="${OPENAI_API_KEY:-check}" ELEVENLABS_API_KEY="${ELEVENLABS_API_KEY:-check}" SUPABASE_DB_URL="${SUPABASE_DB_URL:-postgresql://check@localhost/check}" uv run python -c "import main" >/tmp/check-be-import.log 2>&1) && pass "backend imports" || { fail "backend imports (see /tmp/check-be-import.log)"; tail -20 /tmp/check-be-import.log; }
+  (cd "$BACKEND" && OPENAI_API_KEY="${OPENAI_API_KEY:-check}" ELEVENLABS_API_KEY="${ELEVENLABS_API_KEY:-check}" SUPABASE_DB_URL="${SUPABASE_DB_URL:-postgresql://check@localhost/check}" uv run python -c "import main" >$LOGS/be-import.log 2>&1) && pass "backend imports" || { fail "backend imports (see $LOGS/be-import.log)"; tail -20 $LOGS/be-import.log; }
 fi
 if [ -d "$BACKEND/tests" ]; then
-  (cd "$BACKEND" && uv run --with pytest --with pytest-asyncio pytest -q >/tmp/check-be-test.log 2>&1) && pass "backend tests" || { fail "backend tests (see /tmp/check-be-test.log)"; tail -30 /tmp/check-be-test.log; }
+  (cd "$BACKEND" && uv run --with pytest --with pytest-asyncio pytest -q >$LOGS/be-test.log 2>&1) && pass "backend tests" || { fail "backend tests (see $LOGS/be-test.log)"; tail -30 $LOGS/be-test.log; }
 fi
 
 [ "$FAIL" = 0 ] && echo "ALL CHECKS PASSED" || { echo "CHECKS FAILED"; exit 1; }
