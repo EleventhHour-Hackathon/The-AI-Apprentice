@@ -36,6 +36,9 @@ echo "UI"
 (cd "$UI" && npm test --silent >$LOGS/ui-test.log 2>&1) && pass "tests" || { fail "tests (see $LOGS/ui-test.log)"; tail -30 $LOGS/ui-test.log; }
 (cd "$UI" && npm run build --silent >$LOGS/ui-build.log 2>&1) && pass "build" || { fail "build (see $LOGS/ui-build.log)"; tail -30 $LOGS/ui-build.log; }
 
+# The UI lint has been clean since round 3, so it has to stay clean as a whole.
+(cd "$UI" && npm run lint --silent >"$LOGS/ui-lint.log" 2>&1) && pass "UI lint (whole project)" || { fail "UI lint (see $LOGS/ui-lint.log)"; tail -30 "$LOGS/ui-lint.log"; }
+
 count_eslint() { node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).reduce((n,f)=>n+f.errorCount,0))}catch{console.log(0)}})'; }
 for f in $(echo "$CHANGED" | grep -E '^pixel-perfect-capture/src/.*\.(ts|tsx)$' | grep -v routeTree.gen.ts); do
   [ -f "$f" ] || continue
