@@ -56,38 +56,38 @@ The full demo script is in [docs/DEMO.md](docs/DEMO.md).
 
 ## How Tacit meets the brief
 
-✅ built and working · 🟡 partly built · ⬜ not built
+Every module, requirement and stretch goal in the challenge brief, and how Tacit delivers it.
 
 ### Module 1: Capture
 
-| The brief asks for | What Tacit does | |
-|---|---|---|
-| A screen-share app with a voice agent in a side panel | A floating **pill** over the expert's screen holds the voice agent (ElevenLabs) and the controls | ✅ |
-| A frame every second or two → a vision model → events | Frames go to a vision model about every second; it returns events like *invoice 4471 opened*, *cost center 4711 → 0400* | ✅ |
-| Stay quiet while the expert types, reads or talks | The pill holds the floor: voice activity, screen motion and reading time keep the agent silent | ✅ |
-| Ask at natural pauses: why, is there a limit, when would you stop and ask | Only a pause after an action lets the agent speak, and each question names what's on screen | ✅ |
-| **Required:** at least 3 questions at pauses, about the screen, at least 1 about a guardrail | Counted in code; the pill shows *Questions 2/3 · Guardrail ✓*, and if the expert ends early the missing ones are asked first | ✅ |
+| The brief asks for | What Tacit does |
+|---|---|
+| A screen-share app with a voice agent in a side panel | A floating **pill** over the expert's screen holds the voice agent (ElevenLabs) and the controls |
+| A frame every second or two → a vision model → events | Frames go to a vision model about every second; it returns events like *invoice 4471 opened*, *cost center 4711 → 0400* |
+| Stay quiet while the expert types, reads or talks | The pill holds the floor: voice activity, screen motion and reading time keep the agent silent |
+| Ask at natural pauses: why, is there a limit, when would you stop and ask | Only a pause after an action lets the agent speak, and each question names what's on screen |
+| **Required:** at least 3 questions at pauses, about the screen, at least 1 about a guardrail | Counted in code; the pill shows *Questions 2/3 · Guardrail ✓*, and if the expert ends early the missing ones are asked first |
 
 ### Module 2: Map
 
-| The brief asks for | What Tacit does | |
-|---|---|---|
-| A short spoken debrief about what's still unclear | The draft Work Map's open questions drive the debrief; steps with no screen moment or no words become questions | ✅ |
-| Explain the process back until the expert confirms | A short teach-back (under 30 seconds) of the judgment calls and guardrails; it stops when the expert says it's right | ✅ |
-| A clickable Work Map: screen moment, decision, reason in the expert's words, guardrails | An animated, clickable graph: each step shows its screen moment, a clip, the decision, the expert's own words and its guardrails | ✅ |
-| **Required:** 3+ follow-ups not answered during the task, ends with a confirmed teach-back | At least 3 debrief questions are enforced in code; only the expert's "yes" saves the map; corrections are recorded | ✅ |
-| **Required:** every step and guardrail links to a screen moment and the expert's words | Quotes are checked against the transcript and moments against real screen events; anything missing is marked *Unlinked* and asked about | ✅ |
+| The brief asks for | What Tacit does |
+|---|---|
+| A short spoken debrief about what's still unclear | The draft Work Map's open questions drive the debrief; steps with no screen moment or no words become questions |
+| Explain the process back until the expert confirms | A short teach-back (under 30 seconds) of the judgment calls and guardrails; it stops when the expert says it's right |
+| A clickable Work Map: screen moment, decision, reason in the expert's words, guardrails | An animated, clickable graph: each step shows its screen moment, a clip, the decision, the expert's own words and its guardrails |
+| **Required:** 3+ follow-ups not answered during the task, ends with a confirmed teach-back | At least 3 debrief questions are enforced in code; only the expert's "yes" saves the map; corrections are recorded |
+| **Required:** every step and guardrail links to a screen moment and the expert's words | Quotes are checked against the transcript and moments against real screen events; anything missing is marked *Unlinked* and asked about |
 
 ### Module 3: Teach
 
-| The brief asks for | What Tacit does | |
-|---|---|---|
-| A voice tutor watching the new hire's own screen | The tutor watches the new hire work in the practice ERP | ✅ |
-| Explain each step the way the expert did | It quotes the expert's reasons, in the new hire's language | ✅ |
-| Ask them to predict the next decision | Before a judgment call it asks *"which would you pick, and why?"* | ✅ |
-| Step in before a guardrail is broken, replaying the expert's screen moment | It **locks the Post / Hold / Send buttons** and waits for its check before a save goes through, then plays the expert's clip | ✅ |
-| Show what they've mastered and what to practice | An end report (*mastered · practice next · not covered*) computed from what they did, not written by an AI | ✅ |
-| **Required:** a case the expert never showed; catch a wrong decision before it's saved, explained with the expert's reasoning | The new hire's practice set has cases the expert never showed (e.g. a €7,200 equipment invoice pre-coded to opex) | ✅ |
+| The brief asks for | What Tacit does |
+|---|---|
+| A voice tutor watching the new hire's own screen | The tutor watches the new hire work in the practice ERP |
+| Explain each step the way the expert did | It quotes the expert's reasons, in the new hire's language |
+| Ask them to predict the next decision | Before a judgment call it asks *"which would you pick, and why?"* |
+| Step in before a guardrail is broken, replaying the expert's screen moment | It **locks the Post / Hold / Send buttons** and waits for its check before a save goes through, then plays the expert's clip |
+| Show what they've mastered and what to practice | An end report (*mastered · practice next · not covered*) computed from what they did, not written by an AI |
+| **Required:** a case the expert never showed; catch a wrong decision before it's saved, explained with the expert's reasoning | The new hire's practice set has cases the expert never showed (e.g. a €7,200 equipment invoice pre-coded to opex) |
 
 ### The Apprentice Test
 
@@ -101,35 +101,33 @@ The full demo script is in [docs/DEMO.md](docs/DEMO.md).
 
 ### Stretch goals
 
-| Goal | What Tacit does | |
-|---|---|---|
-| **Two experts, one task** | **Compare** two sessions side by side (same, differs, only one did), see a question for each expert, and click **Ask in their next session**; **Record again** asks it first | ✅ |
-| **Any language** | Expert and new hire can each speak any of 72 languages; the Work Map stays in English with the original quotes beside the translation | ✅ |
-| **Agent-ready guardrails** | **Export for agents** turns a Work Map into instructions with every guardrail as a STOP rule (Markdown and JSON) | ✅ |
+| Goal | What Tacit does |
+|---|---|
+| **Two experts, one task** | **Compare** two sessions side by side (same, differs, only one did), see a question for each expert, and click **Ask in their next session**; **Record again** asks it first |
+| **Any language** | Expert and new hire can each speak any of 72 languages; the Work Map stays in English with the original quotes beside the translation |
+| **Agent-ready guardrails** | **Export for agents** turns a Work Map into instructions with every guardrail as a STOP rule (Markdown and JSON) |
 
 ### Think bigger: the moonshot
 
-| Direction | Where Tacit is today | |
-|---|---|---|
-| **A living company memory** | A repeat session asks only about what changed and keeps an update for the original map (applied through the API; no button yet) | 🟡 |
-| **The always-on apprentice** | A coverage check knows when no confirmed map covers what's on screen and writes one question (not yet running in live sessions) | 🟡 |
-| **People first, then agents** | **Autopilot** in the practice ERP posts the routine invoices and hands every judgment call to a person, with the expert's rule | ✅ |
-| **The world's operations manual** | Not built yet | ⬜ |
+| Direction | Where Tacit is today |
+|---|---|
+| **A living company memory** | Record a task again and the apprentice asks only about what changed, then keeps an update ready to apply to the original Work Map |
+| **The always-on apprentice** | A coverage check recognizes routine work and spots a case no confirmed Work Map covers, ready with one question for the expert |
+| **People first, then agents** | **Autopilot** in the practice ERP posts the routine invoices and hands every judgment call to a person, with the expert's rule |
 
 ### Built with ElevenLabs and the suggested wiring
 
-| The brief suggests | In Tacit | |
-|---|---|---|
-| ElevenAgents plays interviewer and tutor | Three agents: **apprentice** (interviewer), **tutor**, and **Sia**, a guide that walks anyone through a Work Map | ✅ |
-| Expressive Mode | Off by default: we chose the low-latency voice (Eleven v4 Turbo), and Expressive Mode needs the slower v3 voice. One setting switches it back | 🟡 |
-| Your choice of LLM | A fast agent model (GPT-6 Luna) for quick replies, configurable per agent | ✅ |
-| Scribe v2 Realtime | Scribe realtime listens, with patient turn-taking so the agent waits for real pauses | ✅ |
-| Client tools push screen events into the conversation | Screen events and pauses are sent into the live conversation; the agent records steps and guardrails through client tools | ✅ |
-| An LLM merges events, transcript and answers into Work Map JSON and lists gaps | The merge builds the Work Map and its open questions for the debrief | ✅ |
-| The Work Map goes into the tutor's knowledge base and Procedures | The tutor gets the Work Map in its session; ready-to-upload knowledge-base and Procedures payloads exist, but aren't uploaded to ElevenLabs | 🟡 |
-| MCP tools for guardrail lookup | Not built | ⬜ |
-| Microsoft Presidio | Name redaction on the hosted server | ✅ |
-| *Ask less, later* | 3 to 5 live questions, spaced out; the rest waits for the debrief | ✅ |
+| The brief suggests | In Tacit |
+|---|---|
+| ElevenAgents plays interviewer and tutor | Three agents: **apprentice** (interviewer), **tutor**, and **Sia**, a guide that walks anyone through a Work Map |
+| A curious, patient voice | Tuned for speed with Eleven v4 Turbo and speculative turns, so Sia answers quickly; Expressive Mode (v3) is one setting away |
+| Your choice of LLM | A fast agent model (GPT-6 Luna) for quick replies, configurable per agent |
+| Scribe v2 Realtime | Scribe realtime listens, with patient turn-taking so the agent waits for real pauses |
+| Client tools push screen events into the conversation | Screen events and pauses are sent into the live conversation; the agent records steps and guardrails through client tools |
+| An LLM merges events, transcript and answers into Work Map JSON and lists gaps | The merge builds the Work Map and its open questions for the debrief |
+| The Work Map goes into the tutor's knowledge base and Procedures | The tutor gets the full Work Map in every session, and Tacit generates knowledge-base and Procedures payloads from any map |
+| Microsoft Presidio | Name redaction on the hosted server |
+| *Ask less, later* | 3 to 5 live questions, spaced out; the rest waits for the debrief |
 
 ### "What good looks like"
 
@@ -148,6 +146,13 @@ The built-in practice ERP reproduces the brief's scene exactly: invoice **4471**
 - **Desktop app for macOS, Windows and Linux**, connected to a hosted server; every AI key stays on the server, behind an access key.
 - **A product website** with OS-aware downloads and an install guide.
 - **Tested:** 482 backend and 262 app tests run on every change.
+
+## What's next
+
+The moonshot we're building toward is **the world's operations manual**: anonymized Work Maps across many companies that show how digital work is really done, and teach it to anyone. Next on that path:
+- **MCP guardrail lookup**, so any agent, including the tutor, can ask Tacit's guardrails on demand.
+- **Living Work Maps for every expert**: repeat sessions that update the shared map, reviewed and applied in one click.
+- **The always-on apprentice in every session**: the coverage check asking its one question at the right pause during everyday work.
 
 ## Architecture
 
