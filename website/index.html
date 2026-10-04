@@ -62,6 +62,7 @@
           <ul class="nav-links">
             <li><a href="#how">How it works</a></li>
             <li><a href="#features">Features</a></li>
+            <li><a href="#try">Try it</a></li>
             <li><a href="#privacy">Privacy</a></li>
             <li><a href="#faq">FAQ</a></li>
             <li><a href="install.html">Install guide</a></li>
@@ -307,6 +308,49 @@
         </div>
       </section>
 
+      <!-- Try it: the two Lovable apps, embedded -->
+      <section class="section" id="try" aria-labelledby="try-title">
+        <div class="wrap">
+          <div class="section-head">
+            <p class="eyebrow">Try it</p>
+            <h2 id="try-title" class="display">Use it right here, in your browser.</h2>
+            <p>Pick an app below. It asks for your microphone when you start talking. If the frame is too small, open it in its own tab.</p>
+          </div>
+          <div class="embed" data-embed>
+            <div class="embed-tabs" role="tablist" aria-label="Apps">
+              <button class="embed-tab" type="button" role="tab" id="tab-voice" aria-controls="panel-voice" aria-selected="true">Ledgerline · Voice workspace</button>
+              <button class="embed-tab" type="button" role="tab" id="tab-perfect" aria-controls="panel-perfect" aria-selected="false" tabindex="-1">Perfect</button>
+            </div>
+            <div class="embed-panel" role="tabpanel" id="panel-voice" aria-labelledby="tab-voice">
+              <div class="embed-bar">
+                <span class="embed-url">pixel-perfect-capture-5522.lovable.app</span>
+                <a class="btn btn-secondary btn-small" href="https://pixel-perfect-capture-5522.lovable.app/" target="_blank" rel="noopener">Open in a new tab</a>
+              </div>
+              <iframe
+                class="embed-frame"
+                src="https://pixel-perfect-capture-5522.lovable.app/"
+                title="Ledgerline · Voice workspace"
+                loading="lazy"
+                allow="microphone; camera; display-capture; autoplay; clipboard-read; clipboard-write; fullscreen"
+              ></iframe>
+            </div>
+            <div class="embed-panel" role="tabpanel" id="panel-perfect" aria-labelledby="tab-perfect" hidden>
+              <div class="embed-bar">
+                <span class="embed-url">pixel-perfect-snap-1084.lovable.app</span>
+                <a class="btn btn-secondary btn-small" href="https://pixel-perfect-snap-1084.lovable.app/" target="_blank" rel="noopener">Open in a new tab</a>
+              </div>
+              <iframe
+                class="embed-frame"
+                src="https://pixel-perfect-snap-1084.lovable.app/"
+                title="Perfect"
+                loading="lazy"
+                allow="microphone; camera; display-capture; autoplay; clipboard-read; clipboard-write; fullscreen"
+              ></iframe>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- Privacy -->
       <section class="section trust-dark" id="privacy" aria-labelledby="privacy-title">
         <div class="wrap">
@@ -362,8 +406,8 @@
             <li>
               <span class="num" aria-hidden="true">2</span>
               <div>
-                <h3>Get your access key</h3>
-                <p>Ask the person who set up Tacit for your team. They will send you an access key.</p>
+                <h3>Open it</h3>
+                <p>Tacit connects to your team's server on its own. If it ever asks for an access key, use the one you were sent with the app.</p>
               </div>
             </li>
             <li>
@@ -444,9 +488,9 @@
               </div>
             </details>
             <details>
-              <summary>Where do I get an access key?</summary>
+              <summary>Do I need an access key?</summary>
               <div class="answer">
-                <p>From the person who set up Tacit for your team. The key connects the app to your team's server. Keep it to yourself, like a password.</p>
+                <p>Usually not: Tacit connects to your team's server by itself. If it ever asks, use the access key from the message you got with the app, and keep it to yourself like a password.</p>
               </div>
             </details>
             <details>
