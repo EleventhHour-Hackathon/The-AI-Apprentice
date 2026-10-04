@@ -5,7 +5,9 @@ import {
   debriefStatus,
   decideFloor,
   decideWrapUp,
+  endsWithQuestion,
   isDebriefQuestion,
+  isQuestion,
   MAX_EXPLAIN_REFUSALS,
   MIN_DEBRIEF_QUESTIONS,
   MIN_LIVE_QUESTIONS,
@@ -639,13 +641,13 @@ export function useApprentice(options: {
               } else if (x.node === "teach_back") {
                 x.teachBack.push(text);
                 // Asking again (after a correction): the expert's earlier answer no longer counts.
-                if (text.includes("?")) x.teachBackReply = null;
+                if (isQuestion(text)) x.teachBackReply = null;
               }
               if (x.grant === "start") return; // "Go ahead." is not a question
               if (x.pauseReply) {
                 x.pauseReply = false;
                 // Only a question counts: "Got it." at a pause is not one.
-                if (x.node === "observing" && text.includes("?")) countQuestion(text);
+                if (x.node === "observing" && isQuestion(text)) countQuestion(text);
               }
               const moment = latest.current.moment();
               setState((st) => ({
@@ -663,7 +665,7 @@ export function useApprentice(options: {
             // What the expert said once the teach-back is under way: their answer to it.
             if (x.node === "teach_back" && x.teachBack.length > 0)
               x.teachBackReply = { text, t: clock() };
-            if (x.node === "observing" && text.endsWith("?"))
+            if (x.node === "observing" && endsWithQuestion(text))
               x.lastDirectQuestionAt = performance.now();
             setState((st) => {
               const last = st.exchanges.at(-1);

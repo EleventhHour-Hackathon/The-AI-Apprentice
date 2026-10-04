@@ -217,12 +217,24 @@ const normalized = (sentence: string) =>
  * Question marks: ? ？ (CJK) ؟ (Arabic, Persian, Urdu) ՞ (Armenian) and the Greek question mark,
  * which is ";" (or U+037E) in Greek script.
  */
-const questionsIn = (text: string) =>
-  text.match(
-    /[\p{Script=Greek}]/u.test(text)
-      ? /[^.!。！?？؟՞;\u037E]*[?？؟՞;\u037E]/gu
-      : /[^.!。！?？؟՞\u037E]*[?？؟՞\u037E]/gu,
-  ) ?? [];
+const QUESTION_MARKS = "?？؟՞\u037E";
+const questionMarks = (text: string) =>
+  /\p{Script=Greek}/u.test(text) ? `${QUESTION_MARKS};` : QUESTION_MARKS;
+const questionsIn = (text: string) => {
+  const marks = questionMarks(text);
+  return text.match(new RegExp(`[^.!。！${marks}]*[${marks}]`, "gu")) ?? [];
+};
+
+/** Any line that asks something, check-ins included ("Right?" counts). */
+export function isQuestion(text: string) {
+  return questionsIn(text).some((q) => normalized(q) !== "");
+}
+
+/** The line ends on a question mark: someone asked a question and is waiting for the answer. */
+export function endsWithQuestion(text: string) {
+  const last = text.trim().at(-1);
+  return last !== undefined && questionMarks(text).includes(last);
+}
 
 /**
  * An apprentice line asks a debrief question: one of its questions is more than a check-in.

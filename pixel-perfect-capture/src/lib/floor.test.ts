@@ -3,7 +3,9 @@ import {
   debriefStatus,
   decideFloor,
   decideWrapUp,
+  endsWithQuestion,
   isDebriefQuestion,
+  isQuestion,
   MAX_EXPLAIN_REFUSALS,
   MAX_TEACH_BACK_REFUSALS,
   MIN_DEBRIEF_QUESTIONS,
@@ -327,5 +329,78 @@ describe("isDebriefQuestion", () => {
 
   it("doesn't take a semicolon outside Greek for a question", () => {
     expect(isDebriefQuestion("First the supplier; then the amount.")).toBe(false);
+  });
+});
+
+describe("isQuestion", () => {
+  it("counts a question in English and German, check-ins included", () => {
+    expect(isQuestion("What happens when the PO is missing?")).toBe(true);
+    expect(isQuestion("Right?")).toBe(true);
+    expect(isQuestion("Warum prüfst du den Lieferanten zuerst?")).toBe(true);
+    expect(isQuestion("Got it.")).toBe(false);
+    expect(isQuestion("Verstanden, danke.")).toBe(false);
+  });
+
+  it("counts questions in other scripts", () => {
+    expect(isQuestion("为什么先检查供应商？")).toBe(true);
+    expect(isQuestion("我明白了。")).toBe(false);
+    expect(isQuestion("なぜ先に仕入先を確認するのですか？")).toBe(true);
+    expect(isQuestion("わかりました。")).toBe(false);
+    expect(isQuestion("لماذا تتحقق من المورد أولاً؟")).toBe(true);
+    expect(isQuestion("فهمت.")).toBe(false);
+    expect(isQuestion("چرا اول تأمین‌کننده را بررسی می‌کنی؟")).toBe(true);
+    expect(isQuestion("متوجه شدم.")).toBe(false);
+    expect(isQuestion("Ինչո՞ւ ես նախ ստուգում մատակարարին")).toBe(true);
+    expect(isQuestion("Հասկացա։")).toBe(false);
+  });
+
+  it("reads the Greek question mark only in Greek", () => {
+    expect(isQuestion("Γιατί ελέγχεις πρώτα τον προμηθευτή;")).toBe(true);
+    expect(isQuestion("Γιατί ελέγχεις πρώτα τον προμηθευτή\u037E")).toBe(true);
+    expect(isQuestion("Κατάλαβα.")).toBe(false);
+    expect(isQuestion("I check the supplier first; then the order.")).toBe(false);
+  });
+
+  it("finds a question mid-line", () => {
+    expect(isQuestion("Warum? Egal.")).toBe(true);
+  });
+
+  it("ignores empty lines and stray marks", () => {
+    expect(isQuestion("")).toBe(false);
+    expect(isQuestion("   ")).toBe(false);
+    expect(isQuestion(" ? ")).toBe(false);
+  });
+});
+
+describe("endsWithQuestion", () => {
+  it("sees a question at the end in English and German", () => {
+    expect(endsWithQuestion("Can you show me the next one?")).toBe(true);
+    expect(endsWithQuestion("Kannst du das sehen? ")).toBe(true);
+    expect(endsWithQuestion("Let me show you the next one.")).toBe(false);
+    expect(endsWithQuestion("Das ist alles.")).toBe(false);
+  });
+
+  it("sees a question at the end in other scripts", () => {
+    expect(endsWithQuestion("你看得到吗？")).toBe(true);
+    expect(endsWithQuestion("見えますか？")).toBe(true);
+    expect(endsWithQuestion("次の請求書を開きます。")).toBe(false);
+    expect(endsWithQuestion("هل ترى ذلك؟")).toBe(true);
+    expect(endsWithQuestion("آیا این را می‌بینی؟")).toBe(true);
+    expect(endsWithQuestion("این فاکتور بعدی است.")).toBe(false);
+    expect(endsWithQuestion("Ինչու՞")).toBe(true);
+    expect(endsWithQuestion("Γιατί;")).toBe(true);
+    expect(endsWithQuestion("Βλέπεις αυτό\u037E")).toBe(true);
+    expect(endsWithQuestion("Αυτό είναι όλο.")).toBe(false);
+    expect(endsWithQuestion("First the supplier; then the order;")).toBe(false);
+  });
+
+  it("only looks at the end of the line", () => {
+    expect(endsWithQuestion("Warum? Egal.")).toBe(false);
+    expect(isQuestion("Warum? Egal.")).toBe(true);
+  });
+
+  it("ignores empty lines", () => {
+    expect(endsWithQuestion("")).toBe(false);
+    expect(endsWithQuestion("   ")).toBe(false);
   });
 });
