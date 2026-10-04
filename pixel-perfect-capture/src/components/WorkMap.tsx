@@ -33,6 +33,7 @@ import {
   GraduationCap,
   MessageSquareText,
   Play,
+  RotateCcw,
   Trash2,
   Unlink,
   X,
@@ -48,6 +49,7 @@ import {
   storedLanguage,
   type LanguageChoice,
 } from "@/lib/languages";
+import { saveNextSession } from "@/lib/next-session";
 import { ClipPlayer } from "@/components/ClipPlayer";
 import { DeleteWorkMap } from "@/components/DeleteWorkMap";
 import { Button } from "@/components/ui/button";
@@ -577,6 +579,7 @@ function Canvas({ map: record, onClose }: Props) {
               Transcript
             </Button>
           )}
+          <RecordAgain workMapId={map.id} />
           <Button variant="outline" className="h-8 rounded-full text-xs" asChild>
             <Link
               to="/work-maps/compare"
@@ -855,6 +858,29 @@ function teach(workMapId: string, language: LanguageChoice) {
     window.location.assign(
       `/?lesson=${encodeURIComponent(workMapId)}&lang=${encodeURIComponent(language)}`,
     );
+}
+
+/**
+ * Record the task again: the next session the expert starts asks first the questions kept for
+ * them on this map. Starts in the desktop pill, or opens the home page (with the pill) in a browser.
+ */
+function RecordAgain({ workMapId }: { workMapId: string }) {
+  return (
+    <Button
+      variant="outline"
+      className="h-8 rounded-full text-xs"
+      title="Record this task again; questions kept for this expert are asked first"
+      onClick={() => {
+        saveNextSession(workMapId);
+        const bridge = desktop();
+        if (bridge) bridge.pill("start");
+        else window.location.assign("/");
+      }}
+    >
+      <RotateCcw size={13} />
+      Record again
+    </Button>
+  );
 }
 
 /** On a step card: the still, with a few seconds of the expert doing it played on hover. */

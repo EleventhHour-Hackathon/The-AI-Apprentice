@@ -1,5 +1,6 @@
 import math
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, HTTPException, Request
@@ -103,8 +104,27 @@ async def screen_event(payload: dict = Body(...)):
 
 @router.post("/sessions/{session_id}/start")
 def start_session(session_id: str, payload: dict = Body(default={})):
+    """Open a session. With parent_work_map_id ("Record again"), the debrief first asks the
+    questions kept for the expert on that Work Map; the first parent given is the one kept."""
+    session_id = _uuid(session_id)
+    parent = payload.get("parent_work_map_id")
+    if parent:
+        parent = _uuid(parent, "Work Map")
+        if parent == session_id:
+            detail = "A session can't be recorded again from itself"
+            raise HTTPException(status_code=422, detail=detail)
     try:
-        work_map_store.start_session(_uuid(session_id), payload.get("conversation_id"))
+        if parent:
+            parent_row = work_map_store.get(parent)
+            if parent_row is None or parent_row.get("status") == "recording":
+                raise HTTPException(status_code=404, detail="Work Map not found")
+        work_map_store.start_session(session_id, payload.get("conversation_id"))
+        if parent:
+            row = work_map_store.get(session_id) or {}
+            # The pill posts start twice (before and after connecting): one parent capture only.
+            if follow_ups.parent_of(row.get("captures") or []) is None:
+                capture = {"kind": follow_ups.PARENT, "work_map_id": parent}
+                work_map_store.add_capture(session_id, capture)
     except HTTPException:
         raise
     except Exception as e:
@@ -225,6 +245,26 @@ async def merge_session(session_id: str, payload: dict = Body(...)):
     except Exception as e:
         raise _store_unavailable(e)
 
+    # Recorded again from another Work Map ("Record again"): the questions kept there for this
+    # expert lead the debrief, and are marked delivered there once the new map is confirmed.
+    parent_id = follow_ups.parent_of(session.get("captures") or [])
+    pending: List[Dict[str, Any]] = []
+    if parent_id:
+        # Either way the session still merges and saves, just without the kept questions.
+        try:
+            parent = work_map_store.get(parent_id)
+            if parent is None:
+                logger.warning(f"Work Map {parent_id}, recorded again from, is gone")
+        except Exception as e:
+            logger.warning(f"Couldn't read Work Map {parent_id}, recorded again from: {e}")
+            parent = None
+        if parent is None:
+            parent_id = None
+        else:
+            # Redacted again: these go to the agent and back to the UI.
+            kept = follow_ups.pending(parent.get("captures") or [])
+            pending = [{**q, "text": redact(q["text"])} for q in kept]
+
     try:
         work_map = await merge(
             task=session.get("task"),
@@ -265,10 +305,22 @@ async def merge_session(session_id: str, payload: dict = Body(...)):
             "said": redact(confirmation["said"]),
             "t": round(float(confirmation["t"]), 2),
         }
+    if pending and not final:
+        work_map["open_questions"] = follow_ups.lead_with(pending, work_map["open_questions"])
     try:
         work_map_store.save_map(session_id, work_map, "confirmed" if final else "draft")
     except Exception as e:
         raise _store_unavailable(e)
+    if pending and final:
+        # The debrief asked what its saved draft listed; anything kept later stays pending.
+        asked = session.get("open_questions") or []
+        now = datetime.now(timezone.utc)
+        try:
+            for c in follow_ups.delivered(pending, asked, session_id, now):
+                work_map_store.add_capture(parent_id, c)
+        except Exception as e:
+            # The new map is saved; the questions are asked again next time at worst.
+            logger.error(f"Couldn't mark follow-up questions delivered on {parent_id}: {e}")
     return {**work_map, "brief": brief_for_agent(work_map), "summary": work_map_edit.summary_for_agent(work_map)}
 
 

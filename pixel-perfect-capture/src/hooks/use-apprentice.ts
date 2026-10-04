@@ -23,6 +23,7 @@ import {
 import type { ScreenEvent } from "@/hooks/use-screen-events";
 import type { LanguageChoice } from "@/lib/languages";
 import { loadSettings } from "@/lib/settings";
+import { clearNextSession, parentRefused, peekNextSession, PostError } from "@/lib/next-session";
 
 /** Phases of a session. The agent moves between them by calling client tools. */
 export type FlowNode = "session_start" | "observing" | "debrief" | "teach_back" | "end";
@@ -137,7 +138,7 @@ async function post<T = unknown>(path: string, body: unknown): Promise<T> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!response.ok) throw new Error(`${path} answered ${response.status}`);
+  if (!response.ok) throw new PostError(`${path} answered ${response.status}`, response.status);
   return (await response.json()) as T;
 }
 
@@ -568,6 +569,9 @@ export function useApprentice(options: {
     async (language: LanguageChoice = "auto") => {
       if (conv.current) return;
       const sessionId = crypto.randomUUID();
+      // "Record again" on a Work Map: this session's debrief asks the questions kept there first.
+      // Cleared once connected, so a start that fails can be retried with the same link.
+      const parent = peekNextSession();
       // Read once per session: changing Settings mid-session doesn't move the goalposts.
       const policy = policyFrom(loadSettings());
       s.current = {
@@ -611,7 +615,15 @@ export function useApprentice(options: {
           if (!r.ok) throw new Error(`token request answered ${r.status}`);
           return r.json() as Promise<{ token: string }>;
         });
-        await post(`/sessions/${sessionId}/start`, {});
+        try {
+          await post(`/sessions/${sessionId}/start`, parent ? { parent_work_map_id: parent } : {});
+        } catch (e) {
+          if (!parent || !parentRefused(e)) throw e;
+          // The map was deleted since "Record again": record a new session instead.
+          console.warn(`Recording without the Work Map it was started from: ${String(e)}`);
+          clearNextSession();
+          await post(`/sessions/${sessionId}/start`, {});
+        }
         const c = await VoiceConversation.startSession({
           conversationToken: token,
           connectionType: "webrtc",
@@ -622,6 +634,8 @@ export function useApprentice(options: {
             s.current.startedAt = performance.now();
             setSession({ id: sessionId, clock });
             setState((st) => ({ ...st, status: "connected" }));
+            // The first start already linked the parent: the link is used up.
+            if (parent) clearNextSession();
             void post(`/sessions/${sessionId}/start`, { conversation_id: conversationId }).catch(
               () => undefined,
             );
