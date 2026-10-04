@@ -81,6 +81,8 @@ jobs:
         working-directory: pixel-perfect-capture
     env:
       VITE_BACKEND_URL: ${{ vars.TACIT_BACKEND_URL }}
+      # Optional: a key built into the installers so they connect without asking (secret TACIT_ACCESS_KEY).
+      VITE_ACCESS_KEY: ${{ secrets.TACIT_ACCESS_KEY }}
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
     steps:
       - uses: actions/checkout@v4

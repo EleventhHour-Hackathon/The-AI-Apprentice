@@ -14,8 +14,8 @@ talks to your team's Tacit server over HTTPS.
 
 ## What you need
 
-- **Your access key.** The person who sent you this guide has it, or will send it separately.
-  Treat it like a password.
+- **Nothing to set up.** Tacit already knows your team's server and connects on its own. Keep
+  the access key from the message you got with this guide, just in case Tacit ever asks for it.
 - **A microphone.** You talk with the apprentice by voice.
 - **Permission to share your screen.** Tacit asks for it the first time you start a session.
 - **A computer** running macOS (Apple silicon or Intel), Windows 10 or 11 (64-bit), or Linux
@@ -77,11 +77,11 @@ expected; after the first time it opens normally.
 
 ## Connect to your team's server
 
-The first time Tacit opens, it shows **Connect to Tacit**.
+Tacit connects to your team's server by itself the first time it opens: there's nothing to type.
 
-1. The server address is already filled in. Leave it unless your admin gave you a different one.
-2. Paste your **access key**.
-3. Connect. Tacit checks that it can reach the server and that the key works, then saves both.
+If the server was asleep it can take up to a minute to wake, and Tacit may show **Connect to
+Tacit** with everything already filled in. Click **Connect** and wait a moment. If it ever asks
+for an access key, paste the one from the message you got with this guide.
 
 You can change the address or the key later in **Settings**, under **Connection**.
 

@@ -46,8 +46,14 @@ export function backendUrl(): string {
   return trimUrl(read(BACKEND_URL_STORAGE)) || DEFAULT_BACKEND_URL;
 }
 
+/** The build's default access key (VITE_ACCESS_KEY), only ever sent to the build's own backend. */
+const DEFAULT_ACCESS_KEY = String(import.meta.env["VITE_ACCESS_KEY"] ?? "").trim();
+
+/** The saved key, else the build's default key when talking to the build's default backend. */
 export function accessKey(): string {
-  return read(ACCESS_KEY_STORAGE);
+  const saved = read(ACCESS_KEY_STORAGE);
+  if (saved) return saved;
+  return backendUrl() === DEFAULT_BACKEND_URL ? DEFAULT_ACCESS_KEY : "";
 }
 
 /** Whether a backend URL was saved on this machine (Connect to Tacit has been done). */
