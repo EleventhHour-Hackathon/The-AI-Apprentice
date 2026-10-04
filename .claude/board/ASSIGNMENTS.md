@@ -196,7 +196,7 @@ Not assigned this round:
 - S-05 (MCP server): needs the `mcp` dependency, so pyproject.toml/uv.lock again, plus main.py. Queue after B-01; registering it on the ElevenLabs tutor stays with the user.
 - M-04 and M-03: disjoint and ready, but the three slots go to two Partial rows and S-01 (the last missing Stretch goal, which unblocks B-20, B-21, M-01 and B-10).
 
-## B-01 · Dev test deps + rest of the backend tests · implementer-1 · approved
+## B-01 · Dev test deps + rest of the backend tests · implementer-1 · merged
 Base: 0279dc0 (`git rev-parse --short HEAD` in your worktree must match). Repo /Users/mithra/.builds/sia (you work in your own worktree of it).
 Goal: `cd core/backend && uv run --extra dev pytest` runs every backend test with nothing skipped, and the older code paths that have no tests today (Work Map edits, the tutor's end-of-lesson report, the sessions/work_maps/lessons endpoints) are covered, with OpenAI, ElevenLabs and Postgres all faked.
 Brief says: Beyond, backend test suite (docs/PROGRESS.md B-01); protects Required R-07/R-08 (edits during the debrief) and the tutor rows (lesson report) from regressions.
@@ -217,7 +217,7 @@ Bug found, to queue: work_map_edit._normalize numbers id-less items by position,
 Release: worktree .claude/worktrees/agent-a3460f04a2b8e11fa, files core/backend/pyproject.toml, core/backend/uv.lock, core/backend/tests/test_work_map_edit.py, core/backend/tests/test_tutor_report.py, core/backend/tests/test_router.py.
 Commit: "Run every backend test with pytest out of the box, and cover edits, the lesson report and the endpoints"
 
-## B-07 · Settings page works · implementer-2 · approved
+## B-07 · Settings page works · implementer-2 · merged
 Base: 0279dc0 (`git rev-parse --short HEAD` in your worktree must match). Repo /Users/mithra/.builds/sia (you work in your own worktree of it).
 Goal: the Settings page stops pretending. Choices are saved on this machine and come back after a reload; controls that don't change anything yet say so ("Soon"); Diagnostics really checks the backend, the redaction engine, storage and the two voice agents instead of showing hard-coded "OK"; the fake Integrations are hidden behind "Coming soon".
 Brief says: Beyond, "Settings page works (today it is a mockup)" (docs/PROGRESS.md B-07); supports Apprentice Test 5 (personal data protected) by showing which redaction engine is on.
@@ -239,7 +239,7 @@ Follow-ups to queue: wire Soon settings (curiosity/debriefDepth/minQuestions/spe
 Release: worktree .claude/worktrees/agent-ad6e25f584ce79365, files pixel-perfect-capture/src/routes/settings.tsx, pixel-perfect-capture/src/lib/settings.ts, pixel-perfect-capture/src/lib/settings.test.ts.
 Commit: "Save Settings on this machine, mark what isn't wired yet, and make Diagnostics run real checks"
 
-## S-01 · Pure diff of two Work Maps · implementer-3 · approved
+## S-01 · Pure diff of two Work Maps · implementer-3 · merged
 Base: 0279dc0 (`git rev-parse --short HEAD` in your worktree must match). Repo /Users/mithra/.builds/sia (you work in your own worktree of it).
 Goal: given two Work Maps of the same task by two experts, the backend can say which steps and guardrails are the same, which differ (and in which fields: decision, reason, threshold, who to ask, ...), and which only one expert did, quoting each expert's own words. No LLM, no endpoint yet: this is the first slice of "Two experts, one task".
 Brief says: Stretch, "Two experts, one task: show where two sessions differ and ask each expert why" (docs/CHALLENGE.md). Later rows build on it: B-20 (endpoint), B-21 (a question for each expert), M-01 (living memory), B-10 (compare view), and M-02/B-13/B-18/B-24 reuse the similarity helper.
@@ -281,3 +281,148 @@ Approved (main session, after review 1 fixes + before/after removed from POLARIT
 Note for B-21: rank text-field `changed` below numbers/kind/ask_whom/judgment/missing_* when choosing questions.
 Release: worktree .claude/worktrees/agent-a5ff2129e8d0af691, files core/backend/src/services/work_map_diff.py, core/backend/tests/test_work_map_diff.py.
 Commit: "Compare two experts' Work Maps: what's the same, what differs and what only one of them does"
+
+Merged (round 4): B-01 ae75c90, B-07 0369a32, S-01 1afdb0f; round completion 7351a91. B-33 (check.sh runs `uv run --extra dev pytest`) built by the main session in 4d25ccb: Built.
+
+# Round 5 · base 4d25ccb
+
+Not assigned this round:
+- B-31 (cheap storage probe): needs core/backend/main.py (implementer-1 owns it for B-20) and pixel-perfect-capture/src/lib/settings.ts (implementer-3 owns it for B-25). Next round; or the main session registers its router after the merge if it is split.
+- B-27 (capture interval): also owns lib/settings.ts and routes/settings.tsx (implementer-3 this round). Next round.
+- B-21's second half (`POST` that stores a chosen question as an open_question capture on that expert's map): goes in B-20's router file and needs both B-20 and B-21's service merged. Queue as its own row next round, together with B-10 (compare view, after B-20 and B-21).
+- B-26 (use-apprentice reads the policy): after B-25.
+- B-02, B-19, S-05: unchanged from round 4 (whole-backend lint, pyproject/uv.lock owners).
+
+## B-20 + B-32 · Diff endpoint for two Work Maps; unique ids in _normalize · implementer-1 · approved
+Base: 4d25ccb (`git rev-parse --short HEAD` in your worktree must match). Repo /Users/mithra/.builds/sia (you work in your own worktree of it).
+Goal: (B-20) the UI can ask the backend "how do these two Work Maps of the same task differ?" with `GET /api/v1/work_map_diff?a=<id>&b=<id>` and get S-01's diff plus a header for each map. (B-32) a Work Map that mixes items with and without ids never ends up with two items sharing an id after an edit.
+Brief says: Stretch, "Two experts, one task: show where two sessions differ and ask each expert why" (docs/CHALLENGE.md; docs/PROGRESS.md rows S-01 → B-20). B-32 protects Required R-07/R-08 (voice edits in the debrief address items by id).
+Background (core/backend): `src/services/work_map_diff.py` has `diff(a, b)` (contract below) and is pure; nothing serves it yet. `src/router/path_router.py` has `router` (prefix `/api/v1`), `_uuid(value, what)` (non-UUID → 404) and `_store_unavailable(e)` (→ 503); `GET /work_maps/{work_map_id}` in path_router would swallow a path like `/work_maps/diff` (its `_uuid` 404s on "diff"), which is why the path is `/api/v1/work_map_diff`, not `/api/v1/work_maps/diff`. `src/router/tutor_kb_router.py` is the pattern to copy: its own `APIRouter(prefix="/api/v1", tags=[...])`, imports `_uuid`/`_store_unavailable` from path_router, `work_map_store.get(id)` (returns the row dict or None; columns: id, task, recorded_at (ISO string), confirmed, status, steps, guardrails, open_questions, corrections, transcript, captures, confirmation, ...; there is no expert-name column). main.py includes routers with `app.include_router(...)` after `router` and `tutor_kb_router.router`. tests/test_router.py and tests/test_tutor_kb.py show endpoint tests: placeholder env vars set before imports, `FastAPI()` + `include_router`, `TestClient`, `monkeypatch.setattr(<module>.work_map_store, "get", fake)`. B-32: `src/services/work_map_edit.py:22-31` `_normalize` names every id-less item `s<position>`/`g<position>`, so `[{'id':'s2'}, {}]` gets two `s2`; `_next_id` (line 85) gives max+1; tests/test_work_map_edit.py:262-272 has the strict xfail `test_a_map_with_some_ids_missing_keeps_them_unique`. `tutor.report` (src/services/tutor.py:39,150) and `work_map_diff._ids` fall back to `s<position>` for id-less items; for maps with no ids at all all three must keep agreeing.
+Owns: core/backend/src/router/work_map_diff_router.py (new), core/backend/main.py (one import + one include_router line), core/backend/tests/test_work_map_diff_router.py (new), core/backend/src/services/work_map_edit.py (`_normalize` only), core/backend/tests/test_work_map_edit.py.
+Must not touch: core/backend/src/services/work_map_diff.py and its tests (read only), core/backend/src/services/diff_questions.py and tests/test_diff_questions.py (implementer-2), core/backend/src/router/path_router.py, tutor_kb_router.py, storage/*, tests/conftest.py, pyproject.toml, uv.lock, everything under pixel-perfect-capture/ (implementer-3), .claude/check.sh.
+Plan:
+1. work_map_diff_router.py: `router = APIRouter(prefix="/api/v1", tags=["Work Map diff"])`; `@router.get("/work_map_diff")` plain `def` (psycopg blocks; FastAPI threads it) with required query params `a: str`, `b: str`. Normalize both with `_uuid(x, "Work Map")`; if they are equal after normalizing → 422 "Pick two different Work Maps". Load each with `work_map_store.get`; a store exception → `_store_unavailable(e)` (503); a missing map → 404 naming which one ("Work Map a not found" / "Work Map b not found"; check a first).
+2. Response, exactly the Contract below: a header per map built from the row (`id`, `task`, `recorded_at`, `confirmed`, `status`, counts of steps and guardrails) and `diff: work_map_diff.diff(map_a, map_b)`. Don't return transcript, captures or the full maps. A map with no steps is fine (diff handles it).
+3. main.py: `from src.router import work_map_diff_router` and `app.include_router(work_map_diff_router.router)` next to the tutor_kb line. Nothing else in main.py.
+4. tests/test_work_map_diff_router.py: two realistic maps (two experts coding a supplier invoice; one guardrail threshold 5,000 vs 10,000, one step only one of them does) with the store faked by monkeypatch: 200 with both headers and a diff whose guardrail `differs` has a `numbers` field and whose steps have an `only_b`; a and b swapped mirrors only_a/only_b; same id twice (also the same UUID in different case) → 422; non-UUID → 404; missing a → 404 "Work Map a not found", missing b → 404 for b; store raising → 503; missing query param → 422; the route is reachable through `main.app` (import main with the placeholder env vars, as tests do, and check `/api/v1/work_map_diff` is in `app.routes`) without breaking `/api/v1/work_maps/{id}`.
+5. B-32 `_normalize`: first collect the ids items already have (per list); then give each id-less item `prefix+position` if that id is free, otherwise the next free `prefix+n` above every id taken so far, and record it. Existing ids never change; a map with no ids at all still gets s1..sN/g1..gN (so tutor.report and work_map_diff._ids keep agreeing). Keep the step-title fallback as is. Remove the xfail marker so the test runs as a normal test, and add cases: `[{}, {'id':'s1'}]` → ids unique and the existing s1 kept; guardrails the same way; a fully id-less map unchanged from today's numbering.
+6. Follow the code around it: short docstrings, type hints, ruff-clean at line length 100 and ruff-formatted for new files (`uvx ruff check` / `uvx ruff format --check` on the new files; work_map_edit.py must not get more ruff errors than at base).
+Done when: `cd core/backend && uv run --extra dev pytest -q` passes with 0 xfailed (the B-32 test now passes) and only the known privacy-extra skip; `/Users/mithra/.builds/sia/.claude/check.sh 4d25ccb` prints ALL CHECKS PASSED. Report the test counts and one example response (trimmed).
+Contract (S-01's output, read only; implemented in work_map_diff.py):
+```
+diff(a: dict, b: dict) -> {
+  "steps": {
+    "same":    [{"a": <id>, "b": <id>, "title": str, "score": float}],
+    "differs": [{"a": <id>, "b": <id>, "title_a": str, "title_b": str, "score": float,
+                 "fields": [{"field": str, "kind": "changed" | "missing_a" | "missing_b",
+                             "a": <value or None>, "b": <value or None>}],
+                 "words_a": {"quote": str, "quote_translation": str, "reason": str},
+                 "words_b": {"quote": str, "quote_translation": str, "reason": str}}],
+    "only_a":  [{"id": <id>, "title": str, "words": {"quote": str, "quote_translation": str, "reason": str}}],
+    "only_b":  [same shape as only_a]
+  },
+  "guardrails": { same four lists; "title" is the rule; fields may be "rule" (changed only when
+                  polarity words differ: never/always, over/under...), "kind", "ask_whom",
+                  "applies_when", "numbers" (a/b are sorted lists of the numbers) and "step" }
+}
+```
+Step fields are among "decision", "reason", "judgment", "guardrails". Ids are the map's own ids or the `s<n>`/`g<n>` fallbacks; `words` values are strings, never None.
+Endpoint contract (B-10 and B-21's POST build on it next round):
+```
+GET /api/v1/work_map_diff?a=<work map uuid>&b=<work map uuid>
+200 {
+  "a": {"id": str, "task": str | null, "recorded_at": str | null, "confirmed": bool,
+        "status": str, "steps": int, "guardrails": int},
+  "b": { same shape },
+  "diff": <diff(a, b) exactly as above>
+}
+404 {"detail": "Work Map a not found" | "Work Map b not found" | "Work Map not found" (non-UUID)}
+422 a == b, or a/b missing.  503 store unavailable.
+```
+
+Approved (main session): GET /api/v1/work_map_diff per contract with 15 tests; _normalize keeps ids unique (xfail now a passing test); 217 backend tests, 0 xfailed; check.sh 4d25ccb → ALL CHECKS PASSED.
+Release: worktree .claude/worktrees/agent-ac951e1b72f140f66, files core/backend/src/router/work_map_diff_router.py, core/backend/tests/test_work_map_diff_router.py, core/backend/main.py, core/backend/src/services/work_map_edit.py, core/backend/tests/test_work_map_edit.py.
+Commit (two commits): "Serve the difference between two experts' Work Maps" (router, test, main.py) and "Keep Work Map ids unique when some items have none" (work_map_edit.py, test_work_map_edit.py)
+
+## B-21 · Questions for each expert, made from the differences (pure service) · implementer-2 · approved
+Base: 4d25ccb (`git rev-parse --short HEAD` in your worktree must match). Repo /Users/mithra/.builds/sia (you work in your own worktree of it).
+Goal: given S-01's diff of two experts' Work Maps, the backend can write, for each expert, a short ranked list of questions that quote that expert's own words and name what the other expert did ("You posted it to 4711; in another session it went to capex 0400 first. Why?"), so the next debrief can ask each of them why. Deterministic templates, no LLM, no endpoint, no storage this round.
+Brief says: Stretch, "Two experts, one task: show where two sessions differ and ask each expert why" (docs/CHALLENGE.md; docs/PROGRESS.md row B-21).
+Background (core/backend): `src/services/work_map_diff.py` `diff(a, b)` returns the Contract below (read the module: `numbers()`, `POLARITY`, how `fields` are built in `diff` and `_place`). Map text (titles, decisions, reasons, rules) is English; `quote` is in the expert's language and `quote_translation` its English; `words.quote`/`quote_translation` are empty when the original quote was narration. Round 4 review: reworded text is the noisiest signal, so text-field `changed` (`decision`, `reason`, `applies_when`) ranks below `numbers`, `kind`, `ask_whom`, `judgment`, `rule` (polarity) and `missing_*`. Guardrail `kind` values: "limit" | "exception" | "stop_and_ask". Look at src/services/work_map_links.py and work_map_diff.py for the module docstring style. Tests use plain pytest; tests/test_work_map_diff.py has realistic map fixtures you can copy (don't import from another test module).
+Owns: core/backend/src/services/diff_questions.py (new), core/backend/tests/test_diff_questions.py (new).
+Must not touch: every other file, in particular core/backend/src/services/work_map_diff.py (read only; if you find a bug there, report it, don't fix it), core/backend/main.py and src/router/* (implementer-1 owns main.py and the new diff router), src/services/work_map_edit.py and tests/test_work_map_edit.py (implementer-1), storage/*, tests/conftest.py, pyproject.toml, uv.lock, everything under pixel-perfect-capture/ (implementer-3).
+Plan:
+1. `questions(d: dict, limit: int = 5) -> {"a": [Question], "b": [Question]}` (shape in Contract). For each `differs` entry, one question for each side about each differing field worth asking (several fields on one pair may fold into one question per side; say what you did); for `only_a` one question to A ("You did X; in another session this step wasn't there. When is it needed?") and the mirror for `only_b`. `same` entries make no questions.
+2. Templates per field kind, in English, short and spoken (the apprentice says them aloud): `numbers` ("You set the limit at 5,000; in another session it was 10,000. Which holds, and when?"), `kind`, `ask_whom`, `rule` polarity, `judgment` (one treats it as a judgment call, the other not), `guardrails` on a step, `step` on a guardrail, `missing_a`/`missing_b` (ask the side that left it empty, e.g. "In another session the reason given was ... What's yours?"), and text `changed` for decision/reason/applies_when. Quote the asked expert's words: prefer `quote_translation`, else `quote`, else their `reason`; leave the quote out when all are empty rather than writing empty quotes. Never name the other expert (there is no name); say "in another session". Format numbers readably (5000 → 5,000) and keep values short (trim long text at a word boundary, ~80 chars, with an ellipsis "...").
+3. Ranking: a fixed priority per field (numbers, rule, kind, ask_whom, judgment, missing_a/missing_b, guardrails, step first; only-one-expert items next; decision, reason, applies_when `changed` last), guardrails before steps at equal priority, then higher `score` (a surer match) first, then original order. Deterministic: same input → same output. Cap each side at `limit`, never asking about the same item twice on one side.
+4. Each Question carries a stable `id` built from section, ids and field (e.g. `guardrails:g2:g3:numbers`) that is the same for both sides of one difference, so a later POST can store the chosen one and the UI can pair them.
+5. Robust to partial input: missing sections or lists, `fields` with None values, empty titles (fall back to "this step"/"this rule"), lists as values (the `guardrails` and `numbers` fields). Never mutate the input.
+6. Module docstring (what it asks and why the ranking), type hints, ruff-clean at line length 100, ruff-formatted.
+Done when: tests/test_diff_questions.py covers: a threshold difference yields a numbers question to each side quoting their own words and the other's number; ask_whom and kind; a polarity `rule` change; `missing_a`/`missing_b` (the side that left the field empty is asked for theirs; whether the other side also gets a question is your call, documented in the module); only_a / only_b; ranking puts numbers above a reworded decision; the cap and no-duplicate-item rule; narration (empty quote) falls back to reason, then no quote; an empty diff / missing sections → `{"a": [], "b": []}`; ids identical across sides for one difference; input unchanged; determinism; and one end-to-end test that runs `work_map_diff.diff` on two realistic maps and checks the top question for each side. `cd core/backend && uv run --extra dev pytest -q tests/test_diff_questions.py` passes; `uvx ruff check` and `uvx ruff format --check` on both files are clean; `/Users/mithra/.builds/sia/.claude/check.sh 4d25ccb` prints ALL CHECKS PASSED. Report the templates and the questions produced for your end-to-end example.
+Contract (S-01's output, read only; implemented in work_map_diff.py):
+```
+diff(a: dict, b: dict) -> {
+  "steps": {
+    "same":    [{"a": <id>, "b": <id>, "title": str, "score": float}],
+    "differs": [{"a": <id>, "b": <id>, "title_a": str, "title_b": str, "score": float,
+                 "fields": [{"field": str, "kind": "changed" | "missing_a" | "missing_b",
+                             "a": <value or None>, "b": <value or None>}],
+                 "words_a": {"quote": str, "quote_translation": str, "reason": str},
+                 "words_b": {"quote": str, "quote_translation": str, "reason": str}}],
+    "only_a":  [{"id": <id>, "title": str, "words": {"quote": str, "quote_translation": str, "reason": str}}],
+    "only_b":  [same shape as only_a]
+  },
+  "guardrails": { same four lists; "title" is the rule; fields may be "rule" (changed only when
+                  polarity words differ: never/always, over/under...), "kind", "ask_whom",
+                  "applies_when", "numbers" (a/b are sorted lists of the numbers) and "step" }
+}
+```
+Step fields are among "decision", "reason", "judgment" (a/b booleans or None), "guardrails" (a/b lists of that side's guardrail ids, or None). Ids are the map's own ids or the `s<n>`/`g<n>` fallbacks; `words` values are strings, never None.
+Your output (B-20's router will serve it next round, B-10 will show it; implement exactly):
+```
+questions(d: dict, limit: int = 5) -> {
+  "a": [Question], "b": [Question]     # ranked, best first, at most `limit` each
+}
+Question = {
+  "id": str,                 # e.g. "guardrails:g2:g3:numbers" / "steps:s4:-:only"; same on both sides of one difference
+  "section": "steps" | "guardrails",
+  "item": str,               # the asked expert's own item id
+  "other": str | None,       # the matching item id in the other map, None for only-one-expert items
+  "field": str,              # the diff field, or "only" for an item only this expert has
+  "text": str,               # the question as the apprentice will say it
+  "quote": str               # the asked expert's words it quotes, "" if none
+}
+```
+
+Approved (main session): deterministic spoken templates quoting each expert's words, one question per differing item (highest-priority field), hard differences first, shared ids across sides; 14 tests; check.sh 4d25ccb → ALL CHECKS PASSED.
+Follow-up to queue: optionally name a folded second field (e.g. ask_whom next to numbers) as an extra clause; name the rules/steps in the guardrails/step templates once the diff carries titles for them.
+Release: worktree .claude/worktrees/agent-a40aac058064e26e6, files core/backend/src/services/diff_questions.py, core/backend/tests/test_diff_questions.py.
+Commit: "Write a question for each expert about where their Work Maps differ, in their own words"
+
+## B-25 · The question pace follows Settings (pure policy) · implementer-3 · approved
+Base: 4d25ccb (`git rev-parse --short HEAD` in your worktree must match). Repo /Users/mithra/.builds/sia (you work in your own worktree of it).
+Goal: the Settings "Curiosity", "Questions during the session" and "Debrief" choices turn into a tested question-pace policy the floor logic can use, which never asks fewer questions than the brief requires (at least 3 live, at least 3 in the debrief). This round is the pure half: the live session starts reading it in B-26.
+Brief says: Required, the apprentice asks at least 3 questions while the expert works and at least 3 follow-ups in the debrief (docs/CHALLENGE.md; docs/PROGRESS.md rows B-25, R-07/R-08); Beyond, Settings that do something (B-07 follow-up).
+Background (pixel-perfect-capture/src): lib/floor.ts exports `MIN_LIVE_QUESTIONS = 3`, `EARLY_QUESTION_GAP_MS = 40_000`, `QUESTION_GAP_MS = 75_000` (lines 27-31), used by `decideFloor(f: FloorInput)` (line 63: `early = questionTimes.length < MIN_LIVE_QUESTIONS`, gap `early ? EARLY_QUESTION_GAP_MS : QUESTION_GAP_MS`), and `MIN_DEBRIEF_QUESTIONS = 3` (line 133) used by `debriefStatus({asked, gaps, refusals})` (line 183). hooks/use-apprentice.ts and components/Sia.tsx import those constants and functions: they must keep working unchanged. lib/settings.ts (`SPEC`, line ~39) stores `curiosity` ("quiet" | "balanced" | "curious", default "balanced"), `minQuestions` (`oneOf(["2","3","5"], "3")`) and `debriefDepth` ("short" | "standard" | "thorough", default "standard"); invalid stored values fall back to the default through `clean()` in `loadSettings`. routes/settings.tsx lines 145-160 render the minQuestions options "At least 2/3/5" with a `soon` badge. lib/floor.test.ts (406 lines) and lib/settings.test.ts (incl. line ~66, which stores `minQuestions: 3` as a number) are the existing tests.
+Owns: pixel-perfect-capture/src/lib/floor.ts, pixel-perfect-capture/src/lib/floor.test.ts, pixel-perfect-capture/src/lib/settings.ts, pixel-perfect-capture/src/lib/settings.test.ts, pixel-perfect-capture/src/routes/settings.tsx (only the minQuestions options list; nothing else on the page).
+Must not touch: hooks/use-apprentice.ts, components/Sia.tsx, hooks/use-screen-events.ts (B-26/B-27 later), every other UI file, src/routeTree.gen.ts, package.json and lockfiles, everything under core/ (implementer-1 and implementer-2).
+Plan:
+1. settings.ts: `minQuestions` options become "3" | "4" | "5" (default "3"), so a stored "2" (or anything else) falls back to "3" via the existing validation. settings.tsx: the options list becomes "At least 3/4/5"; keep the `soon` badges on all three rows (nothing reads the policy in a live session until B-26).
+2. floor.ts: `export type FloorPolicy = { minLive: number; earlyGapMs: number; gapMs: number; minDebrief: number }` and `export const DEFAULT_POLICY: FloorPolicy` built from the existing constants (keep every constant exported with its value).
+3. floor.ts: `export function policyFrom(s: Pick<Settings, "curiosity" | "minQuestions" | "debriefDepth">): FloorPolicy` (`import type { Settings } from "./settings"`): minLive = max(3, Number(minQuestions) or 3); curiosity quiet/balanced/curious scales both gaps ×1.5/×1/×0.66 (rounded to whole ms); debrief short/standard/thorough → minDebrief 3/3/5 (the brief's floor is 3, and the default "standard" must keep today's 3, so "short" can't go lower: say so in a one-line comment); unknown values → the default for that field; never below 3 for minLive or minDebrief. `policyFrom(defaultSettings())` must deep-equal `DEFAULT_POLICY`.
+4. floor.ts: `decideFloor(f, policy = DEFAULT_POLICY)` uses `policy.minLive`, `policy.earlyGapMs`, `policy.gapMs`; `debriefStatus({asked, gaps, refusals, minDebrief = DEFAULT_POLICY.minDebrief})` uses it for `remaining`. Default arguments keep every current caller identical. Update the header comment that names MIN_LIVE_QUESTIONS if it now misleads.
+5. Tests: floor.test.ts: `policyFrom(defaultSettings())` equals `DEFAULT_POLICY`; every combination of the three settings (3×3×3) keeps minLive ≥ 3 and minDebrief ≥ 3 and positive gaps; "curious" asks sooner and "quiet" later than "balanced" through `decideFloor` at the boundary times; minLive 5 keeps the early gap and early "navigation counts" behaviour until 5 questions; `debriefStatus` with minDebrief 5 needs 5; a bogus value (cast) falls back; existing tests unchanged and passing. settings.test.ts: a stored "2" falls back to "3"; "4" round-trips; update any test that relied on "2".
+6. No em dashes in UI text; prettier-clean; whole-UI lint 0 problems.
+Done when: `cd pixel-perfect-capture && npx vitest run src/lib/floor.test.ts src/lib/settings.test.ts`, `npm test`, `npm run build` and `npm run lint` pass; `/Users/mithra/.builds/sia/.claude/check.sh 4d25ccb` prints ALL CHECKS PASSED. Report the final mapping table (setting → policy values) and confirm use-apprentice.ts and Sia.tsx are untouched and still compile.
+Contract (B-26 builds on it next round; implement exactly):
+```
+export type FloorPolicy = { minLive: number; earlyGapMs: number; gapMs: number; minDebrief: number };
+export const DEFAULT_POLICY: FloorPolicy;  // { minLive: 3, earlyGapMs: 40_000, gapMs: 75_000, minDebrief: 3 }
+export function policyFrom(s: Pick<Settings, "curiosity" | "minQuestions" | "debriefDepth">): FloorPolicy;
+export function decideFloor(f: FloorInput, policy?: FloorPolicy): Floor;
+export function debriefStatus(args: { asked: string[]; gaps: string[]; refusals?: number; minDebrief?: number }): DebriefStatus;
+```
+
+Approved (main session): policyFrom/DEFAULT_POLICY per contract; defaults keep today's behaviour; minLive/minDebrief never below 3; 74 tests; check.sh 4d25ccb → ALL CHECKS PASSED.
+Release: worktree .claude/worktrees/agent-a275c0b5dc7a8c09b, files pixel-perfect-capture/src/lib/floor.ts, pixel-perfect-capture/src/lib/floor.test.ts, pixel-perfect-capture/src/lib/settings.ts, pixel-perfect-capture/src/lib/settings.test.ts, pixel-perfect-capture/src/routes/settings.tsx.
+Commit: "Turn the question settings into a pace the apprentice can follow, never below three questions"
