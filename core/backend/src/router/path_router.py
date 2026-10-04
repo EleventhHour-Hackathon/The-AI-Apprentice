@@ -232,7 +232,8 @@ async def merge_session(session_id: str, payload: dict = Body(...)):
         raise HTTPException(status_code=502, detail="Couldn't merge the Work Map")
 
     work_map.update(
-        task=session.get("task"),
+        # The merge names the task in English, the Work Map's language; else the expert's words.
+        task=(work_map.get("task") or "").strip() or session.get("task"),
         transcript=transcript,
         duration=payload.get("duration"),
         corrections=[c["correction"] for c in session.get("captures") or [] if c.get("kind") == "correction"],

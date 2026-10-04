@@ -37,6 +37,14 @@ import {
 } from "lucide-react";
 import { desktop } from "@/lib/desktop";
 import { MIN_LIVE_QUESTIONS } from "@/lib/floor";
+import {
+  languageName,
+  languageOptions,
+  lessonRef,
+  storeLanguage,
+  storedLanguage,
+  type LanguageChoice,
+} from "@/lib/languages";
 import { ClipPlayer } from "@/components/ClipPlayer";
 import { DeleteWorkMap } from "@/components/DeleteWorkMap";
 import { Button } from "@/components/ui/button";
@@ -356,6 +364,16 @@ function Canvas({ map: record, onClose }: Props) {
   const liveQuestions = map.live_questions ?? [];
   const asked = liveQuestions.filter((q) => !q.deferred);
   const guardrailAsked = asked.some((q) => q.kind === "guardrail");
+  const [tutorLanguage, setTutorLanguage] = useState<LanguageChoice>("en");
+  useEffect(() => setTutorLanguage(storedLanguage("tutor")), []);
+  // The languages the expert spoke, from their quotes (the map itself is in English).
+  const spoken = [
+    ...new Set(
+      [...map.steps, ...map.guardrails]
+        .map((i) => i.quote_language)
+        .filter((code) => code && code !== "en"),
+    ),
+  ];
   const unlinkedCount = [...map.steps, ...map.guardrails].filter((i) => unlinked(i).length).length;
 
   const layout = useMemo(() => layoutMap(map, selected), [map, selected]);
@@ -461,6 +479,7 @@ function Canvas({ map: record, onClose }: Props) {
             {recordedAt(map.recorded_at)} · {count(map.steps.length, "step")} ·{" "}
             {count(judgments, "judgment call")} · {count(map.guardrails.length, "guardrail")}
             {map.open_questions.length > 0 && ` · ${map.open_questions.length} open`}
+            {spoken.length > 0 && ` · spoken in ${spoken.map(languageName).join(", ")}`}
             {unlinkedCount > 0 && (
               <span
                 className="text-voice-raised"
@@ -496,15 +515,34 @@ function Canvas({ map: record, onClose }: Props) {
         </span>
         <div className="ml-auto flex items-center gap-2">
           {map.steps.length > 0 && (
-            <Button
-              variant="outline"
-              className="h-8 rounded-full text-xs"
-              title="A new hire works a case while the tutor watches"
-              onClick={() => teach(map.id)}
-            >
-              <GraduationCap size={13} />
-              Teach a new hire
-            </Button>
+            <div className="flex items-center overflow-hidden rounded-full border">
+              <Button
+                variant="ghost"
+                className="h-8 rounded-none pl-3 pr-2 text-xs"
+                title="A new hire works a case while the tutor watches"
+                onClick={() => teach(map.id, tutorLanguage)}
+              >
+                <GraduationCap size={13} />
+                Teach a new hire in
+              </Button>
+              <select
+                value={tutorLanguage}
+                onChange={(e) => {
+                  const next = e.target.value as LanguageChoice;
+                  setTutorLanguage(next);
+                  storeLanguage("tutor", next);
+                }}
+                aria-label="Language the tutor teaches in"
+                title="The tutor teaches in this language, whatever language the expert spoke"
+                className="h-8 max-w-32 truncate border-l bg-transparent pl-2 pr-1 text-xs outline-none hover:bg-muted"
+              >
+                {languageOptions(true).map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           )}
           {(map.transcript.length > 0 || liveQuestions.length > 0) && (
             <Button
@@ -634,6 +672,8 @@ function Canvas({ map: record, onClose }: Props) {
                       verbatim={step.quote_kind === "reason"}
                       source={step.quote_source}
                       at={step.quote_at}
+                      translation={step.quote_translation}
+                      language={step.quote_language}
                     />
                   ) : (
                     <span className="text-pill-muted">No reason given.</span>
@@ -646,6 +686,8 @@ function Canvas({ map: record, onClose }: Props) {
                       verbatim
                       source={step.quote_source}
                       at={step.quote_at}
+                      translation={step.quote_translation}
+                      language={step.quote_language}
                     />
                   </Section>
                 )}
@@ -697,6 +739,8 @@ function Canvas({ map: record, onClose }: Props) {
                       verbatim
                       source={guard.quote_source}
                       at={guard.quote_at}
+                      translation={guard.quote_translation}
+                      language={guard.quote_language}
                     />
                   </Section>
                 )}
@@ -757,11 +801,14 @@ function Canvas({ map: record, onClose }: Props) {
   );
 }
 
-/** Start a lesson from this map: in the desktop pill, or on the home page in a browser. */
-function teach(workMapId: string) {
+/** Start a lesson from this map, in the new hire's language: in the desktop pill, or on the home page in a browser. */
+function teach(workMapId: string, language: LanguageChoice) {
   const bridge = desktop();
-  if (bridge) bridge.pill(`lesson:${workMapId}`);
-  else window.location.assign(`/?lesson=${encodeURIComponent(workMapId)}`);
+  if (bridge) bridge.pill(`lesson:${lessonRef(workMapId, language)}`);
+  else
+    window.location.assign(
+      `/?lesson=${encodeURIComponent(workMapId)}&lang=${encodeURIComponent(language)}`,
+    );
 }
 
 /** On a step card: the still, with a few seconds of the expert doing it played on hover. */
@@ -853,15 +900,28 @@ function Quote({
   verbatim,
   source,
   at,
+  translation = "",
+  language = "",
 }: {
   text: string;
   verbatim: boolean;
   source: string;
   at: number | null;
+  /** English, when the expert said it in another language. */
+  translation?: string;
+  language?: string;
 }) {
   return (
     <blockquote className="border-l-2 border-voice-debrief pl-3">
       <p className={verbatim ? "italic" : ""}>{verbatim ? `“${text}”` : text}</p>
+      {verbatim && translation && (
+        <p className="mt-1 text-pill-foreground/75">
+          <span className="mr-1.5 font-mono text-[9.5px] uppercase text-pill-muted">
+            {language ? `${languageName(language)} → English` : "English"}
+          </span>
+          {translation}
+        </p>
+      )}
       <span
         className={`mt-1.5 block font-mono text-[10px] ${source === "live" ? "text-voice-listening" : "text-voice-debrief"}`}
       >

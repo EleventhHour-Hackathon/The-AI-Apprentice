@@ -9,6 +9,7 @@ import {
   type ScreenKind,
 } from "@/lib/floor";
 import type { ScreenEvent } from "@/hooks/use-screen-events";
+import type { LanguageChoice } from "@/lib/languages";
 
 /** Phases of a session. The agent moves between them by calling client tools. */
 export type FlowNode = "session_start" | "observing" | "debrief" | "teach_back" | "end";
@@ -474,128 +475,133 @@ export function useApprentice(options: {
     }));
   }, []);
 
-  const start = useCallback(async () => {
-    if (conv.current) return;
-    const sessionId = crypto.randomUUID();
-    s.current = {
-      ...s.current,
-      sessionId,
-      startedAt: 0,
-      node: "session_start",
-      transcript: [],
-      offRecord: false,
-      lastSpeechAt: -Infinity,
-      lastActivityAt: -Infinity,
-      pending: [],
-      questionTimes: [],
-      lastPauseAt: -Infinity,
-      floorOpenUntil: -Infinity,
-      grant: null,
-      lastDirectQuestionAt: -Infinity,
-      muted: false,
-      gated: false,
-      agentSpeaking: false,
-      taskDone: false,
-      asked: [],
-      pauseReply: false,
-      guardrailCaptured: false,
-      agentDoneAt: -Infinity,
-      recent: [],
-      wrapUp: false,
-      wrapUpPrompts: 0,
-      wrapUpLimit: 0,
-    };
-    setState({ ...initialState, status: "connecting" });
-    try {
-      const { token } = await fetch(`${BACKEND_URL}/api/v1/agent/token`).then((r) => {
-        if (!r.ok) throw new Error(`token request answered ${r.status}`);
-        return r.json() as Promise<{ token: string }>;
-      });
-      await post(`/sessions/${sessionId}/start`, {});
-      const c = await VoiceConversation.startSession({
-        conversationToken: token,
-        connectionType: "webrtc",
-        clientTools: clientTools.current,
-        onConnect({ conversationId }) {
-          s.current.startedAt = performance.now();
-          setSession({ id: sessionId, clock });
-          setState((st) => ({ ...st, status: "connected" }));
-          void post(`/sessions/${sessionId}/start`, { conversation_id: conversationId }).catch(
-            () => undefined,
-          );
-        },
-        onModeChange({ mode }) {
-          const x = s.current;
-          if (mode === "speaking") {
-            x.agentSpeaking = true;
-            gate();
-          } else {
-            x.agentSpeaking = false;
-            x.agentDoneAt = performance.now();
-            endUtterance();
-          }
-          setState((st) => ({ ...st, botSpeaking: mode === "speaking" && !x.muted }));
-        },
-        onMessage({ message, role }) {
-          const x = s.current;
-          const text = message.trim();
-          if (!text) return;
-          const phase = live(x.node) ? "live" : "debrief";
-          if (role === "agent") {
-            if (!gate()) return; // muted: the expert never heard it, so it is not part of the record
-            x.transcript.push({ role: "apprentice", text, t: clock(), phase });
-            if (x.grant === "start") return; // "Go ahead." is not a question
-            if (x.pauseReply) {
-              x.pauseReply = false;
-              // Only a question counts: "Got it." at a pause is not one.
-              if (x.node === "observing" && text.includes("?")) countQuestion(text);
+  const start = useCallback(
+    async (language: LanguageChoice = "auto") => {
+      if (conv.current) return;
+      const sessionId = crypto.randomUUID();
+      s.current = {
+        ...s.current,
+        sessionId,
+        startedAt: 0,
+        node: "session_start",
+        transcript: [],
+        offRecord: false,
+        lastSpeechAt: -Infinity,
+        lastActivityAt: -Infinity,
+        pending: [],
+        questionTimes: [],
+        lastPauseAt: -Infinity,
+        floorOpenUntil: -Infinity,
+        grant: null,
+        lastDirectQuestionAt: -Infinity,
+        muted: false,
+        gated: false,
+        agentSpeaking: false,
+        taskDone: false,
+        asked: [],
+        pauseReply: false,
+        guardrailCaptured: false,
+        agentDoneAt: -Infinity,
+        recent: [],
+        wrapUp: false,
+        wrapUpPrompts: 0,
+        wrapUpLimit: 0,
+      };
+      setState({ ...initialState, status: "connecting" });
+      try {
+        const { token } = await fetch(`${BACKEND_URL}/api/v1/agent/token`).then((r) => {
+          if (!r.ok) throw new Error(`token request answered ${r.status}`);
+          return r.json() as Promise<{ token: string }>;
+        });
+        await post(`/sessions/${sessionId}/start`, {});
+        const c = await VoiceConversation.startSession({
+          conversationToken: token,
+          connectionType: "webrtc",
+          // The expert's language; on Auto the agent starts in English and follows them.
+          ...(language !== "auto" && { overrides: { agent: { language } } }),
+          clientTools: clientTools.current,
+          onConnect({ conversationId }) {
+            s.current.startedAt = performance.now();
+            setSession({ id: sessionId, clock });
+            setState((st) => ({ ...st, status: "connected" }));
+            void post(`/sessions/${sessionId}/start`, { conversation_id: conversationId }).catch(
+              () => undefined,
+            );
+          },
+          onModeChange({ mode }) {
+            const x = s.current;
+            if (mode === "speaking") {
+              x.agentSpeaking = true;
+              gate();
+            } else {
+              x.agentSpeaking = false;
+              x.agentDoneAt = performance.now();
+              endUtterance();
             }
-            const moment = latest.current.moment();
-            setState((st) => ({
-              ...st,
-              exchanges: [
-                ...st.exchanges,
-                { ...moment, node: x.node, question: text, answer: "", captured: false },
-              ],
-            }));
-            return;
-          }
-          // Messages the pill sent on the expert's behalf ([PAUSE], [SKIP], ...) are not their words.
-          if (text.startsWith("[")) return;
-          x.transcript.push({ role: "expert", text, t: clock(), phase });
-          if (x.node === "observing" && text.endsWith("?"))
-            x.lastDirectQuestionAt = performance.now();
-          setState((st) => {
-            const last = st.exchanges.at(-1);
-            if (!last) return st;
-            const answer = last.answer ? `${last.answer} ${text}` : text;
-            return { ...st, exchanges: [...st.exchanges.slice(0, -1), { ...last, answer }] };
-          });
-        },
-        onVadScore({ vadScore }) {
-          if (vadScore >= VAD_SPEECH) s.current.lastSpeechAt = performance.now();
-        },
-        onDisconnect(details) {
-          if (conv.current !== c) return;
-          const error =
-            details.reason === "error"
-              ? `The voice connection dropped: ${details.message}`
-              : details.reason === "agent" && s.current.node !== "end"
-                ? "The apprentice ended the call early. Start a new session to retry."
-                : undefined;
-          saveDraft();
-          release(error);
-        },
-        onError(message) {
-          setState((st) => ({ ...st, error: message || "Voice connection failed." }));
-        },
-      });
-      conv.current = c;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "";
-      release(`Could not start the apprentice.${message ? ` ${message}` : ""}`);
-    }
-  }, [clock, countQuestion, endUtterance, gate, release, saveDraft]);
+            setState((st) => ({ ...st, botSpeaking: mode === "speaking" && !x.muted }));
+          },
+          onMessage({ message, role }) {
+            const x = s.current;
+            const text = message.trim();
+            if (!text) return;
+            const phase = live(x.node) ? "live" : "debrief";
+            if (role === "agent") {
+              if (!gate()) return; // muted: the expert never heard it, so it is not part of the record
+              x.transcript.push({ role: "apprentice", text, t: clock(), phase });
+              if (x.grant === "start") return; // "Go ahead." is not a question
+              if (x.pauseReply) {
+                x.pauseReply = false;
+                // Only a question counts: "Got it." at a pause is not one.
+                if (x.node === "observing" && text.includes("?")) countQuestion(text);
+              }
+              const moment = latest.current.moment();
+              setState((st) => ({
+                ...st,
+                exchanges: [
+                  ...st.exchanges,
+                  { ...moment, node: x.node, question: text, answer: "", captured: false },
+                ],
+              }));
+              return;
+            }
+            // Messages the pill sent on the expert's behalf ([PAUSE], [SKIP], ...) are not their words.
+            if (text.startsWith("[")) return;
+            x.transcript.push({ role: "expert", text, t: clock(), phase });
+            if (x.node === "observing" && text.endsWith("?"))
+              x.lastDirectQuestionAt = performance.now();
+            setState((st) => {
+              const last = st.exchanges.at(-1);
+              if (!last) return st;
+              const answer = last.answer ? `${last.answer} ${text}` : text;
+              return { ...st, exchanges: [...st.exchanges.slice(0, -1), { ...last, answer }] };
+            });
+          },
+          onVadScore({ vadScore }) {
+            if (vadScore >= VAD_SPEECH) s.current.lastSpeechAt = performance.now();
+          },
+          onDisconnect(details) {
+            if (conv.current !== c) return;
+            const error =
+              details.reason === "error"
+                ? `The voice connection dropped: ${details.message}`
+                : details.reason === "agent" && s.current.node !== "end"
+                  ? "The apprentice ended the call early. Start a new session to retry."
+                  : undefined;
+            saveDraft();
+            release(error);
+          },
+          onError(message) {
+            setState((st) => ({ ...st, error: message || "Voice connection failed." }));
+          },
+        });
+        conv.current = c;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        release(`Could not start the apprentice.${message ? ` ${message}` : ""}`);
+      }
+    },
+    [clock, countQuestion, endUtterance, gate, release, saveDraft],
+  );
 
   /** End the session. Unless the map was confirmed, what was captured is still saved as a draft. */
   const stop = useCallback(() => {

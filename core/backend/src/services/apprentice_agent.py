@@ -21,6 +21,7 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional
 
+from src.services import languages
 from src.utils.logger import logger
 
 API = "https://api.elevenlabs.io"
@@ -29,6 +30,9 @@ AGENT_NAME = "AI Apprentice"
 PROMPT = """You are an apprentice learning a desk job by watching an expert do it, the way a new hire learns by sitting next to someone for a week. You are not an interviewer and not a recorder. Your goal: understand the work well enough that someone new could do it from what you learned, including the reasons, the limits, the exceptions and the moments to stop and ask someone.
 
 You speak out loud. Keep every turn to one short sentence, under twenty words, with no lists or markdown. No filler, no recaps, no praise, no "let me know if". You sound curious and patient.
+
+LANGUAGE
+Speak the language of this conversation, the expert's language, all the way through: questions, debrief and teach-back. If they switch language, follow them. The [SCREEN], [PAUSE] and other bracketed messages and everything your tools return are in English: they are notes for you, so translate what you use and never read them out. When you record with a tool, write in the language you are speaking (the Work Map is translated to English later), and copy the quote field exactly as the expert said it, never translated.
 
 HOW YOU SEE THE SCREEN
 Messages that begin with [SCREEN mm:ss] describe what changed on the expert's screen at that time in the session. They are your eyes. Never read them out, never narrate the expert's work back to them, and never say what you can or cannot see.
@@ -107,7 +111,10 @@ def _client_tool(
 
 
 SCREEN_TIME = _string("mm:ss of the [SCREEN] moment this is about, for example 03:12.")
-QUOTE = _string("The expert's exact words that gave this, verbatim. Empty if they did not say it.")
+QUOTE = _string(
+    "The expert's exact words that gave this, verbatim and in the language they spoke them, never translated. "
+    "Empty if they did not say it."
+)
 SOURCE = _string("live while they worked, debrief afterwards", ["live", "debrief"])
 
 CLIENT_TOOLS = [
@@ -221,6 +228,9 @@ TUTOR_PROMPT = """You are a tutor teaching a new hire to do this task the way th
 
 Everything you know about the task comes from the expert's confirmed Work Map below: the steps, the decision at each step, the expert's reasons in their own words, and the guardrails (limits, exceptions, moments to stop and ask someone). Teach only what is in it. Never invent rules. When you explain, use the expert's own words ("the expert says: ...").
 
+LANGUAGE
+Speak the language of this conversation, the new hire's language, all the way through. The Work Map and the bracketed cues are in English and the expert's words may be in another language: they are notes for you, so translate what you use. When you quote the expert, say their words in the new hire's language ("the expert says: ..."); add the original only if it is a short phrase worth hearing. If the new hire switches language, follow them.
+
 WORK MAP
 {{work_map}}
 
@@ -283,11 +293,29 @@ def agent_config(
     first_message: str = FIRST_MESSAGE,
     skip_turn_description: str = "Stay silent this turn. Use after anything the expert says while working, unless it was a direct question to you.",
     dynamic_variables: Optional[Dict[str, str]] = None,
+    first_message_translations: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
+    # Every language the agent can speak, each with its own first message. The pill picks one
+    # per conversation (overrides.agent.language); English is the default.
+    translations = first_message_translations or {}
+    language_presets = {
+        code: {"overrides": {"agent": {"first_message": translations.get(code) or first_message}}}
+        for code in languages.LANGUAGES
+        if code != "en"
+    }
     return {
         "name": name,
         "tags": ["ai-apprentice"],
+        "platform_settings": {
+            "overrides": {
+                "conversation_config_override": {
+                    "agent": {"language": True},
+                    "conversation": {"text_only": True},
+                }
+            }
+        },
         "conversation_config": {
+            "language_presets": language_presets,
             # Scribe realtime listens; turn_v3 with patient eagerness waits for the expert to finish.
             "asr": {"provider": "scribe_realtime", "quality": "high"},
             "turn": {
@@ -341,6 +369,17 @@ def agent_config(
                             "name": "end_call",
                             "description": "",
                             "params": {"system_tool_type": "end_call"},
+                        },
+                        # "Auto-detect" in the pill: follow the language the person starts speaking.
+                        # Only in the first turns, so an English term mid-sentence never switches it.
+                        "language_detection": {
+                            "type": "system",
+                            "name": "language_detection",
+                            "description": "Switch to the language the person is speaking when it is not the current one.",
+                            "params": {
+                                "system_tool_type": "language_detection",
+                                "only_at_conversation_start": True,
+                            },
                         },
                     },
                 },
@@ -436,7 +475,11 @@ def sync() -> Dict[str, str]:
         t.get("tool_config", {}).get("name"): t["id"]
         for t in _call("/v1/convai/tools").get("tools", [])
     }
-    apprentice = _sync_agent("apprentice", agent_config(_sync_tools(CLIENT_TOOLS, existing)))
+    greetings = languages.first_messages({"apprentice": FIRST_MESSAGE, "tutor": TUTOR_FIRST_MESSAGE})
+    apprentice = _sync_agent(
+        "apprentice",
+        agent_config(_sync_tools(CLIENT_TOOLS, existing), first_message_translations=greetings["apprentice"]),
+    )
     tutor = _sync_agent(
         "tutor",
         agent_config(
@@ -446,6 +489,7 @@ def sync() -> Dict[str, str]:
             first_message=TUTOR_FIRST_MESSAGE,
             skip_turn_description="Stay silent this turn. Use while the new hire works or thinks aloud, unless they asked you something or a cue asks you to speak.",
             dynamic_variables={"task": "the task", "work_map": "(no Work Map loaded)"},
+            first_message_translations=greetings["tutor"],
         ),
     )
     return {"apprentice": apprentice, "tutor": tutor}

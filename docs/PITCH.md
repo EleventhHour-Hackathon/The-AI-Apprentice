@@ -69,6 +69,14 @@ Tacit watches her close the month, asks what the screen can't show, and turns it
 
 ---
 
+## Any language
+
+- The expert explains in their language: 72 languages, or Auto-detect. The apprentice listens, asks and debriefs in that language.
+- The Work Map is kept in English. Every quote stays exactly as the expert said it, with an English translation beside it.
+- The tutor teaches the new hire in *their* language: Sabine explains in German, Lena learns in English (or Spanish, or Hindi).
+
+---
+
 ## Built with ElevenLabs
 
 - **ElevenAgents** plays both roles: the curious interviewer and the patient tutor, with Expressive Mode.

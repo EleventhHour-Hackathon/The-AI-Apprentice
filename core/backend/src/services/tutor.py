@@ -28,6 +28,11 @@ def _step_title(step: Dict[str, Any]) -> str:
     return step.get("title") or step.get("step") or ""
 
 
+def _in_english(item: Dict[str, Any]) -> str:
+    """The English translation of a quote the expert gave in another language."""
+    return f' (in English: "{item["quote_translation"]}")' if item.get("quote_translation") else ""
+
+
 def work_map_text(work_map: Dict[str, Any]) -> str:
     lines = ["STEPS (in order)"]
     for i, s in enumerate(work_map.get("steps") or [], 1):
@@ -39,12 +44,12 @@ def work_map_text(work_map: Dict[str, Any]) -> str:
             line += f"\n   Decision the expert made on their case: {s['decision']}"
         narration = s.get("quote_kind") == "narration"
         if s.get("quote") and not narration:
-            line += f'\n   Expert\'s words: "{s["quote"]}"'
+            line += f'\n   Expert\'s words: "{s["quote"]}"{_in_english(s)}'
         elif s.get("reason"):
             line += f"\n   Reason: {s['reason']}"
         if s.get("quote") and narration:
             # What they said while doing it: context, not a reason to teach.
-            line += f'\n   Said while doing it (not a reason): "{s["quote"]}"'
+            line += f'\n   Said while doing it (not a reason): "{s["quote"]}"{_in_english(s)}'
 
         lines.append(line)
     lines.append("\nGUARDRAILS")
@@ -59,7 +64,7 @@ def work_map_text(work_map: Dict[str, Any]) -> str:
         if g.get("ask_whom"):
             line += f"\n   Ask: {g['ask_whom']}"
         if g.get("quote"):
-            line += f'\n   Expert\'s words: "{g["quote"]}"'
+            line += f'\n   Expert\'s words: "{g["quote"]}"{_in_english(g)}'
         lines.append(line)
     if len(lines) == 2:
         lines.append("(none)")

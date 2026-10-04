@@ -20,6 +20,10 @@ export type WorkMapStep = {
   quote_at: number | null;
   quote_source: Source;
   quote_kind: QuoteKind;
+  /** English translation of a quote said in another language; "" if it is English. */
+  quote_translation: string;
+  /** The language the quote was said in (ISO code), when known. */
+  quote_language: string;
   at_source: AtSource;
   judgment: boolean;
   thumb: string | null;
@@ -40,6 +44,10 @@ export type WorkMapGuardrail = {
   quote_at: number | null;
   quote_source: Source;
   quote_kind: QuoteKind;
+  /** English translation of a quote said in another language; "" if it is English. */
+  quote_translation: string;
+  /** The language the quote was said in (ISO code), when known. */
+  quote_language: string;
   at: number | null;
   at_source: AtSource;
   thumb: string | null;
@@ -103,6 +111,8 @@ export function normalizeMap(record: WorkMapRecord): WorkMap {
     quote_at: num(s["quote_at"]),
     quote_source: source(s["quote_source"]),
     quote_kind: quoteKind(s["quote_kind"], text(s["quote"])),
+    quote_translation: text(s["quote_translation"]),
+    quote_language: text(s["quote_language"]),
     at_source: atSource(s["at_source"]),
     judgment: typeof s["judgment"] === "boolean" ? s["judgment"] : Boolean(text(s["decision"])),
     thumb: text(s["thumb"]) || null,
@@ -128,6 +138,8 @@ export function normalizeMap(record: WorkMapRecord): WorkMap {
       quote_at: num(g["quote_at"]),
       quote_source: source(g["quote_source"]),
       quote_kind: quoteKind(g["quote_kind"], text(g["quote"])),
+      quote_translation: text(g["quote_translation"]),
+      quote_language: text(g["quote_language"]),
       at: num(g["at"]),
       at_source: atSource(g["at_source"]),
       thumb: text(g["thumb"]) || null,

@@ -10,6 +10,7 @@ import { usePrivacyShield } from "@/hooks/use-privacy-shield";
 import { MIN_LIVE_QUESTIONS, type Floor } from "@/lib/floor";
 import { count } from "@/lib/work-maps";
 import { desktop } from "@/lib/desktop";
+import { languageOptions, storeLanguage, storedLanguage, type LanguageChoice } from "@/lib/languages";
 
 export type SiaState = "idle" | "connecting" | "watching" | "raised" | "gotit" | "debriefing" | "debrief";
 const fmt = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
@@ -40,6 +41,10 @@ export function Sia({ onOpenApp, onLesson }: { onOpenApp?: () => void; onLesson?
   const [quiet, setQuiet] = useState(true);
   const [dismissed, setDismissed] = useState(-1);
   const [minimized, setMinimized] = useState(false);
+  // The language the apprentice speaks with the expert; the Work Map is kept in English.
+  const [language, setLanguage] = useState<LanguageChoice>("auto");
+  useEffect(() => setLanguage(storedLanguage("apprentice")), []);
+  const chooseLanguage = (next: LanguageChoice) => { setLanguage(next); storeLanguage("apprentice", next); };
   const secondsRef = useRef(0);
   secondsRef.current = seconds;
   const snapshot = useRef<() => string | null>(() => null);
@@ -85,7 +90,7 @@ export function Sia({ onOpenApp, onLesson }: { onOpenApp?: () => void; onLesson?
       setScreenError("Screen sharing stopped. The apprentice can no longer see your work.");
     });
     setScreen(display);
-    void voice.start();
+    void voice.start(language);
   };
   const endWork = () => { stopScreen(); setGotit(null); voice.send("work.end"); };
   const endSession = () => { stopScreen(); voice.stop(); };
@@ -168,7 +173,7 @@ export function Sia({ onOpenApp, onLesson }: { onOpenApp?: () => void; onLesson?
   }, []);
 
   const expanded = state === "raised" || state === "gotit" || state === "debriefing" || state === "debrief";
-  const width = state === "idle" ? 310 : expanded && state !== "debrief" ? 440 : 380;
+  const width = state === "idle" ? 400 : expanded && state !== "debrief" ? 440 : 380;
   const color = offRecord || paused ? "text-pill-muted" : colors[state];
   const statusLabel = offRecord ? "Off the record" : paused ? "Paused" : state === "raised" && voice.node === "session_start" ? "Getting started" : state === "watching" ? (voice.wrapUp ? "Before the debrief" : floorLabels[voice.floor]) : labels[state];
   const answer = (current?.answer ? `${current.answer} ${voice.partial}` : voice.partial).trim();
@@ -189,7 +194,7 @@ export function Sia({ onOpenApp, onLesson }: { onOpenApp?: () => void; onLesson?
           <div className="ml-auto flex shrink-0 items-center gap-1">
             {screen && recording && <span className={`mr-1 flex items-center gap-0.5 ${shield.status === "failed" ? "text-voice-raised" : "text-pill-muted"}`} title={shield.status === "on" ? `Privacy shield on: ${shield.hidden ? `${count(shield.hidden, "item")} of personal data hidden` : "no personal data on screen right now"}. Nothing leaves this machine unshielded.` : shield.status === "starting" ? "Privacy shield starting: the screen isn't shared until it has checked it" : "Privacy shield couldn't start, so the screen isn't being shared"}>{shield.status === "on" ? <ShieldCheck size={12} /> : <Monitor size={12} />}{shield.status === "on" && shield.hidden > 0 && <span className="font-mono text-[10px]">{shield.hidden}</span>}</span>}
             {recording && <span className="mr-1 font-mono text-[11px] tabular-nums text-pill-muted">{fmt(seconds)}</span>}
-            {state === "idle" ? <Button className="voice-cta" onClick={() => void startSession()} title="Start session (S)"><Mic size={13} />Start session<Kbd>S</Kbd></Button> : state === "debrief" ? <Icon title="Close (Esc)" onClick={close}><X /></Icon> : <><Icon title={paused ? "Resume (R)" : "Pause (R)"} onClick={toggleMute}>{paused ? <Play /> : <Pause />}</Icon><Icon title="Off the record (O)" pressed={offRecord} onClick={toggleOffRecord}>{offRecord ? <MicOff /> : <Mic />}</Icon>{recording && <Icon title="End session (S)" onClick={state === "connecting" ? endSession : endWork}><Square size={12} /></Icon>}</>}
+            {state === "idle" ? <><select value={language} onChange={e => chooseLanguage(e.target.value as LanguageChoice)} title="The language the apprentice speaks with you. The Work Map is written in English, with your own words kept as you said them." aria-label="Language" className="voice-select mr-1 h-8 w-28 truncate rounded-full border border-pill-border bg-pill-raised px-2.5 text-xs text-pill-foreground outline-none hover:border-pill-muted focus-visible:border-voice-debrief">{languageOptions(true).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select><Button className="voice-cta" onClick={() => void startSession()} title="Start session (S)"><Mic size={13} />Start session<Kbd>S</Kbd></Button></> : state === "debrief" ? <Icon title="Close (Esc)" onClick={close}><X /></Icon> : <><Icon title={paused ? "Resume (R)" : "Pause (R)"} onClick={toggleMute}>{paused ? <Play /> : <Pause />}</Icon><Icon title="Off the record (O)" pressed={offRecord} onClick={toggleOffRecord}>{offRecord ? <MicOff /> : <Mic />}</Icon>{recording && <Icon title="End session (S)" onClick={state === "connecting" ? endSession : endWork}><Square size={12} /></Icon>}</>}
             <Icon title="Minimize" onClick={() => setMinimized(true)}><Minus /></Icon>
             {onOpenApp && <Icon title="Open app" onClick={onOpenApp}><AppWindow /></Icon>}
           </div>

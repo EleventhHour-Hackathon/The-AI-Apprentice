@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Sia } from "@/components/Sia";
 import { Tutor } from "@/components/Tutor";
 import { desktop } from "@/lib/desktop";
+import { lessonRef, parseLessonRef } from "@/lib/languages";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -37,7 +38,9 @@ function Index() {
   const [lesson, setLesson] = useState<string | null>(null);
   useEffect(() => {
     setShell(desktop() ? "desktop" : "web");
-    setLesson(new URLSearchParams(window.location.search).get("lesson"));
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get("lesson");
+    setLesson(id && lessonRef(id, parseLessonRef(`@${params.get("lang") ?? "en"}`).language));
   }, []);
   const endLesson = () => {
     setLesson(null);
@@ -130,7 +133,11 @@ function Index() {
         </div>
       </div>
       {shell === "web" &&
-        (lesson ? <Tutor workMapId={lesson} onClose={endLesson} /> : <Sia onLesson={setLesson} />)}
+        (lesson ? (
+          <Tutor {...parseLessonRef(lesson)} onClose={endLesson} />
+        ) : (
+          <Sia onLesson={setLesson} />
+        ))}
     </main>
   );
 }

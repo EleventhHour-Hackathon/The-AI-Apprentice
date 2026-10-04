@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 
 from openai import AsyncOpenAI
 
+from src.services import languages
 from src.services import work_map_links as links
 from src.services.work_map_edit import summary_for_agent
 from src.utils.logger import logger
@@ -46,6 +47,7 @@ Build:
 MODE_RULES
 
 Rules:
+- Write everything in English, whatever language was spoken: titles, screen, decision, reason, rule, applies_when, ask_whom and open_questions. Only quote stays exactly as the expert said it, in the language they said it, never translated.
 - Never invent a reason, rule or quote. Only the EXPERT's words count; the APPRENTICE's questions are not reasons.
 - A correction from the teach-back overrides what was said before.
 - Keep wording short and concrete, with the real values from the screen."""
@@ -61,8 +63,12 @@ SCHEMA = {
     "schema": {
         "type": "object",
         "additionalProperties": False,
-        "required": ["steps", "guardrails", "open_questions"],
+        "required": ["task", "steps", "guardrails", "open_questions"],
         "properties": {
+            "task": {
+                "type": "string",
+                "description": "The task in a few English words, as the expert named it (translated if they spoke another language)",
+            },
             "steps": {
                 "type": "array",
                 "items": {
@@ -164,7 +170,7 @@ async def merge(
     captures: List[Dict[str, Any]],
     final: bool,
 ) -> Dict[str, Any]:
-    """Return {"steps", "guardrails", "open_questions"} for the session."""
+    """Return {"task", "steps", "guardrails", "open_questions"} for the session."""
     screen = "\n".join(f"{mmss(e['t'])} {e['event']}" for e in events) or "(nothing seen)"
     said = "\n".join(
         f"{mmss(line.get('t'))} {'EXPERT' if line['role'] == 'expert' else 'APPRENTICE'}: {line['text']}"
@@ -201,6 +207,8 @@ async def merge(
             guard["step"] = ""
         _ground_quote(guard, expert_lines)
         links.place_guardrail(guard, steps, events, _snap(_seconds(guard["at"]), events))
+    # Quotes stay in the expert's language; the map shows an English translation beside them.
+    await languages.translate_quotes([*work_map["steps"], *work_map["guardrails"]])
     missing = sum(bool(links.unlinked(i)) for i in [*work_map["steps"], *work_map["guardrails"]])
     if missing:
         logger.info(f"{missing} Work Map items lack a screen moment or the expert's words")

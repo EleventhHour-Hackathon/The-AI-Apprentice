@@ -14,6 +14,7 @@ import { Icon, Kbd } from "@/components/Sia";
 import { VoiceWave } from "./VoiceWave";
 import { useScreenEvents } from "@/hooks/use-screen-events";
 import { usePrivacyShield } from "@/hooks/use-privacy-shield";
+import type { LanguageChoice } from "@/lib/languages";
 import { useTutor, type LessonStep } from "@/hooks/use-tutor";
 import { taskTitle } from "@/lib/work-maps";
 
@@ -27,10 +28,13 @@ const fmt = (s: number) =>
  */
 export function Tutor({
   workMapId,
+  language = "en",
   onClose,
   onOpenApp,
 }: {
   workMapId: string;
+  /** The language the tutor speaks with the new hire. */
+  language?: LanguageChoice;
   onClose: () => void;
   onOpenApp?: () => void;
 }) {
@@ -64,8 +68,8 @@ export function Tutor({
       setScreenError("Screen sharing stopped. The tutor can no longer see your work.");
     });
     setScreen(display);
-    void startTutor(workMapId);
-  }, [startTutor, workMapId]);
+    void startTutor(workMapId, language);
+  }, [startTutor, workMapId, language]);
 
   // Opened from the app's "Teach a new hire": start straight away.
   useEffect(() => {
@@ -400,6 +404,9 @@ function ExpertMoment({ step }: { step: LessonStep }) {
           <p className="mt-1 italic text-pill-foreground/80">
             “{(step.quote_kind !== "narration" && step.quote) || step.reason}”
           </p>
+        )}
+        {step.quote_kind !== "narration" && step.quote && step.quote_translation && (
+          <p className="mt-0.5 text-pill-foreground/70">{step.quote_translation}</p>
         )}
       </figcaption>
     </figure>

@@ -16,7 +16,7 @@ The merge LLM proposes quotes and times; this decides what the map may claim:
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-FILLERS = {"um", "umm", "uh", "uhh", "uhm", "erm", "er", "hmm", "mm", "mhm", "ah"}
+FILLERS = {"um", "umm", "uh", "uhh", "uhm", "erm", "er", "hmm", "mm", "mhm", "ah", "ähm", "äh", "öhm", "ehm", "euh", "eh", "eee"}
 # Units and currency are written either way ("€5,000", "5000 euros"); matching ignores them.
 UNITS_DROPPED = {"€", "$", "%", "eur", "euro", "euros", "dollar", "dollars", "percent"}
 NUMBERS = {
@@ -115,6 +115,26 @@ def match_quote(quote: str, lines: List[Dict[str, Any]]) -> Optional[Tuple[str, 
                     if used:
                         pieces.append(lines[k]["text"][used[0][1] : used[-1][2]])
                 return " ".join(pieces), lines[first]
+    return _match_unspaced(quote, lines)
+
+
+def _compact(text: str) -> str:
+    return re.sub(r"[\W_]+", "", (text or "").lower())
+
+
+def _match_unspaced(quote: str, lines: List[Dict[str, Any]]) -> Optional[Tuple[str, Dict[str, Any]]]:
+    """For languages written without spaces (Chinese, Japanese, Thai): match on the letters alone.
+
+    The match can't be cut out of the line exactly, so the whole line (or lines) is the quote.
+    """
+    wanted = _compact(quote)
+    if len(wanted) < 4:
+        return None
+    for span in (1, 2, 3):
+        for first in range(len(lines) - span + 1):
+            window = lines[first : first + span]
+            if wanted in "".join(_compact(l.get("text") or "") for l in window):
+                return " ".join((l.get("text") or "").strip() for l in window), lines[first]
     return None
 
 
@@ -144,7 +164,7 @@ def narrate(step: Dict[str, Any], live_lines: List[Dict[str, Any]]) -> None:
     timed = [
         l
         for l in live_lines
-        if isinstance(l.get("t"), (int, float)) and len(_content_words(l.get("text"))) >= NARRATION_MIN_WORDS
+        if isinstance(l.get("t"), (int, float)) and _substantial(l.get("text") or "")
     ]
     lo = (step.get("start") if step.get("start") is not None else at) - NARRATION_PAD_S
     hi = (step.get("end") if step.get("end") is not None else at) + NARRATION_PAD_S
@@ -180,6 +200,13 @@ def place_guardrail(
         guard.update(at=said, at_source="said")
     else:
         guard.update(at=guessed, at_source="model" if guessed is not None else "none")
+
+
+def _substantial(text: str) -> bool:
+    """Says something: three real words, or (in scripts without spaces) a dozen letters."""
+    if len(_content_words(text)) >= NARRATION_MIN_WORDS:
+        return True
+    return " " not in text.strip() and len(_compact(text)) >= 12
 
 
 def _content_words(*texts: Any) -> set:

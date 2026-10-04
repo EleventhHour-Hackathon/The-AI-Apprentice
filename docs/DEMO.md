@@ -60,6 +60,12 @@ the apprentice asks the missing ones first (*Before the debrief*).
 If the tutor is late: stay on the confirm dialog for two or three seconds before
 confirming; it checks every screen change, and the dialog is the last moment to step in.
 
+## Variation: two languages
+
+Before **Start session**, pick **Deutsch** in the pill and do part 1 in German. The Work Map comes
+out in English with Sabine's German words beside their translation. Then pick **English** (or any
+language) next to **Teach a new hire**: the tutor teaches in that language, quoting her reasons.
+
 ## After
 
 Reset both sets in Ledgerly. Delete practice Work Maps you don't want from *Work Maps*.

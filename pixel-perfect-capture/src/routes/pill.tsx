@@ -3,6 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Sia } from "@/components/Sia";
 import { Tutor } from "@/components/Tutor";
 import { desktop } from "@/lib/desktop";
+import { parseLessonRef } from "@/lib/languages";
 
 const PILL = 'section[aria-label="Voice assistant"]';
 /** Room around the pill: its bottom offset plus space for the shadow above it. */
@@ -121,7 +122,7 @@ ${PILL} :where(input, textarea, [contenteditable=true]) { cursor: text; user-sel
       </style>
       {lesson ? (
         <Tutor
-          workMapId={lesson}
+          {...parseLessonRef(lesson)}
           onClose={() => setLesson(null)}
           onOpenApp={() => desktop()?.pill("app")}
         />

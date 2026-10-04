@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { LanguageChoice } from "@/lib/languages";
 import { VoiceConversation } from "@elevenlabs/client";
 import { BACKEND_URL } from "@/lib/backend";
 import type { ScreenEvent } from "@/hooks/use-screen-events";
@@ -12,6 +13,8 @@ export type LessonStep = {
   quote: string;
   /** "narration": said while doing it, not a reason. */
   quote_kind?: string;
+  /** English, when the expert said it in another language. */
+  quote_translation?: string;
   judgment: boolean;
   at: number | null;
   thumb: string | null;
@@ -208,7 +211,7 @@ export function useTutor() {
   }, []);
 
   const start = useCallback(
-    async (workMapId: string) => {
+    async (workMapId: string, language: LanguageChoice = "en") => {
       if (conv.current) return;
       setState({ ...initialState, status: "connecting" });
       try {
@@ -240,6 +243,8 @@ export function useTutor() {
           conversationToken: token,
           connectionType: "webrtc",
           dynamicVariables: { task: lesson.task, work_map: lesson.work_map },
+          // The new hire's language, whatever language the expert taught in.
+          ...(language !== "auto" && { overrides: { agent: { language } } }),
           clientTools: clientTools.current,
           onConnect({ conversationId }) {
             s.current.startedAt = performance.now();
