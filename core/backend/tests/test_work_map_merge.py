@@ -162,3 +162,51 @@ async def test_brief_for_agent_lists_the_gaps(merge_llm):
     assert f"- {GAP_STEP}" in gaps
     assert f"- {GAP_GUARD}" in gaps
     assert gaps.index(GAP_STEP) < gaps.index("What changes for foreign suppliers?")
+
+
+def inferred(base, reason, confidence):
+    return {**base, "inferred_reason": reason, "inferred_confidence": confidence}
+
+
+@pytest.mark.asyncio
+async def test_a_reason_it_is_extremely_sure_of_is_assumed_not_asked(merge_llm):
+    sure = inferred(UNLINKED_STEP, "Equipment over 5,000 is capex", 0.95)
+    fake = merge_llm(llm_map([LINKED_STEP, sure], [], []))
+    work_map = await run_merge(final=False)
+
+    coded = work_map["steps"][1]
+    assert coded["reason"] == "Equipment over 5,000 is capex"
+    assert coded["reason_source"] == "inferred"
+    assert "inferred_reason" not in coded and "inferred_confidence" not in coded
+    assert GAP_STEP not in work_map["open_questions"]
+    assert "inferred_reason" in fake.calls[0]["messages"][0]["content"]
+    brief = work_map_merge.brief_for_agent(work_map)
+    assumed = brief.split("ASSUMED REASONS", 1)[1]
+    assert "s2 Code the invoice: Equipment over 5,000 is capex" in assumed
+
+
+@pytest.mark.asyncio
+async def test_a_reason_it_is_not_sure_of_is_still_asked(merge_llm):
+    merge_llm(llm_map([LINKED_STEP, inferred(UNLINKED_STEP, "Maybe capex", 0.8)], [], []))
+    work_map = await run_merge(final=False)
+
+    coded = work_map["steps"][1]
+    assert coded["reason"] == "" and "reason_source" not in coded
+    assert "inferred_reason" not in coded
+    assert work_map["open_questions"] == [GAP_STEP]
+    assert "ASSUMED REASONS" not in work_map_merge.brief_for_agent(work_map)
+
+
+@pytest.mark.asyncio
+async def test_the_experts_reason_beats_an_inferred_one(merge_llm):
+    merge_llm(llm_map([inferred(LINKED_STEP, "Something obvious", 0.99)], [], []))
+    work_map = await run_merge(final=True)
+
+    assert work_map["steps"][0]["reason"] == "Retired assets can't be booked"
+    assert "reason_source" not in work_map["steps"][0]
+
+
+def test_the_schema_asks_for_inferred_reasons():
+    step_schema = work_map_merge.SCHEMA["schema"]["properties"]["steps"]["items"]
+    assert {"inferred_reason", "inferred_confidence"} <= set(step_schema["required"])
+    assert set(step_schema["required"]) == set(step_schema["properties"])

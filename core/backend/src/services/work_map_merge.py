@@ -42,6 +42,8 @@ Build:
   - reason: why, in the expert's words, only if they gave it; "" if nobody said.
   - quote: the expert's exact words that give the reason, copied verbatim from TRANSCRIPT; "" if none.
   - judgment: true when the step needed a decision a new hire could get wrong, false for routine steps.
+  - inferred_reason: only when reason is "": the reason, in one short sentence, if it is obvious from the screen or from common business practice anyone in the job would know; "" otherwise. Never a reason that depends on this company's own rules, limits, people or exceptions.
+  - inferred_confidence: how sure you are of inferred_reason, from 0 to 1; 0 when it is "". Use 0.9 or more only when nobody in the job would doubt it.
 - guardrails: every limit, exception or moment to stop and ask someone the expert stated. kind is limit (a threshold or hard rule), exception (a case handled differently) or stop_and_ask (someone else must decide, approve or be asked: a controller, manager, colleague); for stop_and_ask, ask_whom names them. step is the id of the step it is about: every guardrail belongs to a step whenever one fits, including rules first stated in the debrief; leave it empty only for a rule about the whole task. quote is verbatim from TRANSCRIPT. at is the mm:ss of the SCREEN moment it is about (the step's moment if it was only said in the debrief).
 - open_questions: what is still unclear.
 MODE_RULES
@@ -50,9 +52,9 @@ Rules:
 - Write everything in English, whatever language was spoken: titles, screen, decision, reason, rule, applies_when, ask_whom and open_questions. Only quote stays exactly as the expert said it, in the language they said it, never translated.
 - Never invent a reason, rule or quote. Only the EXPERT's words count; the APPRENTICE's questions are not reasons.
 - A correction from the teach-back overrides what was said before.
-- Keep wording short and concrete, with the real values from the screen."""
+- Keep wording short and concrete, with the real values from the screen."""  # noqa: E501
 
-DRAFT_RULES = """  This is the DRAFT, before the debrief. List every question still worth asking, most valuable first; there is no fixed number, include at least three: steps with a decision but no reason, edges of the guardrails (larger amounts, new or foreign suppliers, missing data, who to ask), and cases that were never shown. Each is one short spoken question about the judgment behind the work: why, when it would be different, where the limit is, who they would ask. Never ask the expert to describe or repeat what they did or said, and never restate the task or the screen back to them ("What steps do you take to debug code after seeing the test summary?" is a bad question; "What would make you stop and ask someone before changing it?" is a good one). If little was shown, ask about the edges of the task in general: the cases handled differently, the moments to stop and ask, what a new person gets wrong. Do not repeat questions the expert already answered."""
+DRAFT_RULES = """  This is the DRAFT, before the debrief. List every question still worth asking, most valuable first; there is no fixed number, include at least three: steps with a decision but no reason, edges of the guardrails (larger amounts, new or foreign suppliers, missing data, who to ask), and cases that were never shown. Each is one short spoken question about the judgment behind the work: why, when it would be different, where the limit is, who they would ask. Never ask the expert to describe or repeat what they did or said, and never restate the task or the screen back to them ("What steps do you take to debug code after seeing the test summary?" is a bad question; "What would make you stop and ask someone before changing it?" is a good one). If little was shown, ask about the edges of the task in general: the cases handled differently, the moments to stop and ask, what a new person gets wrong. Do not repeat questions the expert already answered. Do not ask why a step was done when you gave it an inferred_reason with inferred_confidence 0.9 or more: it is assumed, and the teach-back states it for the expert to confirm."""
 
 FINAL_RULES = """  This is the FINAL map, after the debrief and teach-back. List only what is genuinely still unanswered (often nothing)."""
 
@@ -74,7 +76,20 @@ SCHEMA = {
                 "items": {
                     "type": "object",
                     "additionalProperties": False,
-                    "required": ["id", "title", "at", "start", "end", "screen", "decision", "reason", "quote", "judgment"],
+                    "required": [
+                        "id",
+                        "title",
+                        "at",
+                        "start",
+                        "end",
+                        "screen",
+                        "decision",
+                        "reason",
+                        "quote",
+                        "judgment",
+                        "inferred_reason",
+                        "inferred_confidence",
+                    ],
                     "properties": {
                         "id": {"type": "string", "description": "s1, s2, ..."},
                         "title": {"type": "string"},
@@ -86,6 +101,8 @@ SCHEMA = {
                         "reason": {"type": "string"},
                         "quote": _QUOTE,
                         "judgment": {"type": "boolean"},
+                        "inferred_reason": {"type": "string"},
+                        "inferred_confidence": {"type": "number"},
                     },
                 },
             },
@@ -114,6 +131,25 @@ SCHEMA = {
 
 
 mmss = links.mmss
+
+# A reason nobody said is kept only if the merge is "extremely sure" of it (see infer.THRESHOLD).
+INFERRED_THRESHOLD = 0.9
+
+
+def _assume_reason(step: Dict[str, Any]) -> None:
+    """Keep a reason the merge is extremely sure of as an assumed one (reason_source "inferred"),
+    so the debrief doesn't ask it and the teach-back states it for the expert to confirm."""
+    inferred = str(step.pop("inferred_reason", "") or "").strip()
+    try:
+        confidence = float(step.pop("inferred_confidence", 0) or 0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    if inferred and confidence >= INFERRED_THRESHOLD and not str(step.get("reason") or "").strip():
+        step.update(reason=inferred, reason_source="inferred")
+
+
+def assumed(step: Dict[str, Any]) -> bool:
+    return step.get("reason_source") == "inferred"
 
 
 def _dedupe(questions: List[str]) -> List[str]:
@@ -204,6 +240,7 @@ async def merge(
     live_lines = [l for l in expert_lines if (l.get("phase") or "live") == "live"]
     steps = {s["id"]: s for s in work_map["steps"]}
     for step in work_map["steps"]:
+        _assume_reason(step)
         step["at"] = _snap(_seconds(step["at"]), events)
         _span(step, events)
         _ground_quote(step, expert_lines)
@@ -220,7 +257,9 @@ async def merge(
     await languages.translate_quotes([*work_map["steps"], *work_map["guardrails"]])
     # Whatever is still unlinked becomes a question: in the draft it is asked first in the
     # debrief; in the final map it stays open instead of only being flagged.
-    gaps = links.unlinked_gaps(work_map)
+    # A step with an assumed reason isn't asked about: the teach-back states it instead.
+    asked_steps = [s for s in work_map["steps"] if not assumed(s)]
+    gaps = links.unlinked_gaps({**work_map, "steps": asked_steps})
     asked = _dedupe(work_map["open_questions"])
     work_map["open_questions"] = _dedupe([*asked, *gaps] if final else [*gaps, *asked])
     if gaps:
@@ -237,8 +276,16 @@ async def merge(
 def brief_for_agent(work_map: Dict[str, Any]) -> str:
     """What start_debrief hands back to the agent: the draft, and the gaps to ask about first."""
     gaps = "\n".join(f"- {q}" for q in work_map["open_questions"]) or "- none"
-    return (
+    brief = (
         f"DRAFT WORK MAP (ids are for edit_work_map)\n{summary_for_agent(work_map)}\n\n"
         f"GAPS TO ASK ABOUT FIRST, one at a time. These are notes, not a script: ask each in your own "
         f"words, in one short sentence, without restating what the expert said or did:\n{gaps}"
     )
+    inferred = [s for s in work_map.get("steps") or [] if assumed(s)]
+    if inferred:
+        lines = "\n".join(f"- {s.get('id')} {s.get('title')}: {s.get('reason')}" for s in inferred)
+        brief += (
+            "\n\nASSUMED REASONS: nobody said these; they are obvious from the screen or common "
+            f"practice. Do not ask them; state them as assumptions in the teach-back:\n{lines}"
+        )
+    return brief
