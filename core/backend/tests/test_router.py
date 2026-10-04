@@ -210,7 +210,7 @@ def test_start_task_and_capture(client, stores):
     base = f"/api/v1/sessions/{SESSION_ID}"
     assert client.post(f"{base}/start", json={"conversation_id": "conv_1"}).json() == {"ok": True}
     long_task = "  Code a supplier invoice " + "x" * 300
-    assert client.post(f"{base}/task", json={"task": long_task}).json() == {"ok": True}
+    assert client.post(f"{base}/task", json={"task": long_task}).json() == {"ok": True, "known": ""}
     capture = {"kind": "step", "title": "Mail anna.weber@example.com the invoice", "t": 4}
     assert client.post(f"{base}/capture", json=capture).json() == {"ok": True}
 

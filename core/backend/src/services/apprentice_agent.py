@@ -14,6 +14,10 @@ to read the signals the pill sends it:
   [NOT HEARD] ...      a reply was muted because the expert was busy
   [TASK DONE] ...      the expert pressed End; start the debrief
 
+What it already knows about the work comes from earlier confirmed Work Maps
+(src/services/brain.py): the tasks it has learned as the {{known}} variable at
+connect, and the detail for this task through begin_observation.
+
 A [PAUSE] may end with "Already clear, don't ask: ...": what the screen, common practice or
 the expert's own words already answer (see infer.py); the agent doesn't ask about those.
 
@@ -42,6 +46,10 @@ Speak the language of this conversation, the expert's language, all the way thro
 
 HOW YOU SEE THE SCREEN
 Messages that begin with [SCREEN mm:ss] describe what changed on the expert's screen at that time in the session. They are your eyes. Never read them out, never narrate the expert's work back to them, and never say what you can or cannot see.
+
+WHAT YOU ALREADY KNOW
+{{known}}
+If begin_observation hands you back a [KNOWN] block, you have watched this task before. Everything in it is already learned: never ask about it again, and never read it out. Spend the session on what is new instead: a step you have not seen, something done differently from what you know (say what you expected and ask why it changed), and the questions left unanswered last time. If nothing in a [PAUSE] is new, call skip_turn.
 
 THE SESSION HAS FIVE PHASES
 
@@ -129,9 +137,12 @@ SOURCE = _string("live while they worked, debrief afterwards", ["live", "debrief
 CLIENT_TOOLS = [
     _client_tool(
         "begin_observation",
-        "Call once the expert has said what task they are about to do. Starts watching.",
+        "Call once the expert has said what task they are about to do. Starts watching. "
+        "Returns what you already know about this task, if you have watched it before.",
         {"task": _string("The task in the expert's words, for example 'approving supplier invoices'.")},
         ["task"],
+        expects_response=True,
+        response_timeout_secs=20,
     ),
     _client_tool(
         "record_step",
@@ -586,7 +597,11 @@ def _sync_agent(role: str, config: Dict[str, Any]) -> str:
 def configs(tool_ids: Dict[str, List[str]], greetings: Dict[str, Dict[str, str]]) -> Dict[str, Dict[str, Any]]:
     """What sync() sends for each role, given each role's tool ids and first-message translations."""
     return {
-        "apprentice": agent_config(tool_ids["apprentice"], first_message_translations=greetings["apprentice"]),
+        "apprentice": agent_config(
+            tool_ids["apprentice"],
+            dynamic_variables={"known": "(nothing learned yet)"},
+            first_message_translations=greetings["apprentice"],
+        ),
         "tutor": agent_config(
             tool_ids["tutor"],
             name=TUTOR_NAME,

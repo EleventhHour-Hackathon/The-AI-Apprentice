@@ -525,6 +525,11 @@ export function Sia({
                   )}
                 </div>
               </div>
+              {state === "watching" && voice.known && (
+                <div className="pb-2 text-center text-[11px] text-voice-listening">
+                  Picking up from an earlier session
+                </div>
+              )}
               {state === "watching" && steps + rules + parked > 0 && (
                 <div className="pb-3 text-center text-[11px] text-pill-muted">
                   {[

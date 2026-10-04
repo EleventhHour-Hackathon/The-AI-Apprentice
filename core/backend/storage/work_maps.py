@@ -180,6 +180,23 @@ def list_summaries() -> List[Dict[str, Any]]:
     return [_row(r) for r in rows]
 
 
+def confirmed_maps(limit: int = 50) -> List[Dict[str, Any]]:
+    """Every Work Map the expert confirmed, newest first: what the apprentice knows.
+
+    Without transcripts or captures, so the whole of a small workspace's memory
+    can be held at once (see src/services/brain.py).
+    """
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            select id, task, recorded_at, steps, guardrails, open_questions
+            from work_maps where status = 'confirmed' order by recorded_at desc limit %s
+            """,
+            (limit,),
+        ).fetchall()
+    return [_row(r) for r in rows]
+
+
 def expired_unconfirmed(days: int) -> List[str]:
     """Sessions never confirmed by the expert and recorded more than `days` days ago."""
     with _connect() as conn:

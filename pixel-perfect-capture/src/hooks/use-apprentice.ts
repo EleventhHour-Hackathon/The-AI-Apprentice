@@ -69,6 +69,8 @@ type ApprenticeState = {
   /** The expert's words so far in a turn not yet transcribed. Not provided by ElevenLabs; kept for the UI. */
   partial: string;
   task: string | null;
+  /** What the apprentice already knew about this task, from earlier sessions. */
+  known: string;
   confirmed: boolean;
   /** Whether the session made it into a Work Map once it ended. */
   saved: "no" | "saving" | "saved" | "empty" | "failed";
@@ -93,6 +95,7 @@ const initialState: ApprenticeState = {
   status: "idle",
   error: null,
   node: "session_start",
+  known: "",
   botSpeaking: false,
   userSpeaking: false,
   partial: "",
@@ -136,6 +139,11 @@ const guardrailAsked = (x: Tally) =>
 const questionsMet = (x: Tally) => liveQuestionsMet(counted(x), guardrailAsked(x), x.policy);
 
 const live = (node: FlowNode) => node === "session_start" || node === "observing";
+
+/** Resolve to `fallback` if `work` has not finished in `ms`. */
+function atMost<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([work, new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms))]);
+}
 
 async function post<T = unknown>(path: string, body: unknown): Promise<T> {
   const response = await backendFetch(`/api/v1${path}`, {
@@ -449,7 +457,7 @@ export function useApprentice(options: {
 
   // Built once: everything the tools use is a ref or a stable callback.
   const clientTools = useRef({
-    begin_observation: (p: Record<string, unknown>) => {
+    begin_observation: async (p: Record<string, unknown>) => {
       const x = s.current;
       const task = str(p["task"]);
       const now = performance.now();
@@ -458,8 +466,24 @@ export function useApprentice(options: {
       x.grant = "start";
       setNode("observing");
       setState((st) => ({ ...st, task: task || null }));
-      if (task) void post(`/sessions/${x.sessionId}/task`, { task }).catch(() => undefined);
-      return "Watching now. Say 'Go ahead.' and then stay quiet until a [PAUSE].";
+      const go = "Watching now. Say 'Go ahead.' and then stay quiet until a [PAUSE].";
+      if (!task) return go;
+      // Naming the task is what lets the backend look up what the apprentice
+      // already learned about it, so it arrives with the answer to this call.
+      try {
+        const { known } = await atMost(
+          post<{ known?: string }>(`/sessions/${x.sessionId}/task`, { task }),
+          4000,
+          {},
+        );
+        if (known) {
+          setState((st) => ({ ...st, known }));
+          return `${go}\n\n${known}`;
+        }
+      } catch {
+        // A session with no memory is the old behaviour, not a broken one.
+      }
+      return go;
     },
     record_step: (p: Record<string, unknown>) => capture("step", p),
     record_guardrail: (p: Record<string, unknown>) => capture("guardrail", p),
@@ -651,10 +675,22 @@ export function useApprentice(options: {
       };
       setState({ ...initialState, status: "connecting", minDebrief: policy.minDebrief });
       try {
-        const { token } = await backendFetch("/api/v1/agent/token").then((r) => {
-          if (!r.ok) throw new Error(`token request answered ${r.status}`);
-          return r.json() as Promise<{ token: string }>;
-        });
+        const [{ token }, known] = await Promise.all([
+          backendFetch("/api/v1/agent/token").then((r) => {
+            if (!r.ok) throw new Error(`token request answered ${r.status}`);
+            return r.json() as Promise<{ token: string }>;
+          }),
+          // The tasks it has learned before. Never fatal: an apprentice that
+          // remembers nothing is the old behaviour, not a broken session.
+          atMost(
+            backendFetch("/api/v1/brain")
+              .then((r) => (r.ok ? (r.json() as Promise<{ known: string }>) : null))
+              .then((r) => r?.known ?? "")
+              .catch(() => ""),
+            4000,
+            "",
+          ),
+        ]);
         try {
           await post(`/sessions/${sessionId}/start`, parent ? { parent_work_map_id: parent } : {});
         } catch (e) {
@@ -667,6 +703,7 @@ export function useApprentice(options: {
         const c = await VoiceConversation.startSession({
           conversationToken: token,
           connectionType: "webrtc",
+          dynamicVariables: { known: known || "You have not learned any task yet." },
           // The expert's language; on Auto the agent starts in English and follows them.
           ...(language !== "auto" && { overrides: { agent: { language } } }),
           clientTools: clientTools.current,

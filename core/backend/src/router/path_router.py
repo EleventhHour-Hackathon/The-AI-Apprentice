@@ -7,7 +7,7 @@ from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 
-from src.services import agent_export, apprentice_agent, recordings, tutor
+from src.services import agent_export, apprentice_agent, brain, recordings, tutor
 from src.services.screen_vision import get_backend as get_vision_backend, log_frame
 from src.services import follow_ups, live_questions, living_map, work_map_edit, work_map_links
 from src.services import infer as infer_service, work_map_update
@@ -51,6 +51,12 @@ def agent_token(role: str = "apprentice"):
     except apprentice_agent.ElevenLabsError as e:
         logger.error(f"Couldn't get an ElevenLabs conversation token: {e}")
         raise HTTPException(status_code=502, detail="Couldn't reach the ElevenLabs agent")
+
+
+@router.get("/brain")
+def brain_index():
+    """What the apprentice already knows, for the {{known}} variable at connect."""
+    return {"known": brain.index()}
 
 
 @router.post("/screen_event")
@@ -157,13 +163,15 @@ def discard_session(session_id: str):
 
 @router.post("/sessions/{session_id}/task")
 def set_task(session_id: str, payload: dict = Body(...)):
+    """Name the task, and hand back what the apprentice already knows about it."""
+    task = str(payload.get("task") or "").strip()[:200]
     try:
-        work_map_store.set_task(_uuid(session_id), str(payload.get("task") or "").strip()[:200])
+        work_map_store.set_task(_uuid(session_id), task)
     except HTTPException:
         raise
     except Exception as e:
         raise _store_unavailable(e)
-    return {"ok": True}
+    return {"ok": True, "known": brain.known(task)}
 
 
 @router.post("/sessions/{session_id}/capture")
@@ -324,6 +332,9 @@ async def merge_session(session_id: str, payload: dict = Body(...)):
             # ones.
             captures=follow_ups.for_merge(session.get("captures") or []),
             final=final,
+            # What the apprentice knew going in, so this map extends it rather
+            # than replacing it, and answered questions stop coming back.
+            prior=brain.prior(session.get("task")),
         )
     except Exception as e:
         logger.error(f"Work Map merge failed: {e}")

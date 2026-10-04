@@ -51,6 +51,15 @@ def _regex_only_redaction(monkeypatch):
     monkeypatch.setattr(privacy, "_presidio_tried", True)
 
 
+@pytest.fixture(autouse=True)
+def _empty_memory(monkeypatch):
+    """The apprentice remembers nothing (no confirmed Work Maps), instead of reading Supabase.
+    Tests of the brain set work_maps.confirmed_maps themselves."""
+    from storage import work_maps
+
+    monkeypatch.setattr(work_maps, "confirmed_maps", lambda _limit=50: [])
+
+
 @pytest.fixture
 def fake_openai(monkeypatch) -> Callable[..., FakeAsyncOpenAI]:
     """fake_openai(module, *replies) patches module.AsyncOpenAI with a FakeAsyncOpenAI."""
