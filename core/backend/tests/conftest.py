@@ -41,6 +41,16 @@ def _no_real_keys(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-real")
 
 
+@pytest.fixture(autouse=True)
+def _regex_only_redaction(monkeypatch):
+    """Redact with the regex rules only, so results don't depend on whether the privacy extra
+    (Presidio) is installed. Tests that need Presidio set privacy's state themselves."""
+    from src.services import privacy
+
+    monkeypatch.setattr(privacy, "_presidio", None)
+    monkeypatch.setattr(privacy, "_presidio_tried", True)
+
+
 @pytest.fixture
 def fake_openai(monkeypatch) -> Callable[..., FakeAsyncOpenAI]:
     """fake_openai(module, *replies) patches module.AsyncOpenAI with a FakeAsyncOpenAI."""

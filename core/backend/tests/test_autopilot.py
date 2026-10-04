@@ -64,7 +64,12 @@ WORK_MAP = {
         },
     ],
 }
-EXPORT = agent_export.to_json(WORK_MAP)
+
+
+def _export() -> dict:
+    """Built per test, after conftest has fixed how redaction behaves."""
+    return agent_export.to_json(WORK_MAP)
+
 
 INVOICE = {
     "id": "4471",
@@ -91,11 +96,11 @@ def run(coro):
 
 
 def test_prompt_has_every_guardrail_and_no_contact():
-    messages = prompt({**INVOICE, "contact": CONTACT}, HISTORY, EXPORT)
+    messages = prompt({**INVOICE, "contact": CONTACT}, HISTORY, _export())
     assert [m["role"] for m in messages] == ["system", "user"]
     text = messages[1]["content"]
     body = json.loads(text)
-    for g in EXPORT["guardrails"]:
+    for g in _export()["guardrails"]:
         assert g["id"] in [x["id"] for x in body["guardrails"]]
         assert g["rule"] in text
     assert body["guardrails"][0]["expert_words"] == "Over five thousand, that's a fixed asset."
@@ -111,7 +116,7 @@ def test_prompt_has_every_guardrail_and_no_contact():
 
 
 def test_prompt_redacts_free_text():
-    messages = prompt({**INVOICE, "comment": f"Pay to {IBAN}"}, [], EXPORT)
+    messages = prompt({**INVOICE, "comment": f"Pay to {IBAN}"}, [], _export())
     assert "DE89" not in messages[1]["content"]
 
 
@@ -167,14 +172,14 @@ def test_decide_with_an_injected_model():
         seen.append(messages)
         return json.dumps({"verdict": "judgment", "guardrail_id": "g1", "why": "Over 5,000."})
 
-    result = run(decide(INVOICE, HISTORY, EXPORT, complete))
+    result = run(decide(INVOICE, HISTORY, _export(), complete))
     assert result == {"verdict": "judgment", "guardrailId": "g1", "why": "Over 5,000."}
     assert len(seen) == 1
 
 
 def test_decide_with_openai(fake_openai):
     fake = fake_openai(autopilot_decide, {"verdict": "routine", "guardrail_id": "", "why": "ok"})
-    assert run(decide(INVOICE, HISTORY, EXPORT)) == {"verdict": "routine"}
+    assert run(decide(INVOICE, HISTORY, _export())) == {"verdict": "routine"}
     (call,) = fake.calls
     assert call["temperature"] == 0
     assert call["model"] == autopilot_decide.MODEL
@@ -194,7 +199,7 @@ def test_decide_fails_closed_when_the_model_breaks():
     async def complete(messages):  # noqa: ARG001
         raise ValueError("boom")
 
-    result = run(decide(INVOICE, HISTORY, EXPORT, complete))
+    result = run(decide(INVOICE, HISTORY, _export(), complete))
     assert result == {"verdict": "judgment", "guardrailId": None, "why": COULD_NOT_DECIDE}
 
 
