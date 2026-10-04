@@ -1,3 +1,4 @@
+import { BACKEND_URL } from "@/lib/backend";
 import {
   useCallback,
   useEffect,
@@ -201,7 +202,9 @@ export function Tutor({
         )}
 
         {working && !expanded && tutor.task && (
-          <p className="pb-3 text-center text-[11px] text-pill-muted">Learning: {taskTitle(tutor.task)}</p>
+          <p className="pb-3 text-center text-[11px] text-pill-muted">
+            Learning: {taskTitle(tutor.task)}
+          </p>
         )}
 
         {cue?.type === "stop" && !tutor.report && (
@@ -358,12 +361,25 @@ function Answer({ heard }: { heard: string }) {
 function ExpertMoment({ step }: { step: LessonStep }) {
   return (
     <figure className="mt-3 rounded-xl bg-pill-raised p-2.5">
-      {step.thumb && (
-        <img
-          src={step.thumb}
-          alt={`The expert's screen: ${step.title}`}
-          className="w-full rounded-lg border border-pill-border object-cover object-top"
+      {step.clip ? (
+        <video
+          src={`${BACKEND_URL}${step.clip}`}
+          poster={step.thumb ?? undefined}
+          aria-label={`The expert doing it: ${step.title}`}
+          autoPlay
+          muted
+          loop
+          playsInline
+          className="w-full rounded-lg border border-pill-border bg-black"
         />
+      ) : (
+        step.thumb && (
+          <img
+            src={step.thumb}
+            alt={`The expert's screen: ${step.title}`}
+            className="w-full rounded-lg border border-pill-border object-cover object-top"
+          />
+        )
       )}
       <figcaption className="mt-2 text-xs leading-relaxed">
         <span className="font-mono text-[10px] text-pill-muted">

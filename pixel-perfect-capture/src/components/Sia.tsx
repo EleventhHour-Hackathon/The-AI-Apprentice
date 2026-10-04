@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode, type CSSProperties } from "react";
-import { AppWindow, ArrowRight, Check, CheckCheck, Clock, Hand, Mic, MicOff, Minus, Monitor, Pause, Play, Square, X } from "lucide-react";
+import { AlertCircle, AppWindow, ArrowRight, Check, CheckCheck, CheckCircle2, Clock, Hand, Loader2, Mic, MicOff, Minus, Monitor, Pause, Play, Square, X } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { VoiceWave } from "./VoiceWave";
 import { useApprentice, type Capture, type FlowNode } from "@/hooks/use-apprentice";
 import { useScreenEvents } from "@/hooks/use-screen-events";
+import { useScreenRecording } from "@/hooks/use-screen-recording";
 import type { Floor } from "@/lib/floor";
 import { count } from "@/lib/work-maps";
+import { desktop } from "@/lib/desktop";
 
 export type SiaState = "idle" | "connecting" | "watching" | "raised" | "gotit" | "debriefing" | "debrief";
 const fmt = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
@@ -15,6 +18,14 @@ const labels = { idle: "Idle", connecting: "Connecting", watching: "Learning", r
 const floorLabels: Record<Floor, string> = { talking: "Listening", busy: "Watching", reading: "Reading along", waiting: "Learning", quiet: "Learning", ask: "Learning" };
 const stages: Partial<Record<FlowNode, string>> = { debrief: "DEBRIEF", teach_back: "TEACH-BACK", end: "WRAPPING UP" };
 const kinds = { step: "Step", guardrail: "Rule", open_question: "Open question", correction: "Correction" };
+/** The note shown once a session ends; "saved" shows what went into the Work Map instead of a detail. */
+const ack = {
+  no: { title: "Session ended", detail: "" },
+  saving: { title: "Saving your Work Map…", detail: "Putting together what I learned." },
+  saved: { title: "Session saved to Work Maps", detail: "" },
+  empty: { title: "Session ended", detail: "Nothing was said, so there was nothing to save." },
+  failed: { title: "Couldn’t save the Work Map", detail: "The session ended, but saving it failed. Check that the backend is running." },
+};
 const isWork = (node: FlowNode) => node === "session_start" || node === "observing";
 
 /** `onOpenApp` adds a button that brings the app window forward (desktop pill only); `onLesson` hands a "lesson:<work map id>" command to the tutor. */
@@ -39,6 +50,7 @@ export function Sia({ onOpenApp, onLesson }: { onOpenApp?: () => void; onLesson?
   const work = voice.status === "connected" && isWork(voice.node);
   const screenEvents = useScreenEvents(screen, { enabled: work && !paused && !offRecord, session: voice.session, onEvent: voice.reportScreen, onActivity: voice.reportActivity });
   snapshot.current = screenEvents.snapshot;
+  useScreenRecording(screen, { enabled: work && !paused && !offRecord, session: voice.session });
   const level = paused || offRecord ? 0 : voice.level;
 
   const current = voice.exchanges.at(-1);
@@ -58,7 +70,7 @@ export function Sia({ onOpenApp, onLesson }: { onOpenApp?: () => void; onLesson?
     setSeconds(0); setPaused(false); setOffRecord(false); setGotit(null); setDismissed(-1); setScreenError("");
     let display: MediaStream;
     try {
-      display = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 2 }, audio: false });
+      display = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 10, width: { max: 1920 }, height: { max: 1200 } }, audio: false });
     } catch {
       setScreenError("Share the screen you work in so the apprentice can watch.");
       return;
@@ -73,6 +85,16 @@ export function Sia({ onOpenApp, onLesson }: { onOpenApp?: () => void; onLesson?
   const endWork = () => { stopScreen(); setGotit(null); voice.send("work.end"); };
   const endSession = () => { stopScreen(); voice.stop(); };
   const close = () => { stopScreen(); voice.reset(); setScreenError(""); setSeconds(0); };
+  const navigate = useNavigate();
+  /** Open the new Work Map (or the list, if nothing was saved) in the app, and put the pill away. */
+  const goToWorkMaps = () => {
+    const id = voice.saved === "saved" ? voice.session?.id : undefined;
+    const bridge = desktop();
+    if (bridge) bridge.pill(id ? `open:/work-maps/${id}` : "open:/work-maps");
+    else if (id) void navigate({ to: "/work-maps/$id", params: { id } });
+    else void navigate({ to: "/work-maps" });
+    close();
+  };
   const later = () => {
     if (!current) return;
     setDismissed(currentIndex);
@@ -106,8 +128,8 @@ export function Sia({ onOpenApp, onLesson }: { onOpenApp?: () => void; onLesson?
 
   const lessonRef = useRef(onLesson);
   lessonRef.current = onLesson;
-  const actions = useRef({ startSession, endWork, endSession, close, later, skip, toggleMute, toggleOffRecord, continueWork: () => setGotit(null), state, node: voice.node });
-  actions.current = { startSession, endWork, endSession, close, later, skip, toggleMute, toggleOffRecord, continueWork: () => setGotit(null), state, node: voice.node };
+  const actions = useRef({ startSession, endWork, endSession, close, goToWorkMaps, later, skip, toggleMute, toggleOffRecord, continueWork: () => setGotit(null), state, node: voice.node, saving: voice.saved === "saving" });
+  actions.current = { startSession, endWork, endSession, close, goToWorkMaps, later, skip, toggleMute, toggleOffRecord, continueWork: () => setGotit(null), state, node: voice.node, saving: voice.saved === "saving" };
   // The desktop shell starts sessions from the app window through this hook (electron/main.cjs).
   useEffect(() => {
     const w = window as Window & { __apprenticeCommand?: (command: string) => void };
@@ -132,6 +154,7 @@ export function Sia({ onOpenApp, onLesson }: { onOpenApp?: () => void; onLesson?
       else if (key === "o" && live) { e.preventDefault(); a.toggleOffRecord(); }
       else if (key === "l" && a.state === "raised") { e.preventDefault(); a.later(); }
       else if (key === "enter" && a.state === "gotit") { e.preventDefault(); a.continueWork(); }
+      else if (key === "enter" && a.state === "debrief" && !a.saving) { e.preventDefault(); a.goToWorkMaps(); }
       else if (key === "escape") { e.preventDefault(); if (a.state === "debriefing" || a.state === "connecting") a.endSession(); else if (a.state === "debrief") a.close(); }
       else if (key === "arrowright" && a.state === "debriefing" && a.node === "debrief") { e.preventDefault(); a.skip(); }
     };
@@ -140,7 +163,7 @@ export function Sia({ onOpenApp, onLesson }: { onOpenApp?: () => void; onLesson?
   }, []);
 
   const expanded = state === "raised" || state === "gotit" || state === "debriefing" || state === "debrief";
-  const width = state === "idle" ? 310 : expanded ? 440 : 380;
+  const width = state === "idle" ? 310 : expanded && state !== "debrief" ? 440 : 380;
   const color = offRecord || paused ? "text-pill-muted" : colors[state];
   const statusLabel = offRecord ? "Off the record" : paused ? "Paused" : state === "raised" && voice.node === "session_start" ? "Getting started" : state === "watching" ? floorLabels[voice.floor] : labels[state];
   const answer = (current?.answer ? `${current.answer} ${voice.partial}` : voice.partial).trim();
@@ -178,12 +201,19 @@ export function Sia({ onOpenApp, onLesson }: { onOpenApp?: () => void; onLesson?
           {gotit.detail && <p className="mt-1 text-xs leading-relaxed text-pill-muted">{gotit.detail}</p>}
           <div className="mt-2 flex"><Button variant="ghost" className="ml-auto h-7 text-xs text-pill-muted" title="Continue (Enter)" onClick={() => setGotit(null)}>Continue<Kbd>↵</Kbd></Button></div>
         </div>}
-        {state === "debrief" && <div className="border-t border-pill-border px-5 pb-5 pt-4 sia-fade">
-          <div className="flex items-center gap-1.5 text-[11px] text-pill-muted"><Check size={12} />Work session ended<span className="ml-auto font-mono">{fmt(seconds)}</span></div>
-          <h2 className="mt-3 text-xl font-medium">{voice.confirmed ? "Work Map ready." : voice.captures.length ? "Here’s what I learned." : "Nothing captured yet."}</h2>
-          <p className="mt-1 text-xs text-pill-muted">{voice.task ? `${voice.task} · ` : ""}{count(steps, "step")} · {count(rules, "rule")}{parked ? ` · ${parked} open` : ""}{voice.confirmed ? " · confirmed" : ""}</p>
-          {voice.captures.length > 0 && <ol className="my-4 divide-y divide-pill-border">{voice.captures.map((capture, index) => <li key={index} className="flex items-start gap-3 py-3 text-[13px] leading-snug"><span className="mt-0.5 text-voice-debrief">{capture.kind === "open_question" ? <Clock size={14} /> : <Check size={14} />}</span><ScreenMoment thumb={capture.thumb} time={capture.time} label={capture.title} /><div className="min-w-0 flex-1"><span className="block text-[10px] text-pill-muted">{kinds[capture.kind]}</span>{capture.title}{capture.detail && <p className="mt-1 text-xs leading-relaxed text-pill-muted">{capture.detail}</p>}</div></li>)}</ol>}
-          <div className="mt-4 flex items-center justify-between gap-2"><span className="text-[10px] text-pill-muted">{voice.confirmed ? "Saved on the apprentice backend" : "Unconfirmed · saved as is"}</span><Button className="voice-cta" title="Done (S)" onClick={close}>Done<Kbd>S</Kbd></Button></div>
+        {state === "debrief" && <div className="border-t border-pill-border px-4 pb-4 pt-3 sia-fade" role="status">
+          <div className="flex items-start gap-3">
+            <span className={`mt-0.5 shrink-0 ${voice.saved === "failed" ? "text-voice-raised" : "text-voice-debrief"}`}>{voice.saved === "saving" ? <Loader2 size={16} className="animate-spin" /> : voice.saved === "failed" ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}</span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium leading-snug">{ack[voice.saved].title}</p>
+              <p className="mt-0.5 text-xs leading-relaxed text-pill-muted">{voice.saved === "saved" ? `${voice.task ? `${voice.task} · ` : ""}${count(steps, "step")} · ${count(rules, "rule")}${voice.confirmed ? " · confirmed" : " · draft"}` : ack[voice.saved].detail}</p>
+            </div>
+            <span className="shrink-0 font-mono text-[11px] text-pill-muted">{fmt(seconds)}</span>
+          </div>
+          <div className="mt-3 flex justify-end gap-2">
+            <Button variant="ghost" className="h-8 rounded-full px-3 text-xs text-pill-muted" title="Ignore (Esc)" onClick={close}>Ignore<Kbd>Esc</Kbd></Button>
+            <Button className="voice-cta" title="Go to Work Maps (Enter)" disabled={voice.saved === "saving"} onClick={goToWorkMaps}>Go to Work Maps<Kbd>↵</Kbd></Button>
+          </div>
         </div>}
         {state === "debriefing" && <div className="border-t border-pill-border px-5 pb-4 pt-4 sia-fade">
           <div className="flex items-center justify-between text-[11px] text-pill-muted"><span>{stages[voice.node] ?? "DEBRIEF"}</span><span>{count(steps, "step")} · {count(rules, "rule")}</span></div>

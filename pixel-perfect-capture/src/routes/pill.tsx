@@ -10,7 +10,7 @@ const MARGIN = 48;
 
 /** The pill on its own, for the floating, transparent desktop window. */
 export const Route = createFileRoute("/pill")({
-  head: () => ({ meta: [{ title: "AI Apprentice pill" }] }),
+  head: () => ({ meta: [{ title: "Tacit" }] }),
   component: Pill,
 });
 

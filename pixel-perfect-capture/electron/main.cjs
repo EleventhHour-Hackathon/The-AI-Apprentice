@@ -1,4 +1,4 @@
-// Electron shell for the AI Apprentice: a normal app window, plus the voice
+// Electron shell for Tacit: a normal app window, plus the voice
 // pill floating above every other window on the desktop.
 const {
   app,
@@ -10,6 +10,8 @@ const {
   systemPreferences,
 } = require("electron");
 const path = require("node:path");
+
+app.setName("Tacit");
 
 // The UI is served by the Vite dev server (`bun run desktop` starts both).
 const APP_URL = (process.env.APP_URL || "http://localhost:8080").replace(/\/+$/, "");
@@ -73,7 +75,7 @@ function createMain() {
   mainWindow = new BrowserWindow({
     width: 1100,
     height: 720,
-    title: "AI Apprentice",
+    title: "Tacit",
     webPreferences: { preload },
   });
   mainWindow.loadURL(`${APP_URL}/`);
@@ -111,6 +113,11 @@ ipcMain.on("pill:command", (_event, command) => {
   } else if (command === "hide") pillWindow?.hide();
   else if (command === "start") commandPill("start");
   else if (command === "app") showMain();
+  else if (typeof command === "string" && command.startsWith("open:/")) {
+    // Bring the app window forward on a page of the app, e.g. open:/work-maps/<id>.
+    mainWindow?.loadURL(`${APP_URL}${command.slice("open:".length)}`);
+    showMain();
+  }
   else if (typeof command === "string" && command.startsWith("lesson:")) {
     // A new hire works their own screen: get the app window out of the way.
     commandPill(command);

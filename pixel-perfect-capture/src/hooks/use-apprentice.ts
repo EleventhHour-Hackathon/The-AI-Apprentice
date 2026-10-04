@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { VoiceConversation } from "@elevenlabs/client";
 import { BACKEND_URL } from "@/lib/backend";
-import { decideFloor, type Floor, type ScreenKind } from "@/lib/floor";
+import { decideFloor, MIN_LIVE_QUESTIONS, type Floor, type ScreenKind } from "@/lib/floor";
 import type { ScreenEvent } from "@/hooks/use-screen-events";
 
 /** Phases of a session. The agent moves between them by calling client tools. */
@@ -34,6 +34,8 @@ type ApprenticeState = {
   partial: string;
   task: string | null;
   confirmed: boolean;
+  /** Whether the session made it into a Work Map once it ended. */
+  saved: "no" | "saving" | "saved" | "empty" | "failed";
   /** The Work Map is being merged (start of the debrief, or after the teach-back). */
   merging: boolean;
   /** Why the apprentice is or isn't asking right now (see lib/floor.ts). */
@@ -51,6 +53,7 @@ const initialState: ApprenticeState = {
   partial: "",
   task: null,
   confirmed: false,
+  saved: "no",
   merging: false,
   floor: "quiet",
   exchanges: [],
@@ -108,7 +111,7 @@ function toCapture(kind: Capture["kind"], p: Record<string, unknown>): Omit<Capt
 }
 
 /**
- * One voice session with the AI Apprentice agent on ElevenLabs (ElevenAgents).
+ * One voice session with the Tacit apprentice agent on ElevenLabs (ElevenAgents).
  *
  * ElevenLabs listens (Scribe), speaks and runs the conversation; this hook
  * decides when the agent may speak while the expert works, feeds it what
@@ -150,6 +153,8 @@ export function useApprentice(options: {
     agentSpeaking: false,
     /** [TASK DONE] was sent; End can fire more than once (button, shortcut, pill). */
     taskDone: false,
+    /** A live question has drawn out a guardrail (recorded while the expert answered). */
+    guardrailAsked: false,
   });
   const clock = useCallback(
     () => (s.current.startedAt ? (performance.now() - s.current.startedAt) / 1000 : 0),
@@ -202,6 +207,8 @@ export function useApprentice(options: {
     (kind: Capture["kind"], params: Record<string, unknown>) => {
       const x = s.current;
       const phase = live(x.node) ? "live" : "debrief";
+      if (kind === "guardrail" && x.node === "observing" && x.grant === "answer")
+        x.guardrailAsked = true;
       void post(`/sessions/${x.sessionId}/capture`, { kind, ...params, t: clock(), phase }).catch(
         (e) => console.warn("[apprentice] capture not saved", e),
       );
@@ -239,6 +246,28 @@ export function useApprentice(options: {
     [clock],
   );
 
+  /** The session ended without a confirmed map: save what was learned as a draft. */
+  const saveDraft = useCallback(() => {
+    const x = s.current;
+    if (x.node === "end") return; // confirm_work_map already saved it
+    if (!x.transcript.some((l) => l.role === "expert")) {
+      // Nothing to keep: drop the session, its screen moments and its recording from the database.
+      setState((st) => ({ ...st, saved: "empty" }));
+      void fetch(`${BACKEND_URL}/api/v1/sessions/${x.sessionId}`, { method: "DELETE" }).catch((e) =>
+        console.warn("[apprentice] empty session not discarded", e),
+      );
+      return;
+    }
+    setState((st) => ({ ...st, saved: "saving" }));
+    merge(false).then(
+      () => setState((st) => ({ ...st, saved: "saved" })),
+      (e) => {
+        console.warn("[apprentice] draft not saved", e);
+        setState((st) => ({ ...st, saved: "failed" }));
+      },
+    );
+  }, [merge]);
+
   // Built once: everything the tools use is a ref or a stable callback.
   const clientTools = useRef({
     begin_observation: (p: Record<string, unknown>) => {
@@ -274,7 +303,7 @@ export function useApprentice(options: {
     confirm_work_map: async () => {
       try {
         await merge(true);
-        setState((st) => ({ ...st, confirmed: true }));
+        setState((st) => ({ ...st, confirmed: true, saved: "saved" }));
         setNode("end");
         return "Saved. Thank them in one sentence, then call end_call.";
       } catch (e) {
@@ -321,6 +350,7 @@ export function useApprentice(options: {
       gated: false,
       agentSpeaking: false,
       taskDone: false,
+      guardrailAsked: false,
     };
     setState({ ...initialState, status: "connecting" });
     try {
@@ -394,6 +424,7 @@ export function useApprentice(options: {
               : details.reason === "agent" && s.current.node !== "end"
                 ? "The apprentice ended the call early. Start a new session to retry."
                 : undefined;
+          saveDraft();
           release(error);
         },
         onError(message) {
@@ -405,15 +436,13 @@ export function useApprentice(options: {
       const message = error instanceof Error ? error.message : "";
       release(`Could not start the apprentice.${message ? ` ${message}` : ""}`);
     }
-  }, [clock, endUtterance, gate, release]);
+  }, [clock, endUtterance, gate, release, saveDraft]);
 
   /** End the session. Unless the map was confirmed, what was captured is still saved as a draft. */
   const stop = useCallback(() => {
-    const x = s.current;
-    if (conv.current && x.node !== "end" && x.transcript.some((l) => l.role === "expert"))
-      void merge(false).catch(() => undefined);
+    if (conv.current) saveDraft();
     release();
-  }, [merge, release]);
+  }, [saveDraft, release]);
 
   const reset = useCallback(() => {
     stop();
@@ -526,10 +555,17 @@ export function useApprentice(options: {
       x.lastPauseAt = now;
       x.floorOpenUntil = now + PAUSE_GRANT_MS;
       x.grant = "pause";
-      console.log(`[floor] pause after: ${steps}`);
-      c.sendUserMessage(
-        `[PAUSE] The expert has stopped after: ${steps}. If one of these hides a reason, a limit or a moment to stop and ask, ask one short question about it now. Otherwise call skip_turn.`,
-      );
+      const asked = x.questionTimes.length;
+      const ask =
+        asked < MIN_LIVE_QUESTIONS
+          ? `You have asked ${asked} of at least ${MIN_LIVE_QUESTIONS} questions, so ask one now, about something on screen.`
+          : "Ask one short question if one of these hides a reason, a limit or a moment to stop and ask; otherwise call skip_turn.";
+      const guardrail =
+        !x.guardrailAsked && asked >= MIN_LIVE_QUESTIONS - 1
+          ? " No guardrail yet: make this one about a limit, an exception or when they would stop and ask someone."
+          : "";
+      console.log(`[floor] pause ${asked + 1} after: ${steps}`);
+      c.sendUserMessage(`[PAUSE] The expert has stopped after: ${steps}. ${ask}${guardrail}`);
     }, 400);
     return () => clearInterval(timer);
   }, [state.status]);

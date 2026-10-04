@@ -17,6 +17,8 @@ export type WorkMapStep = {
   quote_source: Source;
   judgment: boolean;
   thumb: string | null;
+  /** A few seconds of the expert doing this step (mp4), if the screen was recorded. */
+  clip: string | null;
   event: string | null;
 };
 export type GuardKind = "limit" | "exception" | "stop_and_ask";
@@ -33,6 +35,7 @@ export type WorkMapGuardrail = {
   quote_source: Source;
   at: number | null;
   thumb: string | null;
+  clip: string | null;
   event: string | null;
 };
 export type TranscriptLine = { who: "expert" | "apprentice"; text: string; t: number | null };
@@ -57,6 +60,7 @@ export type WorkMap = Omit<WorkMapRecord, "steps" | "guardrails" | "transcript">
 
 const text = (v: unknown) => (typeof v === "string" ? v : "");
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+const clipUrl = (v: unknown) => (text(v) ? `${BACKEND_URL}${text(v)}` : null);
 const source = (v: unknown): Source => (v === "live" || v === "debrief" ? v : "none");
 
 export function normalizeMap(record: WorkMapRecord): WorkMap {
@@ -72,6 +76,7 @@ export function normalizeMap(record: WorkMapRecord): WorkMap {
     quote_source: source(s["quote_source"]),
     judgment: typeof s["judgment"] === "boolean" ? s["judgment"] : Boolean(text(s["decision"])),
     thumb: text(s["thumb"]) || null,
+    clip: clipUrl(s["clip"]),
     event: text(s["event"]) || null,
   }));
   const guardrails = record.guardrails.map((g, i): WorkMapGuardrail => {
@@ -94,6 +99,7 @@ export function normalizeMap(record: WorkMapRecord): WorkMap {
       quote_source: source(g["quote_source"]),
       at: num(g["at"]),
       thumb: text(g["thumb"]) || null,
+      clip: clipUrl(g["clip"]),
       event: text(g["event"]) || null,
     };
   });
@@ -161,3 +167,14 @@ export const recordedAt = (iso: string | null) =>
     : "Unknown time";
 
 export const count = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** Unconfirmed Work Maps are kept this long after they are recorded. */
+export const UNCONFIRMED_RETENTION_DAYS = 30;
+
+/** Whole days until an unconfirmed Work Map is deleted (0 = due now), or null if its time is unknown. */
+export const daysUntilDeleted = (iso: string | null, now = Date.now()) => {
+  const recorded = iso ? new Date(iso).getTime() : NaN;
+  if (Number.isNaN(recorded)) return null;
+  const left = recorded + UNCONFIRMED_RETENTION_DAYS * 86_400_000 - now;
+  return Math.max(0, Math.ceil(left / 86_400_000));
+};

@@ -1,13 +1,16 @@
 import uuid
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse, RedirectResponse
 
-from src.services import apprentice_agent, tutor
+from src.services import apprentice_agent, recordings, tutor
 from src.services.screen_vision import get_backend as get_vision_backend, log_frame
 from src.services.work_map_merge import brief_for_agent, merge
 from src.utils.logger import logger
 from storage import lessons as lesson_store
+from storage import media as media_store
 from storage import work_maps as work_map_store
 
 router = APIRouter(
@@ -103,6 +106,28 @@ def start_session(session_id: str, payload: dict = Body(default={})):
     return {"ok": True}
 
 
+@router.delete("/sessions/{session_id}")
+def discard_session(session_id: str):
+    """Drop a session that ended with nothing to save: its row, screen moments and recording.
+
+    Only sessions still 'recording' (never merged into a Work Map) can be discarded this way.
+    """
+    session_id = _uuid(session_id)
+    try:
+        session = work_map_store.get(session_id)
+        if session is None:
+            return {"deleted": None}
+        if session.get("status") != "recording":
+            raise HTTPException(status_code=409, detail="This session already has a Work Map")
+        recordings.delete(session_id)
+        work_map_store.delete(session_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise _store_unavailable(e)
+    return {"deleted": session_id}
+
+
 @router.post("/sessions/{session_id}/task")
 def set_task(session_id: str, payload: dict = Body(...)):
     try:
@@ -195,31 +220,69 @@ def get_work_map(work_map_id: str):
         if work_map is None:
             raise HTTPException(status_code=404, detail="Work Map not found")
         events = work_map_store.screen_events(work_map_id, with_thumbs=True)
+        segments = media_store.recordings(work_map_id)
     except HTTPException:
         raise
     except Exception as e:
         raise _store_unavailable(e)
 
     work_map.pop("captures", None)
-    return _with_moments(work_map, events)
+    return _with_moments(work_map_id, work_map, events, segments)
 
 
-def _with_moments(work_map: Dict[str, Any], events: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Attach each step's and guardrail's screen moment (event and thumbnail)."""
+def _with_moments(
+    session_id: str,
+    work_map: Dict[str, Any],
+    events: List[Dict[str, Any]],
+    segments: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Attach each step's and guardrail's screen moment (event, thumbnail and, if recorded, a clip)."""
     # Merged times are snapped to screen events, so an exact match finds the moment.
     by_time = {e["t"]: e for e in events}
     for item in [*(work_map.get("steps") or []), *(work_map.get("guardrails") or [])]:
-        moment = by_time.get(item.get("at")) if isinstance(item, dict) else None
+        if not isinstance(item, dict):
+            continue
+        moment = by_time.get(item.get("at"))
         if moment:
             item["thumb"] = moment.get("thumb")
             item["event"] = moment.get("event")
+        if recordings.covering(segments, item.get("at")):
+            item["clip"] = f"/api/v1/sessions/{session_id}/clip?at={item['at']:.2f}"
     return work_map
+
+
+@router.post("/sessions/{session_id}/recordings")
+async def upload_recording(session_id: str, start: float, end: float, request: Request):
+    """One segment of the screen recording (webm), from `start` to `end` on the session clock."""
+    session_id = _uuid(session_id)
+    data = await request.body()
+    try:
+        await run_in_threadpool(recordings.save_segment, session_id, start, end, data)
+    except recordings.RecordingError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True}
+
+
+@router.get("/sessions/{session_id}/clip")
+async def get_clip(session_id: str, at: float):
+    """A few seconds of the screen recording around a moment, as mp4: a short-lived Storage link."""
+    session_id = _uuid(session_id)
+    try:
+        kind, where = await recordings.clip(session_id, at)
+    except (recordings.RecordingError, media_store.StorageError) as e:
+        logger.warning(f"No clip at {at} for {session_id}: {e}")
+        raise HTTPException(status_code=404, detail="No recording of this moment")
+    if kind == "url":
+        return RedirectResponse(where, status_code=302)
+    return FileResponse(where, media_type="video/mp4", headers={"Cache-Control": "max-age=3600"})
 
 
 @router.delete("/work_maps/{work_map_id}")
 def delete_work_map(work_map_id: str):
     work_map_id = _uuid(work_map_id, "Work Map")
     try:
+        # Video first: once the row is gone, nothing records where it was.
+        recordings.delete(work_map_id)
         deleted = work_map_store.delete(work_map_id)
     except Exception as e:
         raise _store_unavailable(e)
@@ -258,13 +321,14 @@ def start_lesson(payload: dict = Body(...)):
         if not work_map.get("steps"):
             raise HTTPException(status_code=422, detail="This Work Map has no steps to teach yet")
         events = work_map_store.screen_events(work_map_id, with_thumbs=True)
+        segments = media_store.recordings(work_map_id)
         lesson_store.create(lesson_id, work_map_id)
     except HTTPException:
         raise
     except Exception as e:
         raise _store_unavailable(e)
     _lesson_maps[lesson_id] = work_map
-    with_moments = _with_moments(dict(work_map), events)
+    with_moments = _with_moments(work_map_id, dict(work_map), events, segments)
     return {
         "lesson_id": lesson_id,
         "task": work_map.get("task") or "the task",

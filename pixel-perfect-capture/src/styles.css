@@ -5,8 +5,9 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  --font-sans: "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Instrument Serif", ui-serif, Georgia, serif;
+  --font-mono: "Geist Mono", ui-monospace, monospace;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -82,7 +83,9 @@
     color: var(--color-foreground);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
+    font-feature-settings: "ss01", "cv11";
   }
+  h1, h2, h3 { text-wrap: balance; }
 }
 
 /* ---------- Voice controls ---------- */
@@ -90,7 +93,7 @@
   background: var(--pill);
   color: var(--pill-foreground);
   border: 1px solid var(--pill-border);
-  box-shadow: 0 10px 30px -8px oklch(0 0 0 / 35%), 0 2px 6px oklch(0 0 0 / 20%);
+  box-shadow: 0 2px 6px oklch(0 0 0 / 20%);
   transition:
     width 480ms var(--ease-morph),
     height 480ms var(--ease-morph),
@@ -110,8 +113,7 @@
 @utility sia-glow {
   box-shadow:
     0 0 0 1px oklch(1 0 0 / 18%),
-    0 0 28px 2px oklch(1 0 0 / 22%),
-    0 10px 30px -8px oklch(0 0 0 / 35%);
+    0 2px 6px oklch(0 0 0 / 20%);
 }
 
 @utility sia-bar {
@@ -147,7 +149,7 @@
   --voice-noticed: oklch(0.83 0.13 85);
   --voice-raised: oklch(0.76 0.16 30);
   --voice-debrief: oklch(0.82 0.075 235);
-  --voice-shadow: 0 18px 55px -12px oklch(0 0 0 / 40%), 0 3px 8px oklch(0 0 0 / 20%);
+  --voice-shadow: 0 2px 6px oklch(0 0 0 / 20%);
 }
 @theme inline {
   --color-voice-listening: var(--voice-listening);
@@ -180,7 +182,26 @@
 .wm-guard-warm { background: color-mix(in oklch, var(--voice-raised) 14%, var(--card)); border-color: color-mix(in oklch, var(--voice-raised) 45%, var(--card)); color: color-mix(in oklch, var(--voice-raised) 60%, black); }
 .workmap-flow .react-flow__edge-path { stroke: color-mix(in oklch, var(--foreground) 35%, transparent); stroke-width: 1.4; }
 .workmap-flow .wm-edge-guard .react-flow__edge-path { stroke-dasharray: 3 4; }
+.wm-node { transition: box-shadow 160ms, border-color 160ms, translate 200ms var(--ease-morph); }
+.wm-node:hover { translate: 0 -2px; }
+/* Entrance, staggered along the timeline by --wm-delay (set per node and edge). */
+.wm-enter { animation: wm-enter 520ms var(--ease-morph) var(--wm-delay, 0ms) backwards; }
+@keyframes wm-enter { from { opacity: 0; transform: translateY(10px) scale(0.98); filter: blur(3px); } }
+.workmap-flow .wm-edge-draw { stroke-dasharray: 1; stroke-dashoffset: 1; animation: sia-draw 600ms ease-out calc(var(--wm-delay, 0ms) - 120ms) forwards; }
+.workmap-flow .wm-edge-fade { animation: wm-fade 400ms ease var(--wm-delay, 0ms) backwards; }
+@keyframes wm-fade { from { opacity: 0; } }
+/* The walkthrough: a dot runs to the next step, which ripples; its guardrail links flow. */
+.wm-pulse-dot { fill: var(--voice-listening); filter: drop-shadow(0 0 4px var(--voice-listening)); }
+.workmap-flow .wm-edge-live { stroke: color-mix(in oklch, var(--voice-listening) 70%, var(--foreground)); transition: stroke 300ms; }
+.workmap-flow .wm-edge-guard .wm-edge-live { animation: wm-fade 400ms ease var(--wm-delay, 0ms) backwards, wm-march 700ms linear infinite; }
+@keyframes wm-march { to { stroke-dashoffset: -14; } }
+/* Keeps wm-enter in the list so removing the ripple doesn't replay the entrance. */
+.wm-node-live { border-color: color-mix(in oklch, var(--voice-listening) 70%, var(--border)); animation: wm-enter 520ms var(--ease-morph) var(--wm-delay, 0ms) backwards, wm-arrive 1100ms ease-out; }
+@keyframes wm-arrive {
+  from { outline: 2px solid color-mix(in oklch, var(--voice-listening) 70%, transparent); outline-offset: 0; }
+  to { outline: 2px solid transparent; outline-offset: 10px; }
+}
 .wm-minimap { background: var(--card); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
 .workmap-fade { animation: workmap-fade 700ms ease both; }
 @keyframes workmap-fade { from { opacity: 0; } to { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .workmap-fade { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .workmap-fade, .wm-enter, .wm-node-live, .workmap-flow .wm-edge-draw, .workmap-flow .wm-edge-fade, .workmap-flow .wm-edge-live { animation: none; } .workmap-flow .wm-edge-draw { stroke-dashoffset: 0; } .wm-node:hover { translate: none; } }

@@ -1,12 +1,24 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import {
   ReactFlow,
   ReactFlowProvider,
   MiniMap,
   Handle,
   Position,
+  getBezierPath,
+  useReactFlow,
   type Node,
   type Edge,
+  type EdgeProps,
   type NodeProps,
   applyNodeChanges,
 } from "@xyflow/react";
@@ -18,6 +30,7 @@ import {
   Download,
   GraduationCap,
   MessageSquareText,
+  Play,
   Trash2,
   X,
 } from "lucide-react";
@@ -51,29 +64,105 @@ type NoteData = {
   selected: boolean;
 };
 type LaneData = { label: string };
+type FlowData = { kind: "step" | "guard"; from: number };
 /** What the side panel shows. */
 type Selection = { type: "step" | "guardrail"; index: number } | { type: "transcript" } | null;
 
+// Entrance: each step appears this long after the one before it; its guardrails follow.
+const STAGGER = 80;
+// The walkthrough: a pulse moves along the steps, SLOT ms per step, resting REST ms between rounds.
+const SLOT = 1400;
+const REST = 2600;
+const enterDelay = (ms: number) => ({ "--wm-delay": `${ms}ms` }) as CSSProperties;
+
+/** Index of the step the walkthrough is on, or -1 between rounds. */
+const Pulse = createContext(-1);
+
+function usePulse(steps: number) {
+  const [active, setActive] = useState(-1);
+  useEffect(() => {
+    if (steps < 2 || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    let i = -1;
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = () => {
+      i = i + 1 < steps ? i + 1 : -1;
+      setActive(i);
+      timer = setTimeout(tick, i === -1 ? REST : SLOT);
+    };
+    timer = setTimeout(tick, steps * STAGGER + 900);
+    return () => clearTimeout(timer);
+  }, [steps]);
+  return active;
+}
+
+/** A connector that draws itself in, and carries the pulse while its step is active. */
+function FlowEdge(props: EdgeProps<Edge<FlowData>>) {
+  const active = useContext(Pulse);
+  const [path] = getBezierPath(props);
+  const kind = props.data?.kind ?? "step";
+  const live = props.data?.from === active;
+  return (
+    <>
+      <path
+        d={path}
+        fill="none"
+        className={`react-flow__edge-path ${kind === "step" ? "wm-edge-draw" : "wm-edge-fade"} ${live ? "wm-edge-live" : ""}`}
+        style={props.style}
+        {...(kind === "step" ? { pathLength: 1 } : {})}
+      />
+      {live && kind === "step" && <PulseDot path={path} />}
+    </>
+  );
+}
+
+function PulseDot({ path }: { path: string }) {
+  const motion = useRef<SVGAnimateMotionElement>(null);
+  // Mounted mid-timeline, so start it by hand; begin="0s" would count from page load.
+  useEffect(() => motion.current?.beginElement(), []);
+  return (
+    <circle r={4} className="wm-pulse-dot">
+      <animateMotion
+        ref={motion}
+        path={path}
+        begin="indefinite"
+        dur={`${SLOT}ms`}
+        fill="freeze"
+        calcMode="spline"
+        keyPoints="0;1"
+        keyTimes="0;1"
+        keySplines="0.45 0 0.25 1"
+      />
+    </circle>
+  );
+}
+
+const edgeTypes = { flow: FlowEdge };
+
 function StepNode({ data }: NodeProps<Node<StepData>>) {
   const s = data.step;
+  const live = useContext(Pulse) === data.n - 1;
   return (
     <div
-      className={`wm-node w-[250px] overflow-hidden rounded-2xl border bg-card text-card-foreground ${data.selected ? "wm-node-selected" : ""}`}
+      className={`wm-node wm-enter w-[250px] overflow-hidden rounded-2xl border bg-card text-card-foreground ${data.selected ? "wm-node-selected" : ""} ${live ? "wm-node-live" : ""}`}
     >
       <Handle type="target" position={Position.Left} style={stepHandle} />
-      {s.thumb && (
-        <img
-          src={s.thumb}
-          alt={`Screen at ${mmss(s.at)}`}
-          className="h-[132px] w-full border-b object-cover object-top"
-        />
+      {s.clip ? (
+        <HoverClip clip={s.clip} thumb={s.thumb} label={`Screen at ${mmss(s.at)}`} />
+      ) : (
+        s.thumb && (
+          <img
+            src={s.thumb}
+            alt={`Screen at ${mmss(s.at)}`}
+            className="h-[132px] w-full border-b object-cover object-top"
+          />
+        )
       )}
       <div className="px-3.5 py-3">
         <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
           <span className="font-mono">{String(data.n).padStart(2, "0")}</span>
           {s.judgment && (
             <>
-              <span className="h-1.5 w-1.5 rounded-full bg-voice-listening" />
+              <span className="h-1.5 w-1.5 rounded-full bg-voice-listening sia-breathe" />
               <span className="text-foreground/70">Judgment call</span>
             </>
           )}
@@ -100,7 +189,7 @@ function StepNode({ data }: NodeProps<Node<StepData>>) {
 function NoteNode({ data }: NodeProps<Node<NoteData>>) {
   return (
     <div
-      className={`wm-node w-[250px] rounded-2xl border px-3.5 py-2.5 ${data.tone === "warm" ? "wm-guard-warm" : "bg-card text-card-foreground"} ${data.selected ? "wm-node-selected" : ""}`}
+      className={`wm-node wm-enter w-[250px] rounded-2xl border px-3.5 py-2.5 ${data.tone === "warm" ? "wm-guard-warm" : "bg-card text-card-foreground"} ${data.selected ? "wm-node-selected" : ""}`}
     >
       <Handle type="target" position={Position.Top} style={hidden} />
       <span className="flex items-center gap-1 text-[10px] font-medium opacity-75">
@@ -114,7 +203,7 @@ function NoteNode({ data }: NodeProps<Node<NoteData>>) {
 
 function LaneNode({ data }: NodeProps<Node<LaneData>>) {
   return (
-    <span className="block w-[120px] text-right text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+    <span className="wm-enter block w-[120px] text-right text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
       {data.label}
     </span>
   );
@@ -145,10 +234,11 @@ function layoutMap(map: MapData, selected: Selection) {
     });
   const isSelected = (type: "step" | "guardrail", index: number) =>
     selected?.type === type && selected.index === index;
-  const guardNode = (g: WorkMapGuardrail, index: number, x: number, y: number) => ({
+  const guardNode = (g: WorkMapGuardrail, index: number, x: number, y: number, delay: number) => ({
     id: `guardrail-${index}`,
     type: "note",
     position: { x, y },
+    style: enterDelay(delay),
     data: {
       label: guardLabel[g.kind] + (g.ask_whom ? ` · ${g.ask_whom}` : ""),
       text: g.rule,
@@ -168,9 +258,18 @@ function layoutMap(map: MapData, selected: Selection) {
         id,
         type: "step",
         position: { x: i * COL, y },
+        style: enterDelay(i * STAGGER),
         data: { step, n: i + 1, selected: isSelected("step", i) } satisfies StepData,
       });
-      if (i > 0) edges.push({ id: `step-${i - 1}-${id}`, source: `step-${i - 1}`, target: id });
+      if (i > 0)
+        edges.push({
+          id: `step-${i - 1}-${id}`,
+          type: "flow",
+          source: `step-${i - 1}`,
+          target: id,
+          style: enterDelay(i * STAGGER),
+          data: { kind: "step", from: i - 1 } satisfies FlowData,
+        });
     });
     y += stepsHeight;
   }
@@ -186,9 +285,13 @@ function layoutMap(map: MapData, selected: Selection) {
     }
     const depth = stacked.get(si) ?? 0;
     stacked.set(si, depth + 1);
-    nodes.push(guardNode(g, gi, si * COL, y + depth * GUARD_GAP));
+    const delay = (map.steps.length + si) * STAGGER + depth * 60;
+    nodes.push(guardNode(g, gi, si * COL, y + depth * GUARD_GAP, delay));
     edges.push({
       id: `step-${si}-guardrail-${gi}`,
+      type: "flow",
+      style: enterDelay(delay),
+      data: { kind: "guard", from: si } satisfies FlowData,
       source: `step-${si}`,
       sourceHandle: "g",
       target: `guardrail-${gi}`,
@@ -201,7 +304,11 @@ function layoutMap(map: MapData, selected: Selection) {
   }
   if (loose.length) {
     lane(stacked.size ? "Other guardrails" : "Guardrails", y);
-    loose.forEach((gi, i) => nodes.push(guardNode(map.guardrails[gi]!, gi, i * COL, y)));
+    loose.forEach((gi, i) =>
+      nodes.push(
+        guardNode(map.guardrails[gi]!, gi, i * COL, y, (map.steps.length * 2 + i) * STAGGER),
+      ),
+    );
     y += 130;
   }
 
@@ -213,6 +320,7 @@ function layoutMap(map: MapData, selected: Selection) {
         id: `${kind}-${i}`,
         type: "note",
         position: { x: i * COL, y },
+        style: enterDelay((map.steps.length * 2 + i) * STAGGER),
         data: {
           label: kind === "open" ? "Open question" : "Correction",
           text,
@@ -235,6 +343,18 @@ function Canvas({ map: record, onClose }: Props) {
   const judgments = map.steps.filter((s) => s.judgment).length;
 
   const layout = useMemo(() => layoutMap(map, selected), [map, selected]);
+  const pulse = usePulse(map.steps.length);
+  const flow = useReactFlow();
+  // Glide to a clicked card, keeping it clear of the details panel on the right.
+  const focus = (node: Node) => {
+    const zoom = flow.getZoom();
+    const width = node.measured?.width ?? 250;
+    const height = node.measured?.height ?? 120;
+    flow.setCenter(node.position.x + width / 2 + 210 / zoom, node.position.y + height / 2, {
+      zoom,
+      duration: 550,
+    });
+  };
   // React Flow reports node sizes through onNodesChange; keep them so the minimap can draw.
   const [nodes, setNodes] = useState<Node[]>([]);
   useEffect(
@@ -318,7 +438,9 @@ function Canvas({ map: record, onClose }: Props) {
           <ArrowLeft size={15} />
         </Button>
         <div className="min-w-0">
-          <h1 className="truncate text-base font-medium">{taskTitle(map.task)} · Work Map</h1>
+          <h1 className="truncate font-display text-2xl leading-tight tracking-tight">
+            {taskTitle(map.task)}
+          </h1>
           <p className="mt-0.5 text-xs text-muted-foreground">
             {recordedAt(map.recorded_at)} · {count(map.steps.length, "step")} ·{" "}
             {count(judgments, "judgment call")} · {count(map.guardrails.length, "guardrail")}
@@ -390,31 +512,38 @@ function Canvas({ map: record, onClose }: Props) {
           </div>
         ) : (
           <>
-            <ReactFlow
-              nodes={nodes}
-              edges={layout.edges}
-              nodeTypes={nodeTypes}
-              onNodesChange={(changes) => setNodes((ns) => applyNodeChanges(changes, ns))}
-              fitView
-              fitViewOptions={{ padding: 0.15, maxZoom: 1.2 }}
-              minZoom={0.3}
-              maxZoom={2}
-              nodesDraggable={false}
-              nodesConnectable={false}
-              proOptions={{ hideAttribution: true }}
-              onNodeClick={(_, n) => setSelected(pick(n.id))}
-              onPaneClick={() => setSelected(null)}
-              className="workmap-flow"
-            >
-              <MiniMap
-                position="bottom-right"
-                pannable
-                zoomable
-                className="wm-minimap"
-                nodeColor="#cfcfd4"
-                maskColor="rgba(247, 246, 243, 0.6)"
-              />
-            </ReactFlow>
+            <Pulse.Provider value={pulse}>
+              <ReactFlow
+                nodes={nodes}
+                edges={layout.edges}
+                nodeTypes={nodeTypes}
+                edgeTypes={edgeTypes}
+                onNodesChange={(changes) => setNodes((ns) => applyNodeChanges(changes, ns))}
+                fitView
+                fitViewOptions={{ padding: 0.15, maxZoom: 1.2, duration: 600 }}
+                minZoom={0.3}
+                maxZoom={2}
+                nodesDraggable={false}
+                nodesConnectable={false}
+                proOptions={{ hideAttribution: true }}
+                onNodeClick={(_, n) => {
+                  const next = pick(n.id);
+                  setSelected(next);
+                  if (next) focus(n);
+                }}
+                onPaneClick={() => setSelected(null)}
+                className="workmap-flow"
+              >
+                <MiniMap
+                  position="bottom-right"
+                  pannable
+                  zoomable
+                  className="wm-minimap"
+                  nodeColor="#cfcfd4"
+                  maskColor="rgba(247, 246, 243, 0.6)"
+                />
+              </ReactFlow>
+            </Pulse.Provider>
             <p className="pointer-events-none absolute bottom-4 left-6 text-[10px] text-muted-foreground">
               Scroll to zoom · drag to pan · click a step or guardrail for details
             </p>
@@ -449,7 +578,13 @@ function Canvas({ map: record, onClose }: Props) {
             {step && (
               <>
                 <h2 className="mt-1 text-xl font-medium leading-snug">{step.title}</h2>
-                <ScreenMoment at={step.at} thumb={step.thumb} what={step.screen || step.event} />
+                <ScreenMoment
+                  key={step.id}
+                  at={step.at}
+                  thumb={step.thumb}
+                  clip={step.clip}
+                  what={step.screen || step.event}
+                />
                 {step.decision && <Section label="Decision">{step.decision}</Section>}
                 <Section label="Reason">
                   {step.reason || step.quote ? (
@@ -483,7 +618,13 @@ function Canvas({ map: record, onClose }: Props) {
             {guard && (
               <>
                 <h2 className="mt-1 text-xl font-medium leading-snug">{guard.rule}</h2>
-                <ScreenMoment at={guard.at} thumb={guard.thumb} what={guard.event} />
+                <ScreenMoment
+                  key={guard.id}
+                  at={guard.at}
+                  thumb={guard.thumb}
+                  clip={guard.clip}
+                  what={guard.event}
+                />
                 {guard.applies_when && <Section label="Applies when">{guard.applies_when}</Section>}
                 {guard.ask_whom && (
                   <Section label="Stop and ask">
@@ -531,24 +672,85 @@ function teach(workMapId: string) {
   else window.location.assign(`/?lesson=${encodeURIComponent(workMapId)}`);
 }
 
+/** On a step card: the still, with a few seconds of the expert doing it played on hover. */
+function HoverClip({ clip, thumb, label }: { clip: string; thumb: string | null; label: string }) {
+  const video = useRef<HTMLVideoElement>(null);
+  const [failed, setFailed] = useState(false);
+  if (failed && thumb)
+    return (
+      <img src={thumb} alt={label} className="h-[132px] w-full border-b object-cover object-top" />
+    );
+  if (failed) return null;
+  return (
+    <div
+      className="relative"
+      onMouseEnter={() => void video.current?.play().catch(() => undefined)}
+      onMouseLeave={() => {
+        const v = video.current;
+        if (!v) return;
+        v.pause();
+        v.currentTime = 0;
+      }}
+    >
+      <video
+        ref={video}
+        src={clip}
+        poster={thumb ?? undefined}
+        aria-label={label}
+        muted
+        loop
+        playsInline
+        preload="none"
+        onError={() => setFailed(true)}
+        className="h-[132px] w-full border-b bg-muted object-cover object-top"
+      />
+      <span className="pointer-events-none absolute bottom-2 right-2 flex items-center gap-1 rounded-full bg-black/60 px-1.5 py-0.5 text-[10px] text-white">
+        <Play size={9} fill="currentColor" />
+        Clip
+      </span>
+    </div>
+  );
+}
+
 function ScreenMoment({
   at,
   thumb,
+  clip,
   what,
 }: {
   at: number | null;
   thumb?: string | null;
+  clip?: string | null;
   what?: string | null;
 }) {
-  if (!thumb && !what) return null;
+  const [failed, setFailed] = useState(false);
+  const playable = clip && !failed;
+  if (!thumb && !what && !playable) return null;
   return (
-    <Section label={`Screen moment${at !== null ? ` · ${mmss(at)}` : ""}`}>
-      {thumb && (
-        <img
-          src={thumb}
-          alt={what ?? "Screen moment"}
-          className="w-full rounded-lg border border-pill-border object-cover object-top"
+    <Section
+      label={`${playable ? "Screen recording" : "Screen moment"}${at !== null ? ` · ${mmss(at)}` : ""}`}
+    >
+      {playable ? (
+        <video
+          src={clip}
+          poster={thumb ?? undefined}
+          aria-label={what ?? "Screen recording"}
+          autoPlay
+          muted
+          loop
+          playsInline
+          controls
+          onError={() => setFailed(true)}
+          className="w-full rounded-lg border border-pill-border bg-black"
         />
+      ) : (
+        thumb && (
+          <img
+            src={thumb}
+            alt={what ?? "Screen moment"}
+            className="w-full rounded-lg border border-pill-border object-cover object-top"
+          />
+        )
       )}
       {what && <p className="mt-1.5 text-[12px] text-pill-muted">{what}</p>}
     </Section>

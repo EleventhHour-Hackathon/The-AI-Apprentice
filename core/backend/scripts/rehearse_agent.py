@@ -1,8 +1,8 @@
 """Rehearse the AI Apprentice agent over text, without a microphone.
 
 Plays a short scripted session against the live ElevenLabs agent: the pill's
-[SCREEN] context updates, the expert's narration, a [PAUSE], an answer and
-[TASK DONE]. Prints what the agent said and which tools it called at each
+[SCREEN] context updates, the expert's narration, three [PAUSE]s with answers
+and [TASK DONE]. Prints what the agent said and which tools it called at each
 beat, so prompt changes can be checked before a real voice session:
 
     uv run python scripts/rehearse_agent.py
@@ -37,22 +37,26 @@ ASK ABOUT THESE GAPS FIRST, one at a time:
 - Who do you ask if an asset number is missing?"""
 
 # (label, kind, text, seconds to listen afterwards)
+PAUSE = "[PAUSE] The expert has stopped after: {steps}. {ask}"
+FIRST = "You have asked {n} of at least 3 questions, so ask one now, about something on screen."
+NO_GUARDRAIL = " No guardrail yet: make this one about a limit, an exception or when they would stop and ask someone."
+
+# (label, kind, text, seconds to listen afterwards); [PAUSE] is worded the way the pill sends it.
 SCRIPT = [
     ("task", "user", "I'm approving this week's supplier invoices.", 9),
     ("screen", "context", "[SCREEN 00:08] Invoice 4471 from Kessler Maschinenbau opened, 7,800 EUR, cost center 4711", 1),
     ("screen", "context", "[SCREEN 00:31] Cost center on invoice 4471 changed from 4711 to 0400", 1),
     ("narration", "user", "Okay so this one is a machine part, I'm putting it on the other cost center.", 8),
-    (
-        "pause",
-        "user",
-        "[PAUSE] The expert has stopped after: [00:31] Cost center on invoice 4471 changed from 4711 to 0400. "
-        "If one of these hides a reason, a limit or a moment to stop and ask, ask one short question about it now. "
-        "Otherwise call skip_turn.",
-        9,
-    ),
-    ("answer", "user", "Equipment over five thousand euros is always capex. And no asset number, no capex booking.", 9),
+    ("pause 1", "user", PAUSE.format(steps="[00:31] Cost center on invoice 4471 changed from 4711 to 0400", ask=FIRST.format(n=0)), 9),
+    ("answer", "user", "It's a machine part, so it goes to 0400.", 9),
+    ("screen", "context", "[SCREEN 01:40] Invoice 4480 from Brightline Ltd (UK) opened, 2,300 GBP, new supplier", 1),
     ("screen", "context", "[SCREEN 01:58] Invoice 4480 status changed from Open to On hold", 1),
     ("narration", "user", "This one waits.", 8),
+    ("pause 2", "user", PAUSE.format(steps="[01:40] Invoice 4480 from Brightline Ltd (UK) opened; [01:58] Invoice 4480 status changed from Open to On hold", ask=FIRST.format(n=1) + NO_GUARDRAIL), 9),
+    ("answer", "user", "New suppliers wait until purchasing has checked their bank details. I'd ask Jana in purchasing.", 9),
+    ("screen", "context", "[SCREEN 03:05] Invoice 4485 from Kessler Maschinenbau, 12,400 EUR, sent for approval to controller", 1),
+    ("pause 3", "user", PAUSE.format(steps="[03:05] Invoice 4485, 12,400 EUR, sent for approval to controller", ask=FIRST.format(n=2)), 9),
+    ("answer", "user", "Anything over ten thousand goes to the controller, no matter what.", 9),
     ("done", "user", "[TASK DONE] The expert pressed End: the task is finished. Call start_debrief now.", 14),
 ]
 

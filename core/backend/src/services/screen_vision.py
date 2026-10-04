@@ -20,8 +20,9 @@ from openai import AsyncOpenAI
 from src.utils.logger import logger
 
 # Where to drop the frames the model actually looked at, so what it saw can be
-# checked against what it reported. Set SCREEN_DEBUG=false to turn this off.
-SCREEN_DEBUG = os.getenv("SCREEN_DEBUG", "true").lower() == "true"
+# checked against what it reported. Off by default: these are full screenshots of the
+# expert's screen that nothing else tracks. Set SCREEN_DEBUG=true while debugging vision.
+SCREEN_DEBUG = os.getenv("SCREEN_DEBUG", "false").lower() == "true"
 SCREEN_DEBUG_DIR = pathlib.Path(os.getenv("SCREEN_DEBUG_DIR", "uploads/screen_debug"))
 
 

@@ -8,9 +8,11 @@
  * - typing or scrolling: pixel changes on the shared screen, a few times a second
  * - reading: a new document just opened, so they are taking it in
  *
- * and only after an *action* on screen (a value changed, something saved,
- * held or sent): that is the step a question can be about. A budget keeps it
- * to a few questions per ten minutes; everything else waits for the debrief.
+ * and only after something happened on screen that a question can be about:
+ * an *action* (a value changed, something saved, held or sent), or, until the
+ * first few questions are asked, a document they opened. There is no upper
+ * limit: the apprentice asks at least MIN_LIVE_QUESTIONS and keeps asking at
+ * later pauses, spaced the way a colleague sitting next to them would.
  */
 
 /** Quiet this long after the expert stops talking. */
@@ -21,12 +23,14 @@ export const SCREEN_QUIET_MS = 3000;
 export const READING_MS = 8000;
 /** Let them settle into the task before the first question. */
 export const FIRST_QUESTION_AFTER_MS = 25_000;
-/** At least this long between live questions. */
-export const QUESTION_GAP_MS = 60_000;
+/** The apprentice asks at least this many questions while the expert works. */
+export const MIN_LIVE_QUESTIONS = 3;
+/** Between live questions until the minimum is reached. */
+export const EARLY_QUESTION_GAP_MS = 40_000;
+/** Between live questions after that: still asking, but less often. */
+export const QUESTION_GAP_MS = 75_000;
 /** If the agent passed on a pause, wait this long before offering another. */
 export const PAUSE_RETRY_MS = 20_000;
-/** At most this many live questions in any ten minutes (the brief: three to five). */
-export const MAX_QUESTIONS_PER_10_MIN = 5;
 
 export type ScreenKind = "action" | "navigation";
 
@@ -50,7 +54,7 @@ export type FloorInput = {
 
 /**
  * talking / busy / reading: the expert is occupied; stay quiet.
- * waiting: a pause, but the question budget says not yet.
+ * waiting: a pause, but too soon after the start or the last question.
  * quiet: nothing new worth asking about.
  * ask: a natural pause after a step; offer the agent one question.
  */
@@ -61,15 +65,15 @@ export function decideFloor(f: FloorInput): Floor {
   if (f.now - f.lastActivityAt < SCREEN_QUIET_MS) return "busy";
   const last = f.pending.at(-1);
   if (last?.kind === "navigation" && f.now - last.at < READING_MS) return "reading";
-  if (f.agentSpeaking || !f.pending.some((e) => e.kind === "action")) return "quiet";
+  const early = f.questionTimes.length < MIN_LIVE_QUESTIONS;
+  const worthAsking = f.pending.some((e) => e.kind === "action") || (early && f.pending.length > 0);
+  if (f.agentSpeaking || !worthAsking) return "quiet";
 
   const lastQuestion = f.questionTimes.at(-1) ?? -Infinity;
-  const recent = f.questionTimes.filter((t) => f.now - t < 600_000).length;
   if (
     f.now - f.observingSince < FIRST_QUESTION_AFTER_MS ||
-    f.now - lastQuestion < QUESTION_GAP_MS ||
-    f.now - f.lastPauseAt < PAUSE_RETRY_MS ||
-    recent >= MAX_QUESTIONS_PER_10_MIN
+    f.now - lastQuestion < (early ? EARLY_QUESTION_GAP_MS : QUESTION_GAP_MS) ||
+    f.now - f.lastPauseAt < PAUSE_RETRY_MS
   )
     return "waiting";
   return "ask";

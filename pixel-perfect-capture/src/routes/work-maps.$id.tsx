@@ -3,7 +3,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { WorkMap } from "@/components/WorkMap";
-import { fetchWorkMap, type WorkMapRecord } from "@/lib/work-maps";
+import { fetchWorkMap, taskTitle, type WorkMapRecord } from "@/lib/work-maps";
 
 export const Route = createFileRoute("/work-maps/$id")({
   head: () => ({ meta: [{ title: "Work Map · AI Apprentice" }] }),
@@ -22,6 +22,9 @@ function WorkMapPage() {
     fetchWorkMap(id).then(setMap, (e: Error) => setError(e.message));
   }, [id]);
   useEffect(load, [load]);
+  useEffect(() => {
+    if (map) document.title = `${taskTitle(map.task)} · Tacit`;
+  }, [map]);
 
   return (
     <main className="flex h-screen flex-col bg-background">

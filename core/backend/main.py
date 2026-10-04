@@ -1,9 +1,12 @@
+import asyncio
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 from src.core.config import Config
 from src.router.path_router import router
+from src.services import recordings
 from src.utils.logger import intercept_standard_logging, logger
 
 intercept_standard_logging()
@@ -27,6 +30,20 @@ async def root():
 
 
 app.include_router(router)
+
+
+@app.on_event("startup")
+async def push_pending_media():
+    # Recordings or clips that couldn't reach Supabase Storage last time go up now, off the request path.
+    async def push():
+        try:
+            pushed = await asyncio.to_thread(recordings.push_pending)
+            if pushed:
+                logger.info(f"Uploaded {pushed} waiting recordings and clips to Storage")
+        except Exception as e:
+            logger.warning(f"Couldn't push waiting recordings and clips: {e}")
+
+    asyncio.get_running_loop().create_task(push())
 
 if __name__ == "__main__":
     logger.info(f"Starting application server in {Config.ENVIRONMENT} mode")

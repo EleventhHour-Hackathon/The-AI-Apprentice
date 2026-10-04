@@ -13,6 +13,8 @@ export type LessonStep = {
   judgment: boolean;
   at: number | null;
   thumb: string | null;
+  /** Backend path of a few seconds of the expert doing it, if their screen was recorded. */
+  clip?: string | null;
   event: string | null;
 };
 type Lesson = { lesson_id: string; task: string; work_map: string; steps: LessonStep[] };

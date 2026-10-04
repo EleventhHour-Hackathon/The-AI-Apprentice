@@ -40,8 +40,11 @@ describe("decideFloor", () => {
     ).toBe("ask");
   });
 
-  it("does not ask when nothing was done, only looked at", () => {
-    expect(decideFloor({ ...ready, pending: [{ at: 0, kind: "navigation" }] })).toBe("quiet");
+  it("asks about what they opened until three questions are asked, then only after actions", () => {
+    const looked = { ...ready, pending: [{ at: 0, kind: "navigation" as const }] };
+    expect(decideFloor(looked)).toBe("ask");
+    const three = [1, 2, 3].map((m) => m * MIN);
+    expect(decideFloor({ ...looked, questionTimes: three })).toBe("quiet");
     expect(decideFloor({ ...ready, pending: [] })).toBe("quiet");
   });
 
@@ -52,12 +55,14 @@ describe("decideFloor", () => {
   it("asks less: waits after the start, between questions and after a passed pause", () => {
     expect(decideFloor({ ...ready, observingSince: ready.now - 10_000 })).toBe("waiting");
     expect(decideFloor({ ...ready, questionTimes: [ready.now - 30_000] })).toBe("waiting");
+    expect(decideFloor({ ...ready, questionTimes: [ready.now - 45_000] })).toBe("ask");
     expect(decideFloor({ ...ready, lastPauseAt: ready.now - 5000 })).toBe("waiting");
     expect(decideFloor({ ...ready, questionTimes: [ready.now - 2 * MIN] })).toBe("ask");
   });
 
-  it("caps live questions at five per ten minutes", () => {
-    const five = [1, 2, 3, 4, 4.5].map((m) => m * MIN);
-    expect(decideFloor({ ...ready, questionTimes: five, now: 5.6 * MIN })).toBe("waiting");
+  it("has no upper limit, but spaces questions out more after the first three", () => {
+    const five = [1, 2, 3, 3.5, 4].map((m) => m * MIN);
+    expect(decideFloor({ ...ready, questionTimes: five, now: 4 * MIN + 60_000 })).toBe("waiting");
+    expect(decideFloor({ ...ready, questionTimes: five, now: 4 * MIN + 80_000 })).toBe("ask");
   });
 });
