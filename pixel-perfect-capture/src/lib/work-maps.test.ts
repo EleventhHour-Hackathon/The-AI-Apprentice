@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BACKEND_URL } from "./backend";
+import { DEFAULT_BACKEND_URL as BACKEND_URL } from "./backend";
 import {
   agentExportUrl,
   diffError,
@@ -84,7 +84,7 @@ describe("fetchAgentInstructions", () => {
     vi.stubGlobal("fetch", fetch);
     const blob = await fetchAgentInstructions(id);
     expect(blob.size).toBe("# Task\n".length);
-    expect(fetch).toHaveBeenCalledWith(agentExportUrl(id, "md"), undefined);
+    expect(fetch.mock.calls[0]![0]).toBe(agentExportUrl(id, "md"));
   });
 
   it("throws a readable message instead of navigating to an error page", async () => {

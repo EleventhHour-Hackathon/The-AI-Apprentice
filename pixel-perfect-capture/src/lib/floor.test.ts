@@ -14,7 +14,9 @@ import {
   MIN_TEACH_BACK_WORDS,
   notYetReply,
   pauseAsk,
+  pauseCue,
   policyFrom,
+  readInferred,
   teachBackStatus,
   wrapUpLimit,
   type FloorInput,
@@ -210,9 +212,26 @@ describe("teachBackStatus", () => {
 
   it("wants an explanation first", () => {
     expect(teachBackStatus({ explained: [], confirmedBy: "Yes" })).toBe("explain_first");
-    expect(teachBackStatus({ explained: ["Got it, thanks."], confirmedBy: "Yes" })).toBe(
+    expect(teachBackStatus({ explained: ["Got it, thanks."], confirmedBy: "" })).toBe(
       "explain_first",
     );
+  });
+
+  it("takes the expert's yes to a short summary", () => {
+    const short = "So: match it to the order, hold new suppliers.";
+    const status = (confirmedBy: string) => teachBackStatus({ explained: [short], confirmedBy });
+    expect(status("Yes, that's it.")).toBe("ok");
+    expect(status("Genau.")).toBe("ok");
+    expect(status("对。")).toBe("ok");
+    expect(status("はい、その通りです。")).toBe("ok");
+    // A no or a correction still blocks, and so does a question back.
+    expect(status("No, only above five thousand.")).toBe("not_confirmed");
+    expect(status("Yes, but only for new suppliers.")).toBe("not_confirmed");
+    expect(status("Actually, the limit is higher.")).toBe("not_confirmed");
+    expect(status("What about credit notes?")).toBe("explain_first");
+    expect(status("¿Y las notas de crédito?")).toBe("explain_first");
+    // No answer yet: the summary isn't done.
+    expect(status("")).toBe("explain_first");
   });
 
   it("counts the words across the teach-back lines", () => {
@@ -276,12 +295,14 @@ describe("teachBackStatus", () => {
       "まず請求書を開いて、注文書と照らし合わせ、金額が上限を超えていないか確認します。新しい取引先や注文書がない場合は保留にして、承認する前に経理に確認します。";
     expect(teachBackStatus({ explained: [zh], confirmedBy: "对，没错。" })).toBe("ok");
     expect(teachBackStatus({ explained: [ja], confirmedBy: "はい、その通りです。" })).toBe("ok");
-    expect(teachBackStatus({ explained: ["好的。"], confirmedBy: "对。" })).toBe("explain_first");
+    expect(teachBackStatus({ explained: ["好的。"], confirmedBy: "" })).toBe("explain_first");
   });
 
   it("gives way on a short explanation after enough refusals, never on a no or no answer", () => {
     const short = { explained: ["Got it, thanks."], confirmedBy: "Yes." };
-    expect(teachBackStatus({ ...short, refusals: MAX_EXPLAIN_REFUSALS - 1 })).toBe("explain_first");
+    const asks = { ...short, confirmedBy: "Why?" };
+    expect(teachBackStatus({ ...asks, refusals: MAX_EXPLAIN_REFUSALS - 1 })).toBe("explain_first");
+    expect(teachBackStatus({ ...asks, refusals: MAX_EXPLAIN_REFUSALS })).toBe("ok");
     expect(teachBackStatus({ ...short, refusals: MAX_EXPLAIN_REFUSALS })).toBe("ok");
     expect(teachBackStatus({ ...short, confirmedBy: "", refusals: 9 })).toBe("await_confirmation");
     expect(teachBackStatus({ ...short, confirmedBy: "No.", refusals: 9 })).toBe("not_confirmed");
@@ -586,5 +607,51 @@ describe("the pace in what the agent is told", () => {
       "ask",
     );
     expect(decideFloor(after, policyFrom(defaultSettings()))).toBe("waiting");
+  });
+});
+
+describe("pauseCue", () => {
+  const steps = "[01:10] Cost center changed to 0400; [01:20] Invoice put on hold";
+  const ask = "Ask one short question.";
+  const plain = `[PAUSE] The expert has stopped after: ${steps}. ${ask}`;
+
+  it("sends the [PAUSE] as before when /infer gave nothing (timeout or error)", () => {
+    expect(pauseCue(steps, ask, null)).toBe(plain);
+    expect(pauseCue(steps, ask, { clear: [], skip: false })).toBe(plain);
+  });
+
+  it("sends nothing when nothing recent is worth a question", () => {
+    expect(pauseCue(steps, ask, { clear: [], skip: true })).toBeNull();
+  });
+
+  it("lists what is already clear so it isn't asked", () => {
+    const cue = pauseCue(steps, ask, {
+      clear: [
+        { about: "cost center changed to 0400", answer: "equipment over 5,000 is capex" },
+        { about: "total checked", answer: "it matches the order" },
+      ],
+      skip: false,
+    });
+    expect(cue).toBe(
+      `${plain} Already clear, don't ask: cost center changed to 0400: equipment over 5,000 is capex; total checked: it matches the order.`,
+    );
+  });
+});
+
+describe("readInferred", () => {
+  it("keeps only complete clear items and a real skip", () => {
+    expect(
+      readInferred({
+        clear: [{ about: " a ", answer: " b ", confidence: 0.95 }, { about: "x" }, null, "y"],
+        unclear: ["z"],
+        skip: false,
+      }),
+    ).toEqual({ clear: [{ about: "a", answer: "b" }], skip: false });
+    expect(readInferred({ clear: [], skip: true })).toEqual({ clear: [], skip: true });
+  });
+
+  it("reads anything malformed as nothing known and no skip", () => {
+    expect(readInferred(null)).toEqual({ clear: [], skip: false });
+    expect(readInferred({ clear: "no", skip: "yes" })).toEqual({ clear: [], skip: false });
   });
 });

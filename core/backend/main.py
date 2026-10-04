@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
+from src.core import access
 from src.core.config import Config
 from src.router.path_router import router
 from src.router import tutor_kb_router
@@ -22,12 +23,15 @@ intercept_standard_logging()
 # only hands out conversation tokens, reads the screen and keeps the Work Maps.
 app = FastAPI(title="AI Apprentice", version="2.0.0")
 
+# Added before CORS so CORS wraps it: a 401 still carries the CORS headers the app needs to read it.
+app.add_middleware(access.AccessKeyMiddleware)
+# The desktop app sends the access key in a header, not a cookie, so any origin is safe.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=Config.CORS_ORIGINS,
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=[access.HEADER, "Content-Type", "*"],
 )
 
 
@@ -38,6 +42,7 @@ async def root():
         "message": "Server is healthy",
         "version": "2.0.0",
         "privacy": await asyncio.to_thread(privacy.status),
+        "access": access.mode(),
     }
 
 

@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from src.services import agent_export, apprentice_agent, recordings, tutor
 from src.services.screen_vision import get_backend as get_vision_backend, log_frame
 from src.services import follow_ups, live_questions, living_map, work_map_edit, work_map_links
-from src.services import work_map_update
+from src.services import infer as infer_service, work_map_update
 from src.services.privacy import redact, redact_deep
 from src.services.work_map_merge import brief_for_agent, merge
 from src.utils.logger import logger
@@ -43,7 +43,7 @@ def _store_unavailable(e: Exception) -> HTTPException:
 
 @router.get("/agent/token")
 def agent_token(role: str = "apprentice"):
-    """A WebRTC token for one conversation with an agent on ElevenLabs: the apprentice or the tutor."""
+    """A WebRTC token for one conversation with an ElevenLabs agent: apprentice, tutor or guide."""
     if role not in apprentice_agent.ROLES:
         raise HTTPException(status_code=404, detail="No such agent")
     try:
@@ -226,6 +226,45 @@ def defer_live_question(session_id: str, payload: dict = Body(...)):
     except Exception as e:
         raise _store_unavailable(e)
     return {"deferred": found}
+
+
+@router.post("/sessions/{session_id}/infer")
+async def infer_reasons(session_id: str, payload: dict = Body(...)):
+    """At a pause: which recent actions' reasons are already clear, so the apprentice doesn't ask.
+
+    Body: {"events": [str], "transcript": [{"role": "expert"|"apprentice", "text"}]}.
+    Returns {"clear": [{"about", "answer", "confidence"}], "unclear": [str], "skip": bool}.
+    """
+    session_id = _uuid(session_id)
+    events = [str(e) for e in payload.get("events") or [] if isinstance(e, str)]
+    transcript = [
+        {"role": line.get("role"), "text": str(line.get("text") or "")}
+        for line in payload.get("transcript") or []
+        if isinstance(line, dict) and line.get("role") in ("expert", "apprentice")
+    ]
+    try:
+        session = await run_in_threadpool(work_map_store.get, session_id)
+    except Exception as e:
+        raise _store_unavailable(e) from e
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    # What the apprentice already learned: its live records, and the map it was recorded
+    # again from, if any.
+    known: Dict[str, Any] = {"captures": follow_ups.for_merge(session.get("captures") or [])}
+    if session.get("steps") or session.get("guardrails"):
+        known.update(steps=session.get("steps") or [], guardrails=session.get("guardrails") or [])
+    else:
+        parent_id = follow_ups.parent_of(session.get("captures") or [])
+        try:
+            parent = await run_in_threadpool(work_map_store.get, parent_id) if parent_id else None
+        except Exception as e:
+            logger.warning(f"Couldn't read Work Map {parent_id} for what is already known: {e}")
+            parent = None
+        if parent:
+            known.update(
+                steps=parent.get("steps") or [], guardrails=parent.get("guardrails") or []
+            )
+    return await infer_service.infer(events, transcript, known)
 
 
 @router.post("/sessions/{session_id}/merge")

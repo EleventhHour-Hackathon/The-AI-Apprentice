@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Install guide · Tacit</title>
+    <meta
+      name="description"
+      content="How to install Tacit on macOS, Windows and Linux, connect it to your team's server and run your first session."
+    />
+    <meta name="theme-color" content="#f8f7f4" />
+    <link rel="canonical" href="https://gsnmithra.github.io/tacit-app/install.html" />
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="Install guide · Tacit" />
+    <meta property="og:description" content="Download, install, connect and run your first Tacit session." />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap"
+    />
+    <link rel="stylesheet" href="styles.css" />
+    <script src="main.js" defer></script>
+  </head>
+  <body>
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true" focusable="false">
+      <defs>
+        <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="m7 10 5 5 5-5" /><path d="M12 15V3" /></symbol>
+      </defs>
+    </svg>
+
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="wrap">
+        <a class="brand" href="./" aria-label="Tacit home">
+          <img class="brand-mark" src="favicon.svg" alt="" width="28" height="28" />
+          <span class="brand-name">Tacit</span>
+        </a>
+        <nav class="nav" aria-label="Main">
+          <ul class="nav-links">
+            <li><a href="./#how">How it works</a></li>
+            <li><a href="./#features">Features</a></li>
+            <li><a href="./#privacy">Privacy</a></li>
+            <li><a href="./#faq">FAQ</a></li>
+            <li><a href="install.html" aria-current="page">Install guide</a></li>
+          </ul>
+          <a class="btn btn-primary btn-small" href="#download" data-download>
+            <svg aria-hidden="true"><use href="#i-download" /></svg>
+            <span>Download</span>
+          </a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main" class="wrap doc">
+      <nav class="doc-toc" aria-label="On this page">
+        <p class="eyebrow">On this page</p>
+        <ol>
+          <li><a href="#what">What Tacit is</a></li>
+          <li><a href="#need">What you need</a></li>
+          <li><a href="#download">Download</a></li>
+          <li><a href="#install">Install and first open</a></li>
+          <li><a href="#connect">Connect</a></li>
+          <li><a href="#first-session">Your first session</a></li>
+          <li><a href="#privacy">Privacy</a></li>
+          <li><a href="#troubleshooting">Troubleshooting</a></li>
+        </ol>
+      </nav>
+
+      <article class="prose">
+        <p class="eyebrow">Install guide</p>
+        <h1>Installing Tacit</h1>
+        <p class="lede">Welcome! This guide gets you from download to your first session in about ten minutes.</p>
+
+        <h2 id="what">What Tacit is</h2>
+        <p>
+          Tacit is an AI apprentice. It watches an expert do a job on screen, asks why at the right
+          moments, and turns the answers into a Work Map: every step, the decision behind it, and
+          the expert's reasons in their own words. A tutor then uses that map to teach the next
+          person, and steps in before they save a wrong decision.
+        </p>
+        <p>
+          Tacit is a desktop app. It holds no API keys and stores nothing of yours on your computer:
+          it talks to your team's Tacit server over HTTPS.
+        </p>
+
+        <h2 id="need">What you need</h2>
+        <ul>
+          <li><strong>Your access key.</strong> The person who sent you this guide has it, or will send it separately. Treat it like a password.</li>
+          <li><strong>A microphone.</strong> You talk with the apprentice by voice.</li>
+          <li><strong>Permission to share your screen.</strong> Tacit asks for it the first time you start a session.</li>
+          <li><strong>A computer</strong> running macOS (Apple silicon or Intel), Windows 10 or 11 (64-bit), or Linux (x86_64), with an internet connection.</li>
+        </ul>
+
+        <h2 id="download">Download</h2>
+        <p>Pick the file for your computer. These links always point at the newest version.</p>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr><th scope="col">Computer</th><th scope="col">File</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Mac with Apple silicon (M1 and later)</td><td><a href="https://github.com/GsnMithra/tacit-app/releases/latest/download/Tacit-mac-arm64.dmg">Tacit-mac-arm64.dmg</a></td></tr>
+              <tr><td>Mac with an Intel processor</td><td><a href="https://github.com/GsnMithra/tacit-app/releases/latest/download/Tacit-mac-x64.dmg">Tacit-mac-x64.dmg</a></td></tr>
+              <tr><td>Windows 10 or 11</td><td><a href="https://github.com/GsnMithra/tacit-app/releases/latest/download/Tacit-win-x64.exe">Tacit-win-x64.exe</a></td></tr>
+              <tr><td>Linux</td><td><a href="https://github.com/GsnMithra/tacit-app/releases/latest/download/Tacit-linux-x86_64.AppImage">Tacit-linux-x86_64.AppImage</a></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Not sure which Mac you have? Open the Apple menu, then About This Mac. "Chip: Apple M..."
+          means Apple silicon; "Processor: Intel..." means Intel.
+        </p>
+
+        <h2 id="install">Install and open it the first time</h2>
+        <div class="callout">
+          Tacit isn't signed with a certificate yet, so your computer asks you to confirm once. This
+          is expected; after the first time it opens normally.
+        </div>
+
+        <h3 id="macos">macOS</h3>
+        <ol>
+          <li>Open the downloaded <code>.dmg</code> and drag <strong>Tacit</strong> into <strong>Applications</strong>.</li>
+          <li>In Applications, <strong>right-click</strong> (or Control-click) Tacit and choose <strong>Open</strong>, then <strong>Open</strong> again in the dialog.</li>
+          <li>If you only see "Move to Trash" and no Open button: open <strong>System Settings</strong>, go to <strong>Privacy &amp; Security</strong>, scroll down to the message about Tacit and click <strong>Open Anyway</strong>. Confirm with your password, then open Tacit again.</li>
+          <li>When asked, allow <strong>Microphone</strong> access. The first time you share your screen, macOS asks for <strong>Screen Recording</strong> permission: allow it in System Settings, Privacy &amp; Security, Screen &amp; System Audio Recording, then quit and reopen Tacit.</li>
+        </ol>
+
+        <h3 id="windows">Windows</h3>
+        <ol>
+          <li>Run <code>Tacit-win-x64.exe</code>.</li>
+          <li>If SmartScreen says "Windows protected your PC", click <strong>More info</strong>, then <strong>Run anyway</strong>.</li>
+          <li>Follow the installer. Tacit appears in the Start menu.</li>
+          <li>If Windows asks whether Tacit may use your microphone, choose <strong>Allow</strong>.</li>
+        </ol>
+
+        <h3 id="linux">Linux</h3>
+        <ol>
+          <li>
+            Make the AppImage executable, either in a terminal:
+            <pre><code>chmod +x Tacit-linux-x86_64.AppImage
+./Tacit-linux-x86_64.AppImage</code></pre>
+            or in your file manager: right-click the file, Properties, Permissions, tick <strong>Allow executing file as program</strong>, then double-click it.
+          </li>
+          <li>If it doesn't start, your system may need FUSE to run AppImages (on Ubuntu: <code>sudo apt install libfuse2</code>).</li>
+        </ol>
+
+        <h2 id="connect">Connect to your team's server</h2>
+        <p>The first time Tacit opens, it shows <strong>Connect to Tacit</strong>.</p>
+        <ol>
+          <li>The server address is already filled in. Leave it unless your admin gave you a different one.</li>
+          <li>Paste your <strong>access key</strong>.</li>
+          <li>Connect. Tacit checks that it can reach the server and that the key works, then saves both.</li>
+        </ol>
+        <p>You can change the address or the key later in <strong>Settings</strong>, under <strong>Connection</strong>.</p>
+
+        <h2 id="first-session">Your first session (about 5 minutes)</h2>
+        <p>
+          Tacit comes with a practice ERP called <strong>Ledgerly</strong>, with fake supplier
+          invoices, so you can try everything without touching real systems.
+        </p>
+        <ol>
+          <li>In the Studio window, click <strong>Open the practice ERP</strong>. In Ledgerly pick <strong>Expert's session</strong> and press <strong>Reset</strong>.</li>
+          <li>Put Ledgerly on the screen you will share. The small dark <strong>pill</strong> floats above it.</li>
+          <li>Press <strong>Start session</strong> (or the <kbd>S</kbd> key) and share that screen. Tell the apprentice what you are doing, for example "Supplier invoices before month-end close".</li>
+          <li>Work one or two invoices and talk while you work. For example, open invoice <strong>4471</strong>, change the cost center to <strong>0400 Fixed assets</strong>, type an asset number and post it. Say why: "Equipment over five thousand euros is always capex."</li>
+          <li>The apprentice stays quiet while you type or talk, and asks at a pause. Answer in a sentence. The pill shows how many questions it has asked.</li>
+          <li>Press <strong>End</strong> (<kbd>S</kbd>). The apprentice asks a few more questions in a short debrief, then explains the process back to you. Correct anything it gets wrong. When it's right, say "Yes, that's how it works." It saves your Work Map.</li>
+          <li>Click <strong>Go to Work Maps</strong> to see it: each step with its screen moment, the decision and your reasons in your words.</li>
+        </ol>
+        <p>
+          Want to see the tutor? On the Work Map click <strong>Teach a new hire</strong>, switch
+          Ledgerly to <strong>New hire's practice</strong>, and work an invoice the wrong way. The
+          tutor steps in before it is saved.
+        </p>
+        <p>Handy keys while a session runs: <kbd>S</kbd> start or end, <kbd>O</kbd> off the record.</p>
+
+        <h2 id="privacy">Privacy</h2>
+        <ul>
+          <li><strong>Privacy shield.</strong> Before a screen frame leaves your computer, Tacit finds emails, IBANs, card and phone numbers and labelled fields such as Contact or Name, and paints over them. If the shield can't start, screen sharing doesn't start either.</li>
+          <li><strong>Off the record.</strong> Press <kbd>O</kbd> and nothing is seen, heard, transcribed or recorded until you press it again.</li>
+          <li><strong>Redaction on the server.</strong> Transcripts, events and quotes are redacted for emails, IBANs, cards and phone numbers. Names are redacted too: the hosted backend has name detection on by default.</li>
+          <li><strong>The pill stays out of recordings.</strong> It hides itself from the screen capture.</li>
+          <li><strong>You can delete.</strong> Delete any Work Map and its videos from Work Maps. Sessions nobody confirmed are marked for deletion after 30 days.</li>
+          <li><strong>No keys on your computer.</strong> The AI services are called by your team's server, never by the app. Your access key only lets the app talk to that server.</li>
+        </ul>
+
+        <h2 id="troubleshooting">Troubleshooting</h2>
+
+        <h3>"Missing or wrong access key"</h3>
+        <p>
+          The key was mistyped or has changed. Copy it again from the message you received (no
+          spaces before or after), then paste it in Settings, Connection. If it still fails, ask
+          your admin whether the key was changed.
+        </p>
+
+        <h3>The app can't reach the server, or nothing loads</h3>
+        <ul>
+          <li>Check your internet connection.</li>
+          <li>The server may be waking up after a quiet period. Wait 30 to 60 seconds and try again.</li>
+          <li>Check the address in Settings, Connection. It should start with <code>https://</code>.</li>
+          <li>On a company network, a firewall or VPN may block it. Ask your IT team to allow the address.</li>
+        </ul>
+
+        <h3>The apprentice can't hear me</h3>
+        <ul>
+          <li>macOS: System Settings, Privacy &amp; Security, Microphone: turn on Tacit.</li>
+          <li>Windows: Settings, Privacy &amp; security, Microphone: allow desktop apps to use the microphone.</li>
+          <li>Check that the right microphone is selected as your system's input device.</li>
+        </ul>
+
+        <h3>Screen sharing doesn't start or shows a black screen</h3>
+        <ul>
+          <li>macOS: System Settings, Privacy &amp; Security, Screen &amp; System Audio Recording: turn on Tacit, then quit and reopen it.</li>
+          <li>Linux on Wayland: pick the screen in the system's sharing dialog when it appears.</li>
+          <li>If the privacy shield couldn't start, Tacit doesn't share the screen on purpose. Restart the app and try again.</li>
+        </ul>
+
+        <h3>macOS says Tacit "is damaged and can't be opened"</h3>
+        <p>
+          This can happen with unsigned apps downloaded from the internet. Open Terminal and run
+          <code>xattr -cr /Applications/Tacit.app</code>, then open Tacit again.
+        </p>
+
+        <p>Still stuck? Reply to the person who sent you Tacit with what you see (a screenshot helps).</p>
+      </article>
+    </main>
+
+    <footer class="site-footer">
+      <div class="wrap">
+        <p>© <span data-year>2026</span> Tacit · The AI Apprentice</p>
+        <ul>
+          <li><a href="./">Home</a></li>
+          <li><a href="./#privacy">Privacy</a></li>
+          <li><a href="./#faq">FAQ</a></li>
+          <li><a href="https://github.com/GsnMithra/tacit-app/releases">Releases</a></li>
+        </ul>
+      </div>
+    </footer>
+  </body>
+</html>

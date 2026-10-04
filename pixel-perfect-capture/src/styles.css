@@ -201,7 +201,23 @@
   from { outline: 2px solid color-mix(in oklch, var(--voice-listening) 70%, transparent); outline-offset: 0; }
   to { outline: 2px solid transparent; outline-offset: 10px; }
 }
+/* Focus: the selected card lifts with a soft glow, its badges pop, and a flow runs onward from it. */
+.wm-judgment { border-color: color-mix(in oklch, var(--voice-listening) 45%, var(--border)); }
+.wm-node-selected { border-color: var(--voice-debrief); translate: 0 -4px; box-shadow: 0 0 0 3px color-mix(in oklch, var(--voice-debrief) 30%, transparent), 0 16px 36px -14px color-mix(in oklch, var(--voice-debrief) 70%, transparent); }
+.wm-node-selected:hover { translate: 0 -4px; }
+.wm-node-selected .wm-badge { animation: wm-badge 650ms var(--ease-morph); }
+@keyframes wm-badge { 0% { transform: scale(0.85); opacity: 0.4; } 55% { transform: scale(1.06); opacity: 1; } 100% { transform: none; } }
+.wm-badge { transform-origin: left center; }
+.workmap-flow .wm-edge-flow { stroke: var(--voice-debrief); stroke-width: 2.2; stroke-linecap: round; stroke-dasharray: 1 9; pointer-events: none; animation: wm-flow 900ms linear infinite; }
+@keyframes wm-flow { to { stroke-dashoffset: -10; } }
 .wm-minimap { background: var(--card); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
 .workmap-fade { animation: workmap-fade 700ms ease both; }
 @keyframes workmap-fade { from { opacity: 0; } to { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .workmap-fade, .wm-enter, .wm-node-live, .workmap-flow .wm-edge-draw, .workmap-flow .wm-edge-fade, .workmap-flow .wm-edge-live { animation: none; } .workmap-flow .wm-edge-draw { stroke-dashoffset: 0; } .wm-node:hover { translate: none; } }
+@media (prefers-reduced-motion: reduce) { .workmap-fade, .wm-enter, .wm-node-live, .workmap-flow .wm-edge-draw, .workmap-flow .wm-edge-fade, .workmap-flow .wm-edge-live { animation: none; } .workmap-flow .wm-edge-draw { stroke-dashoffset: 0; } .wm-node:hover, .wm-node-selected, .wm-node-selected:hover { translate: none; } .wm-node-selected .wm-badge, .workmap-flow .wm-edge-flow { animation: none; } .wm-node { transition: none; } }
+
+/* Enlarged clip player */
+.clip-overlay { animation: workmap-fade 220ms ease both; }
+.clip-overlay-box { box-shadow: 0 30px 80px -20px oklch(0 0 0 / 70%); }
+.clip-overlay-handle::after { content: ""; position: absolute; right: 7px; bottom: 7px; width: 10px; height: 10px; border-right: 2px solid oklch(1 0 0 / 70%); border-bottom: 2px solid oklch(1 0 0 / 70%); border-bottom-right-radius: 4px; transition: border-color 150ms; }
+.clip-overlay-handle:hover::after { border-color: oklch(1 0 0); }
+@media (prefers-reduced-motion: reduce) { .clip-overlay { animation: none; } }

@@ -5,7 +5,14 @@
  * The ERP never applies the expert's rules itself: the backend's agent decides each invoice
  * against the Work Map, and anything other than a clear "routine" goes to a person.
  */
-import { BACKEND_URL } from "./backend";
+import {
+  ACCESS_KEY_MESSAGE,
+  AccessKeyError,
+  backendFetch,
+  backendHeaders,
+  backendPath,
+  reportUnauthorized,
+} from "./backend";
 import { plan, isDecision, type AgentExport, type Decide, type Plan } from "./autopilot";
 import { agentExportUrl } from "./work-maps";
 import { COST_CENTERS, HISTORY, type Invoice, type PastInvoice } from "./sandbox";
@@ -54,14 +61,18 @@ export function decideRemote(
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetchImpl(
-        `${BACKEND_URL}/api/v1/work_maps/${encodeURIComponent(workMapId)}/decide`,
+        backendPath(`/api/v1/work_maps/${encodeURIComponent(workMapId)}/decide`),
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: backendHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify(toDecideBody(invoice)),
           signal: controller.signal,
         },
       );
+      if (response.status === 401) {
+        reportUnauthorized();
+        throw new AutopilotUnavailable(`${ACCESS_KEY_MESSAGE}. Nothing was posted.`);
+      }
       if (response.status === 503) {
         const body = (await response.json().catch(() => null)) as { detail?: unknown } | null;
         throw new AutopilotUnavailable(
@@ -82,8 +93,9 @@ export function decideRemote(
 export async function fetchAgentExport(id: string): Promise<AgentExport> {
   let response: Response;
   try {
-    response = await fetch(agentExportUrl(id, "json"));
-  } catch {
+    response = await backendFetch(agentExportUrl(id, "json"));
+  } catch (e) {
+    if (e instanceof AccessKeyError) throw e;
     throw new Error("Couldn’t reach the apprentice backend.");
   }
   if (response.status === 404) throw new Error("This Work Map doesn’t exist.");

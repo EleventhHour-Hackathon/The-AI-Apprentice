@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { LanguageChoice } from "@/lib/languages";
 import { VoiceConversation } from "@elevenlabs/client";
-import { BACKEND_URL } from "@/lib/backend";
+import { backendFetch } from "@/lib/backend";
 import type { ScreenEvent } from "@/hooks/use-screen-events";
 import { HEARTBEAT_MS, publishChecked, publishHold, publishWatching } from "@/lib/tutor-hold";
 
@@ -98,7 +98,7 @@ const mmss = (s: number) =>
   `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
 async function post<T = unknown>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`${BACKEND_URL}/api/v1${path}`, {
+  const response = await backendFetch(`/api/v1${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -269,7 +269,7 @@ export function useTutor() {
         };
         syncHold();
         setState((st) => ({ ...st, task: lesson.task, steps: lesson.steps }));
-        const { token } = await fetch(`${BACKEND_URL}/api/v1/agent/token?role=tutor`).then((r) => {
+        const { token } = await backendFetch("/api/v1/agent/token?role=tutor").then((r) => {
           if (!r.ok) throw new Error(`token request answered ${r.status}`);
           return r.json() as Promise<{ token: string }>;
         });

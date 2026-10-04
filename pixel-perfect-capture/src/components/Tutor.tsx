@@ -1,4 +1,4 @@
-import { BACKEND_URL } from "@/lib/backend";
+import { mediaUrl } from "@/lib/backend";
 import {
   useCallback,
   useEffect,
@@ -380,7 +380,7 @@ function ExpertMoment({ step }: { step: LessonStep }) {
     <figure className="mt-3 rounded-xl bg-pill-raised p-2.5">
       {step.clip ? (
         <ClipPlayer
-          src={`${BACKEND_URL}${step.clip}`}
+          src={mediaUrl(step.clip)}
           poster={step.thumb}
           label={`The expert doing it: ${step.title}`}
           autoPlay

@@ -338,11 +338,22 @@ const NOT_YES_ANYWHERE =
 const CLEAR_YES = /^(yes|yeah|yep|yup|exactly|correct|right|ja|genau|richtig|stimmt|passt)\b/;
 const SOFT_NO = /\b(actually|eigentlich)\b/;
 
+/** The expert's answer to the teach-back says no or corrects it. */
+function saysNo(confirmedBy: string) {
+  const said = confirmedBy.toLowerCase().replace(/[’]/g, "'").trim();
+  if (NOT_YES_START.test(said) || NOT_YES_ANYWHERE.test(said)) return true;
+  return SOFT_NO.test(said) && !CLEAR_YES.test(said);
+}
+
 /**
  * explained: what the apprentice said in the teach-back; confirmedBy: what the expert said after it.
  * explain_first: it hasn't explained the task yet. await_confirmation: the expert hasn't answered.
  * not_confirmed: the expert said no or corrected it. Other languages are never blocked.
  * refusals: "explain first" replies already given this session.
+ *
+ * The agent gives a short summary and stops once the expert agrees, so after it has started
+ * explaining, the expert's yes counts even below MIN_TEACH_BACK_WORDS: any answer that isn't a
+ * no, a correction or a question back. Without an answer a short explanation still has to go on.
  */
 export function teachBackStatus({
   explained,
@@ -353,11 +364,45 @@ export function teachBackStatus({
   confirmedBy: string;
   refusals?: number;
 }): "explain_first" | "await_confirmation" | "not_confirmed" | "ok" {
-  if (wordCount(explained.join(" ")) < MIN_TEACH_BACK_WORDS && refusals < MAX_EXPLAIN_REFUSALS)
-    return "explain_first";
-  if (!confirmedBy.trim()) return "await_confirmation";
-  const said = confirmedBy.toLowerCase().replace(/[’]/g, "'").trim();
-  if (NOT_YES_START.test(said) || NOT_YES_ANYWHERE.test(said)) return "not_confirmed";
-  if (SOFT_NO.test(said) && !CLEAR_YES.test(said)) return "not_confirmed";
-  return "ok";
+  const said = wordCount(explained.join(" "));
+  const answered = confirmedBy.trim() !== "";
+  if (said < MIN_TEACH_BACK_WORDS && refusals < MAX_EXPLAIN_REFUSALS) {
+    if (said === 0 || !answered) return "explain_first";
+    if (saysNo(confirmedBy)) return "not_confirmed";
+    return isQuestion(confirmedBy) ? "explain_first" : "ok";
+  }
+  if (!answered) return "await_confirmation";
+  return saysNo(confirmedBy) ? "not_confirmed" : "ok";
+}
+
+/** What /sessions/{id}/infer says at a pause (core/backend/src/services/infer.py). */
+export type Inferred = { clear: { about: string; answer: string }[]; skip: boolean };
+
+/** An /infer answer read defensively: anything malformed counts as nothing known, no skip. */
+export function readInferred(body: unknown): Inferred {
+  const b = (body ?? {}) as { clear?: unknown; skip?: unknown };
+  const clear = (Array.isArray(b.clear) ? b.clear : [])
+    .map((c) => {
+      const item = (c ?? {}) as { about?: unknown; answer?: unknown };
+      return {
+        about: typeof item.about === "string" ? item.about.trim() : "",
+        answer: typeof item.answer === "string" ? item.answer.trim() : "",
+      };
+    })
+    .filter((c) => c.about && c.answer);
+  return { clear, skip: b.skip === true };
+}
+
+/**
+ * The [PAUSE] for the agent, or null when /infer says nothing recent is worth a question: then
+ * nothing is sent and nothing counts as asked. What is already clear is listed so it isn't asked.
+ * inferred is null when /infer timed out or failed: the [PAUSE] goes out as before.
+ */
+export function pauseCue(steps: string, ask: string, inferred: Inferred | null): string | null {
+  if (inferred?.skip) return null;
+  const clear = inferred?.clear ?? [];
+  const known = clear.length
+    ? ` Already clear, don't ask: ${clear.map((c) => `${c.about}: ${c.answer}`).join("; ")}.`
+    : "";
+  return `[PAUSE] The expert has stopped after: ${steps}. ${ask}${known}`;
 }

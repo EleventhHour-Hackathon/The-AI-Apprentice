@@ -1,0 +1,520 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tacit · The AI Apprentice</title>
+    <meta
+      name="description"
+      content="Tacit watches an expert do the job, asks why at the right moment, and teaches the next person. A desktop app for macOS, Windows and Linux."
+    />
+    <meta name="theme-color" content="#f8f7f4" />
+    <link rel="canonical" href="https://gsnmithra.github.io/tacit-app/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Tacit · The AI Apprentice" />
+    <meta
+      property="og:description"
+      content="An apprentice that learns a job by watching an expert do it, asks why at the right moment, and teaches the next person."
+    />
+    <meta property="og:url" content="https://gsnmithra.github.io/tacit-app/" />
+    <meta name="twitter:card" content="summary" />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap"
+    />
+    <link rel="stylesheet" href="styles.css" />
+    <script src="main.js" defer></script>
+  </head>
+  <body>
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true" focusable="false">
+      <defs>
+        <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="m7 10 5 5 5-5" /><path d="M12 15V3" /></symbol>
+        <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" /><path d="m9 12 2 2 4-4" /></symbol>
+        <symbol id="i-ask" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" /><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" /><path d="M12 17h.01" /></symbol>
+        <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.8 10A10 10 0 1 1 17 3.34" /><path d="m9 11 3 3L22 4" /></symbol>
+        <symbol id="i-map" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.1 6.3 9.9 4.2a2 2 0 0 0-1.8 0L3.6 6.5A1 1 0 0 0 3 7.4v12.2a1 1 0 0 0 1.4.9l3.7-1.9a2 2 0 0 1 1.8 0l4.2 2.1a2 2 0 0 0 1.8 0l4.5-2.3a1 1 0 0 0 .6-.9V5.3a1 1 0 0 0-1.4-.9l-3.7 1.9a2 2 0 0 1-1.8 0Z" /><path d="M15 5.8v15" /><path d="M9 3.2v15" /></symbol>
+        <symbol id="i-compare" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3" /><circle cx="6" cy="6" r="3" /><path d="M13 6h3a2 2 0 0 1 2 2v7" /><path d="M11 18H8a2 2 0 0 1-2-2V9" /></symbol>
+        <symbol id="i-hand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 11V6a2 2 0 0 0-4 0v1" /><path d="M14 10V4a2 2 0 0 0-4 0v2" /><path d="M10 10.5V6a2 2 0 0 0-4 0v8" /><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" /></symbol>
+        <symbol id="i-globe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" /><path d="M2 12h20" /></symbol>
+        <symbol id="i-bot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8" /><rect width="16" height="12" x="4" y="8" rx="2" /><path d="M2 14h2" /><path d="M20 14h2" /><path d="M15 13v2" /><path d="M9 13v2" /></symbol>
+        <symbol id="i-route" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="19" r="3" /><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15" /><circle cx="18" cy="5" r="3" /></symbol>
+        <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" /><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" /><path d="M8 16H3v5" /></symbol>
+        <symbol id="i-radar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="2" /></symbol>
+        <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></symbol>
+        <symbol id="i-apple" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20.94c1.5 0 2.75 1.06 4 1.06 3 0 6-8 6-12.22A4.91 4.91 0 0 0 17 5c-2.22 0-4 1.44-5 2-1-.56-2.78-2-5-2a4.9 4.9 0 0 0-5 4.78C2 14 5 22 8 22c1.25 0 2.5-1.06 4-1.06Z" /><path d="M10 2c1 .5 2 2 2 5" /></symbol>
+        <symbol id="i-windows" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1" /><rect x="13" y="3" width="8" height="8" rx="1" /><rect x="3" y="13" width="8" height="8" rx="1" /><rect x="13" y="13" width="8" height="8" rx="1" /></symbol>
+        <symbol id="i-terminal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5" /><line x1="12" x2="20" y1="19" y2="19" /></symbol>
+      </defs>
+    </svg>
+
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="wrap">
+        <a class="brand" href="./" aria-label="Tacit home">
+          <img class="brand-mark" src="favicon.svg" alt="" width="28" height="28" />
+          <span class="brand-name">Tacit</span>
+        </a>
+        <nav class="nav" aria-label="Main">
+          <ul class="nav-links">
+            <li><a href="#how">How it works</a></li>
+            <li><a href="#features">Features</a></li>
+            <li><a href="#privacy">Privacy</a></li>
+            <li><a href="#faq">FAQ</a></li>
+            <li><a href="install.html">Install guide</a></li>
+          </ul>
+          <a class="btn btn-primary btn-small" href="#download" data-download>
+            <svg aria-hidden="true"><use href="#i-download" /></svg>
+            <span>Download</span>
+          </a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <!-- Hero -->
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="wrap">
+          <div>
+            <p class="eyebrow">Tacit · The AI Apprentice</p>
+            <h1 id="hero-title" class="display">
+              The expert retires.<br /><em>The know-how stays.</em>
+            </h1>
+            <p class="lede">
+              Tacit watches an expert do the job, asks why at the right moment, and teaches the
+              next person with the expert's own reasons.
+            </p>
+            <div class="download-block">
+              <div class="download-row">
+                <a class="btn btn-primary btn-lg" href="#download" data-download>
+                  <svg aria-hidden="true"><use href="#i-download" /></svg>
+                  <span data-download-label>Download Tacit</span>
+                </a>
+                <a class="btn btn-secondary btn-lg" href="install.html">Read the install guide</a>
+              </div>
+              <p class="download-note" data-download-note>For macOS, Windows and Linux.</p>
+              <div class="other-platforms">
+                <span>Other platforms:</span>
+                <ul>
+                  <li><a href="https://github.com/GsnMithra/tacit-app/releases/latest/download/Tacit-mac-arm64.dmg">Mac (Apple silicon)</a></li>
+                  <li><a href="https://github.com/GsnMithra/tacit-app/releases/latest/download/Tacit-mac-x64.dmg">Mac (Intel)</a></li>
+                  <li><a href="https://github.com/GsnMithra/tacit-app/releases/latest/download/Tacit-win-x64.exe">Windows</a></li>
+                  <li><a href="https://github.com/GsnMithra/tacit-app/releases/latest/download/Tacit-linux-x86_64.AppImage">Linux</a></li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <div class="mock" role="img" aria-label="Illustration: an invoice in a practice ERP. The cost center was changed to 0400 Fixed assets and the contact's email is painted over. The apprentice asks: Why did this one move to fixed assets? The floating Tacit pill reads Listening, Questions 2 of 3, Guardrail checked.">
+            <div class="mock-window" aria-hidden="true">
+              <div class="mock-bar"><span></span><span></span><span></span><strong>Ledgerly · Supplier invoices</strong></div>
+              <div class="mock-body">
+                <div class="mock-list">
+                  <div class="active"><b>4471</b>Bauer Hydraulik</div>
+                  <div><b>4472</b>Schmidt Logistik</div>
+                  <div><b>4473</b>Kovotech s.r.o.</div>
+                  <div><b>4474</b>Büro Hansen</div>
+                </div>
+                <div class="mock-detail">
+                  <h3>Invoice 4471 · €6,850.00</h3>
+                  <div class="mock-fields">
+                    <div class="mock-field"><small>Supplier</small>Bauer Hydraulik GmbH</div>
+                    <div class="mock-field"><small>Contact</small><span class="shielded"></span></div>
+                    <div class="mock-field changed"><small>Cost center</small>0400 Fixed assets</div>
+                    <div class="mock-field changed"><small>Asset number</small>AN-2026-0117</div>
+                  </div>
+                  <div class="mock-actions"><span class="go">Post invoice</span><span>Hold…</span><span>Send for approval…</span></div>
+                </div>
+              </div>
+            </div>
+            <div class="mock-bubble" aria-hidden="true">
+              <small>Apprentice</small>
+              Why did this one move to fixed assets? It came in as 4711.
+            </div>
+            <div class="pill" aria-hidden="true">
+              <span class="waves"><i></i><i></i><i></i><i></i></span>
+              <span>Listening</span>
+              <span class="tally tally-long">Questions <b>2/3</b> · Guardrail <b>✓</b></span>
+              <span class="shield"><svg><use href="#i-shield" /></svg></span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Problem -->
+      <section class="section section-alt" aria-labelledby="problem-title">
+        <div class="wrap">
+          <div class="section-head">
+            <p class="eyebrow">The problem</p>
+            <h2 id="problem-title" class="display">Decades of judgment, gone with a farewell party.</h2>
+          </div>
+          <div class="problem-grid">
+            <blockquote class="problem-quote">
+              <p>“Equipment over five thousand euros is always capex. And without an asset number I never book capex.”</p>
+              <cite>Sabine, accounts payable for 24 years. Retires in 18 months.</cite>
+            </blockquote>
+            <ul class="problem-points">
+              <li><strong>The screen shows what, never why.</strong><span>A recording shows a cost center change. It doesn't say where the line is, who decides, or what would change the answer.</span></li>
+              <li><strong>Handover documents go stale.</strong><span>Nobody writes down the exceptions, and the exceptions are the job.</span></li>
+              <li><strong>Shadowing doesn't scale.</strong><span>The expert has limited time, and the new hire meets the hard case months after the expert has left.</span></li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- How it works -->
+      <section class="section" id="how" aria-labelledby="how-title">
+        <div class="wrap">
+          <div class="section-head">
+            <p class="eyebrow">How it works</p>
+            <h2 id="how-title" class="display">Capture, map, teach.</h2>
+            <p>The expert does their normal work. Tacit does the rest, in three steps.</p>
+          </div>
+          <ol class="steps">
+            <li class="step">
+              <span class="step-num">01</span>
+              <h3>Capture</h3>
+              <p>The expert shares their screen and works. Tacit turns what happens on screen into events and asks a short question at a natural pause.</p>
+              <div class="step-visual" aria-hidden="true">
+                <div class="event"><time>02:14</time><span>Cost center changed from 4711 to 0400</span></div>
+                <div class="event"><time>02:31</time><span>Asset number AN-2026-0117 entered</span></div>
+                <div class="event"><time>02:40</time><span>Invoice 4471 posted</span></div>
+              </div>
+            </li>
+            <li class="step">
+              <span class="step-num">02</span>
+              <h3>Map</h3>
+              <p>A spoken debrief fills the gaps, then Tacit explains it all back until the expert says yes. The result is a clickable Work Map.</p>
+              <div class="step-visual" aria-hidden="true">
+                <div class="map-node"><span class="dot"></span>Open the supplier invoice</div>
+                <div class="map-node judgment"><span class="dot"></span>Decide opex or capex</div>
+                <div class="map-node guard">Over €5,000 net: book as capex</div>
+                <div class="map-node guard">No asset number, no capex</div>
+              </div>
+            </li>
+            <li class="step">
+              <span class="step-num">03</span>
+              <h3>Teach</h3>
+              <p>A tutor watches a new hire work a case the expert never showed, and steps in before a wrong decision is saved.</p>
+              <div class="step-visual" aria-hidden="true">
+                <div class="tutor-line">Sabine would stop here. Why do you think?</div>
+                <div class="tutor-lock"><svg><use href="#i-lock" /></svg>The tutor wants a word first</div>
+              </div>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <!-- Features -->
+      <section class="section section-alt" id="features" aria-labelledby="features-title">
+        <div class="wrap">
+          <div class="section-head">
+            <p class="eyebrow">Features</p>
+            <h2 id="features-title" class="display">What you get.</h2>
+            <p>Everything below is in the app today. Two features marked <span class="badge">Preview</span> run on the server and don't have a screen in the app yet.</p>
+          </div>
+
+          <div class="feature-groups">
+            <div class="feature-group">
+              <div>
+                <h3>It learns while the expert works</h3>
+                <p>No interviews to schedule, no documents to write.</p>
+              </div>
+              <ul class="features">
+                <li class="feature">
+                  <span class="feature-icon"><svg aria-hidden="true"><use href="#i-ask" /></svg></span>
+                  <h4>Live questions at natural pauses</h4>
+                  <p>It stays quiet while the expert types, reads or talks, and asks only after an action. Questions name what is on screen and ask why, never what. At least three, one about a rule.</p>
+                </li>
+                <li class="feature">
+                  <span class="feature-icon"><svg aria-hidden="true"><use href="#i-check" /></svg></span>
+                  <h4>Debrief and teach-back</h4>
+                  <p>Afterwards it asks about what it didn't learn, then explains the whole process back. Corrections are recorded, and only the expert's yes saves the map.</p>
+                </li>
+              </ul>
+            </div>
+
+            <div class="feature-group">
+              <div>
+                <h3>A map you can check</h3>
+                <p>Grounded in real screen moments and the expert's own words.</p>
+              </div>
+              <ul class="features">
+                <li class="feature">
+                  <span class="feature-icon"><svg aria-hidden="true"><use href="#i-map" /></svg></span>
+                  <h4>Clickable Work Map</h4>
+                  <p>Each step has its screen moment, a short clip, the decision, the reason in the expert's words and its guardrails. Quotes are checked against the transcript, and anything without proof is marked Unlinked.</p>
+                </li>
+                <li class="feature">
+                  <span class="feature-icon"><svg aria-hidden="true"><use href="#i-compare" /></svg></span>
+                  <h4>Compare two experts, ask each why</h4>
+                  <p>See where two sessions of the same task differ. Keep a question for an expert, and their next session asks it first.</p>
+                </li>
+              </ul>
+            </div>
+
+            <div class="feature-group">
+              <div>
+                <h3>It teaches the next person</h3>
+                <p>In the expert's reasons, in the new hire's language.</p>
+              </div>
+              <ul class="features">
+                <li class="feature">
+                  <span class="feature-icon"><svg aria-hidden="true"><use href="#i-hand" /></svg></span>
+                  <h4>A tutor that steps in before a wrong save</h4>
+                  <p>In the built-in practice ERP, the tutor holds the confirm button until the mistake is fixed, replays the expert's moment and asks the new hire to predict the next decision. The report shows what they mastered and what to practice next.</p>
+                </li>
+                <li class="feature">
+                  <span class="feature-icon"><svg aria-hidden="true"><use href="#i-globe" /></svg></span>
+                  <h4>72 languages</h4>
+                  <p>The expert explains in their language, or picks Auto-detect. The map keeps every quote as said, with an English translation beside it. The tutor teaches in the new hire's language.</p>
+                </li>
+              </ul>
+            </div>
+
+            <div class="feature-group">
+              <div>
+                <h3>Ready for agents, people first</h3>
+                <p>Routine steps can go to an agent. Judgment calls stay with people.</p>
+              </div>
+              <ul class="features">
+                <li class="feature">
+                  <span class="feature-icon"><svg aria-hidden="true"><use href="#i-bot" /></svg></span>
+                  <h4>Agent-ready export</h4>
+                  <p>Download a Work Map as instructions an AI agent can load: the same steps and the same stop points the expert set.</p>
+                </li>
+                <li class="feature">
+                  <span class="feature-icon"><svg aria-hidden="true"><use href="#i-route" /></svg></span>
+                  <h4>Autopilot that hands judgment calls to people</h4>
+                  <p>In the practice ERP, an autopilot posts the routine invoices against a confirmed Work Map and puts every judgment call in a For you list, with the rule that stopped it.</p>
+                </li>
+                <li class="feature">
+                  <span class="feature-icon"><svg aria-hidden="true"><use href="#i-refresh" /></svg></span>
+                  <h4>Living Work Map updates <span class="badge">Preview</span></h4>
+                  <p>Record a task again and the debrief asks only about what changed. The update is kept and can be applied to the original map through the server. A review screen is coming.</p>
+                </li>
+                <li class="feature">
+                  <span class="feature-icon"><svg aria-hidden="true"><use href="#i-radar" /></svg></span>
+                  <h4>Coverage check <span class="badge">Preview</span></h4>
+                  <p>Tells whether any confirmed Work Map already covers what is on screen, and suggests one question when none does. Available on the server today; the in-app inbox is coming.</p>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Privacy -->
+      <section class="section trust-dark" id="privacy" aria-labelledby="privacy-title">
+        <div class="wrap">
+          <div class="section-head">
+            <p class="eyebrow">Privacy and trust</p>
+            <h2 id="privacy-title" class="display">Built to be trusted with real work.</h2>
+            <p>Experts share their screen and their voice. Tacit treats both with care, and fails closed when it can't.</p>
+          </div>
+          <div class="trust-grid">
+            <div class="trust-card">
+              <h3>Privacy shield</h3>
+              <p>Before a frame leaves your computer, on-device text recognition paints over emails, IBANs, card and phone numbers and labelled fields like Contact or Name. No shield, no screen sharing.</p>
+            </div>
+            <div class="trust-card">
+              <h3>Off the record</h3>
+              <p>Press <kbd>O</kbd> and nothing is seen, heard, transcribed or recorded until you come back.</p>
+            </div>
+            <div class="trust-card">
+              <h3>Redaction on the server</h3>
+              <p>Transcripts, events and quotes are redacted for emails, IBANs, cards and phone numbers. Names are redacted too: the hosted backend has name detection on by default.</p>
+            </div>
+            <div class="trust-card">
+              <h3>Out of the picture</h3>
+              <p>The Tacit pill hides itself from the screen capture, so it never ends up in a recording.</p>
+            </div>
+            <div class="trust-card">
+              <h3>Yours to delete</h3>
+              <p>Delete any Work Map and its videos at any time. Sessions nobody confirmed are marked for deletion after 30 days.</p>
+            </div>
+            <div class="trust-card">
+              <h3>No keys on your computer</h3>
+              <p>The app holds no API keys. It talks to your team's Tacit server over HTTPS, with an access key from your admin.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Getting started -->
+      <section class="section" id="start" aria-labelledby="start-title">
+        <div class="wrap">
+          <div class="section-head">
+            <p class="eyebrow">Getting started</p>
+            <h2 id="start-title" class="display">Up and running in five minutes.</h2>
+          </div>
+          <ol class="start-strip">
+            <li>
+              <span class="num" aria-hidden="true">1</span>
+              <div>
+                <h3>Download</h3>
+                <p>Get the app for your computer below and open it. The <a href="install.html#install">install guide</a> shows the first-open steps.</p>
+              </div>
+            </li>
+            <li>
+              <span class="num" aria-hidden="true">2</span>
+              <div>
+                <h3>Get your access key</h3>
+                <p>Ask the person who set up Tacit for your team. They will send you an access key.</p>
+              </div>
+            </li>
+            <li>
+              <span class="num" aria-hidden="true">3</span>
+              <div>
+                <h3>Connect</h3>
+                <p>On the Connect to Tacit screen the server address is already filled in. Paste your key and connect.</p>
+              </div>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <!-- Downloads -->
+      <section class="section section-alt" id="download" aria-labelledby="download-title">
+        <div class="wrap">
+          <div class="section-head">
+            <p class="eyebrow">Download</p>
+            <h2 id="download-title" class="display">Tacit for your desktop.</h2>
+            <p>Always the latest version. The installers aren't signed yet, so your computer asks once before opening the app. The <a href="#faq-unsigned">FAQ</a> shows how.</p>
+          </div>
+          <div class="platforms">
+            <div class="platform" data-platform="mac">
+              <h3><svg aria-hidden="true"><use href="#i-apple" /></svg>macOS<span class="yours">Your computer</span></h3>
+              <p>A disk image. Drag Tacit to Applications.</p>
+              <div class="links">
+                <a class="btn btn-primary" href="https://github.com/GsnMithra/tacit-app/releases/latest/download/Tacit-mac-arm64.dmg">
+                  <svg aria-hidden="true"><use href="#i-download" /></svg>Apple silicon
+                </a>
+                <a class="btn btn-secondary" href="https://github.com/GsnMithra/tacit-app/releases/latest/download/Tacit-mac-x64.dmg">
+                  <svg aria-hidden="true"><use href="#i-download" /></svg>Intel
+                </a>
+                <span class="file">Tacit-mac-arm64.dmg · Tacit-mac-x64.dmg</span>
+              </div>
+            </div>
+            <div class="platform" data-platform="win">
+              <h3><svg aria-hidden="true"><use href="#i-windows" /></svg>Windows<span class="yours">Your computer</span></h3>
+              <p>An installer for 64-bit Windows 10 and 11.</p>
+              <div class="links">
+                <a class="btn btn-primary" href="https://github.com/GsnMithra/tacit-app/releases/latest/download/Tacit-win-x64.exe">
+                  <svg aria-hidden="true"><use href="#i-download" /></svg>Windows installer
+                </a>
+                <span class="file">Tacit-win-x64.exe</span>
+              </div>
+            </div>
+            <div class="platform" data-platform="linux">
+              <h3><svg aria-hidden="true"><use href="#i-terminal" /></svg>Linux<span class="yours">Your computer</span></h3>
+              <p>An AppImage for x86_64. Make it executable and run it.</p>
+              <div class="links">
+                <a class="btn btn-primary" href="https://github.com/GsnMithra/tacit-app/releases/latest/download/Tacit-linux-x86_64.AppImage">
+                  <svg aria-hidden="true"><use href="#i-download" /></svg>AppImage
+                </a>
+                <span class="file">Tacit-linux-x86_64.AppImage</span>
+              </div>
+            </div>
+          </div>
+          <p class="download-note">Looking for an older version? See <a href="https://github.com/GsnMithra/tacit-app/releases">all releases</a>.</p>
+        </div>
+      </section>
+
+      <!-- FAQ -->
+      <section class="section" id="faq" aria-labelledby="faq-title">
+        <div class="wrap">
+          <div class="section-head">
+            <p class="eyebrow">FAQ</p>
+            <h2 id="faq-title" class="display">Questions, answered.</h2>
+          </div>
+          <div class="faq">
+            <details id="faq-unsigned">
+              <summary>My computer says the app can't be opened. What do I do?</summary>
+              <div class="answer">
+                <p>The installers aren't signed with a certificate yet, so your computer asks you to confirm once.</p>
+                <ul>
+                  <li><strong>macOS:</strong> in Applications, right-click Tacit and choose Open, then Open again. If that doesn't show an Open button, go to System Settings, Privacy &amp; Security, scroll down and click Open Anyway.</li>
+                  <li><strong>Windows:</strong> if SmartScreen says "Windows protected your PC", click More info, then Run anyway.</li>
+                  <li><strong>Linux:</strong> make the AppImage executable with <code>chmod +x Tacit-linux-x86_64.AppImage</code>, or tick "Allow executing file as program" in its properties, then open it.</li>
+                </ul>
+              </div>
+            </details>
+            <details>
+              <summary>Where do I get an access key?</summary>
+              <div class="answer">
+                <p>From the person who set up Tacit for your team. The key connects the app to your team's server. Keep it to yourself, like a password.</p>
+              </div>
+            </details>
+            <details>
+              <summary>What does Tacit need on my computer?</summary>
+              <div class="answer">
+                <p>A microphone and permission to share your screen. Tacit asks for both the first time you start a session. You also need an internet connection to reach your team's server.</p>
+              </div>
+            </details>
+            <details>
+              <summary>Can I try it without touching real systems?</summary>
+              <div class="answer">
+                <p>Yes. Tacit comes with a practice ERP called Ledgerly, with fake supplier invoices and hidden judgment calls. Open it from the Studio window with Open the practice ERP.</p>
+              </div>
+            </details>
+            <details>
+              <summary>Does it record everything I do?</summary>
+              <div class="answer">
+                <p>Only while a session runs, and only the shielded copy of your screen leaves your computer. Press <kbd>O</kbd> to go off the record at any moment. You can delete any Work Map and its videos.</p>
+              </div>
+            </details>
+            <details>
+              <summary>Can the tutor stop mistakes in our own ERP?</summary>
+              <div class="answer">
+                <p>Not yet. The tutor watches any screen and explains, but locking the confirm button before a wrong save works in the built-in practice ERP, opened in the same app.</p>
+              </div>
+            </details>
+            <details>
+              <summary>Which languages does it speak?</summary>
+              <div class="answer">
+                <p>72 languages, or Auto-detect. The expert and the new hire can each use their own.</p>
+              </div>
+            </details>
+            <details>
+              <summary>How do I update?</summary>
+              <div class="answer">
+                <p>Download the latest version from this page and install it over the old one. Your Work Maps live on your team's server, so nothing is lost.</p>
+              </div>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <!-- CTA -->
+      <section class="section section-alt cta" aria-labelledby="cta-title">
+        <div class="wrap">
+          <h2 id="cta-title" class="display">Every retiring expert becomes a Work Map and a tutor.</h2>
+          <p>Not a farewell party.</p>
+          <div class="download-row">
+            <a class="btn btn-primary btn-lg" href="#download" data-download>
+              <svg aria-hidden="true"><use href="#i-download" /></svg>
+              <span data-download-label>Download Tacit</span>
+            </a>
+            <a class="btn btn-secondary btn-lg" href="install.html">Install guide</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="wrap">
+        <p>© <span data-year>2026</span> Tacit · The AI Apprentice</p>
+        <ul>
+          <li><a href="install.html">Install guide</a></li>
+          <li><a href="#privacy">Privacy</a></li>
+          <li><a href="#faq">FAQ</a></li>
+          <li><a href="https://github.com/GsnMithra/tacit-app/releases">Releases</a></li>
+        </ul>
+      </div>
+    </footer>
+  </body>
+</html>

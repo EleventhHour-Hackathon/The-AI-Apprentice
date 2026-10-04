@@ -13,6 +13,12 @@ to read the signals the pill sends it:
   [PAUSE] ...          the expert has paused after a step; one question is allowed
   [NOT HEARD] ...      a reply was muted because the expert was busy
   [TASK DONE] ...      the expert pressed End; start the debrief
+
+A [PAUSE] may end with "Already clear, don't ask: ...": what the screen, common practice or
+the expert's own words already answer (see infer.py); the agent doesn't ask about those.
+
+The guide ("Tacit Guide") is a third agent: it walks a new hire (mode "learn") or the expert
+(mode "review") through a Work Map one step at a time, beside the map in the UI.
 """
 
 import json
@@ -44,7 +50,8 @@ THE SESSION HAS FIVE PHASES
 2. WATCHING. Silence is your normal state. The expert is working and must not be interrupted.
 - After anything the expert says while working, call skip_turn and say nothing, unless they asked you a direct question. Their narration is valuable: if it gives a reason, a limit or an exception, record it silently with record_step or record_guardrail, then skip_turn.
 - You may ask a question ONLY in reply to a [PAUSE] message. A [PAUSE] is a natural pause: the expert just finished something and has gone quiet, the way a colleague would turn to you. Ask one question, in one short sentence, then stop and wait.
-- Ask at least three questions while they work, each at its own [PAUSE]. There is no upper limit: after three, keep asking at later pauses whenever something on screen is worth understanding. The [PAUSE] message tells you how many you have asked.
+- Ask at least three questions while they work, each at its own [PAUSE]. After three, ask only when something on screen is genuinely worth understanding; otherwise call skip_turn and stay quiet. The [PAUSE] message tells you how many you have asked.
+- Never ask what the screen, common business practice or the expert's own words already answer (why an invoice is matched to its order, why a total is checked, anything they already explained). A [PAUSE] may end with "Already clear, don't ask: ..."; never ask about those. Instead you may say one of them in one short sentence for the expert to correct ("I take it that's capex because it's over 5,000."), then stay quiet. If they correct you, record what they said.
 - At least one of your questions must be about a guardrail: a limit ("Is there an amount where you'd stop and ask someone?"), an exception ("Would you do that for every supplier?") or a moment to stop and ask ("Who would you check with if that didn't match?"). If the [PAUSE] says no guardrail yet, ask that kind of question now.
 - Every question is about something visible on screen in the [PAUSE] or the [SCREEN] messages before it: name the thing ("that invoice you held", "the cost center you changed"), never the abstract task. Ask what the screen cannot show you: why they did it, what would make them do it differently, where the line is, who decides. Never ask what they did, and never describe their work back to them.
 - Pick the question that would teach you the most. A value overridden, an invoice held, a step skipped, a warning ignored or something sent for approval is always worth asking about. Later questions build on what you already learned ("You said over 5,000 is capex; what about 4,900?") instead of repeating a topic.
@@ -56,13 +63,15 @@ THE SESSION HAS FIVE PHASES
 - When the expert says they are finished, or you receive [TASK DONE], call start_debrief.
 
 3. DEBRIEF. Calling start_debrief gives you the draft Work Map and the gaps in it. Now the expert is free to talk, so ask properly:
-- Briefly thank them, then ask the questions that were NOT answered while they worked, at least three and as many as it takes to understand the task, one at a time, waiting for each answer. Start with the gaps you were given, skipping any the expert already answered while working, but they are your notes, not a script: ask each in your own words, shorter, and never read them out. Never restate the task, the screen or what the expert just said; ask what you cannot see: why, when it would be different, where the limit is, who they would ask. Favour the edges: larger amounts, new or foreign suppliers, missing data, who they ask and when, what they would never do, what a new person always gets wrong.
+- Briefly thank them, then ask the questions that were NOT answered while they worked, at least three and as many as it takes to understand the task, one at a time, waiting for each answer. Start with the gaps you were given, skipping any the expert already answered while working or that the screen or common practice already answers, but they are your notes, not a script: ask each in your own words, shorter, and never read them out. Never restate the task, the screen or what the expert just said; ask what you cannot see: why, when it would be different, where the limit is, who they would ask. Favour the edges: larger amounts, new or foreign suppliers, missing data, who they ask and when, what they would never do, what a new person always gets wrong.
 - Before each question, check the conversation so far: if the expert already answered it, even partly, while working, drop it or ask the edge it left open instead ("Would that change for a supplier you've used before?").
 - Record every answer with record_step or record_guardrail, quoting their words, then go straight to your next question without summarising their answer.
+- The ASSUMED REASONS you were given are not questions: do not ask them. They come up in the teach-back for the expert to confirm.
 - If they say "skip" or you receive [SKIP], move to your next question.
 - When you could explain the whole task yourself, including the exceptions, call start_teach_back.
 
-4. TEACH-BACK. Explain the whole process back in your own words in under a minute: the steps in order, the judgment behind each decision, and every guardrail including when to stop and ask someone. Use their words for the reasons. Then ask plainly whether that is how it works.
+4. TEACH-BACK. Give a short summary, under thirty seconds spoken: only the judgment calls and the guardrails, including when to stop and ask someone, with their words for the reasons. Say each ASSUMED REASON you were given as an assumption ("I assumed that's capex because it's over 5,000"). Do not walk through every step and skip the routine ones. Then ask plainly whether that is right.
+- If the expert says it is right at any point, even in the middle of your summary, stop there: do not finish or resume the summary, call confirm_work_map right away.
 - If they correct you, call record_correction, say the corrected part back in one sentence, and ask again.
 - Only when they confirm it is right, call confirm_work_map.
 
@@ -80,7 +89,7 @@ ALWAYS
 - Never invent a reason or rule the expert did not give. If unsure, ask.
 - Never evaluate or grade their work. You are learning from them.
 - If they ask about you or the technology, answer in a few words and return to their work.
-- Times you pass to tools are the mm:ss from the [SCREEN] message of the moment you mean."""
+- Times you pass to tools are the mm:ss from the [SCREEN] message of the moment you mean."""  # noqa: E501
 
 FIRST_MESSAGE = "Hi, what are we doing today?"
 
@@ -285,6 +294,92 @@ TUTOR_TOOLS = [
 ]
 
 
+GUIDE_NAME = "Tacit Guide"
+
+GUIDE_PROMPT = """You guide someone through the Work Map of this task, one step at a time: {{task}}.
+
+The Work Map below is how the expert does the task: the steps in order (each step is a node on the map the person sees), the decision at each step, the expert's reasons in their own words, and the guardrails (limits, exceptions, moments to stop and ask someone). Everything you say about the task comes from it. Never invent a step, reason or rule.
+
+LANGUAGE
+Speak the language of this conversation all the way through. The Work Map and the bracketed cues are in English and the expert's words may be in another language: they are notes for you, so translate what you use and never read out ids or brackets. When you quote the expert, say their words in this language ("the expert says: ..."). If the person switches language, follow them.
+
+WORK MAP
+{{work_map}}
+
+STEP IN FOCUS
+{{focused_step}}
+
+MODE: {{mode}}
+
+You speak out loud. One or two short sentences per turn, no lists or markdown, no recaps, no "let me know if". Warm and direct, like a colleague at the next desk.
+
+IF THE MODE IS learn
+You are talking to a new hire learning the task.
+- Explain the step in focus the expert's way: what to do, the decision, and the expert's reason in their words. Keep it short; go deeper only when they ask (why, what if, an edge case, a larger amount), and only as far as the Work Map goes.
+- Mention a guardrail when it belongs to that step, including who to ask.
+- If the Work Map does not answer their question, say so and tell them who the expert would ask, if it names someone.
+- When they want to move on ("next", "okay", "got it"), call next_step.
+
+IF THE MODE IS review
+You are talking to the expert who made this map. They are checking it for mistakes.
+- Walk them through it one step at a time from the step in focus (the first step if none): the step, its decision and reason, and its rules, in one or two sentences. Then ask whether that is right.
+- If they say it is right, call next_step. If they say the whole map is fine, stop walking and say it is saved.
+- If they correct, remove or add something, call edit_work_map with the ids from the Work Map (or from the latest map edit_work_map returned). If a change touches other items (the same number, name or rule elsewhere), edit those too. Then say the new version in one short sentence and ask if it is right. The latest thing they said wins.
+- Never argue or defend the map. It is theirs.
+
+THE MAP ON THEIR SCREEN
+- When you start talking about a step, call focus_step with its id so the map shows it.
+- [FOCUS step=<id>] means the person selected that step on the map: talk about it now, in learn mode with a short explanation, in review mode by asking whether it is right.
+- next_step moves the map to the next step and returns it; talk about that one. If it says there are no more steps, say the walk-through is done and ask if they want to go over anything.
+
+ALWAYS
+- While they think aloud or talk to someone else, call skip_turn and say nothing.
+- When they say they are done, say goodbye in one short sentence and call end_call. Do not ask anything in that turn."""  # noqa: E501
+
+GUIDE_FIRST_MESSAGE = "Hi, I can walk you through this task step by step. Where should we start?"
+
+GUIDE_TOOLS = [
+    _client_tool(
+        "focus_step",
+        "Show a step on the person's Work Map: the map focuses that node. Call when you start talking about a step.",
+        {"step_id": _string("The id of the step in the Work Map, for example s3.")},
+        ["step_id"],
+    ),
+    _client_tool(
+        "next_step",
+        "Move the map to the next step. Returns that step, or says there are no more steps.",
+        {},
+        [],
+        expects_response=True,
+        response_timeout_secs=10,
+    ),
+    # The apprentice's tool itself (one definition, one tool id): the guide edits in review mode.
+    next(t for t in CLIENT_TOOLS if t["name"] == "edit_work_map"),
+]
+
+# What the UI passes the guide when it starts a conversation (dynamic_variables), with defaults.
+GUIDE_VARIABLES = {
+    "task": "the task",
+    "work_map": "(no Work Map loaded)",  # tutor.work_map_text(work_map)
+    "focused_step": "none",  # for example "s3. Code the invoice to a cost center"
+    "mode": "learn",  # learn: a new hire; review: the expert checking their map
+}
+
+# Latency. Every setting has an env override; the defaults are the fast ones.
+# LLM: ElevenLabs' recommended starting point for agents that need low latency and reliable tools.
+DEFAULT_LLM = "gpt-6-luna"
+# TTS: eleven_v4_turbo (~100 ms, 90+ languages, made for agents). eleven_flash_v2_5 is faster
+# (~75 ms) but speaks only 32 of the 72 languages. Expressive mode only works on v3 models.
+DEFAULT_TTS = "eleven_v4_turbo"
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, ""))
+    except ValueError:
+        return default
+
+
 def agent_config(
     tool_ids: List[str],
     *,
@@ -294,6 +389,9 @@ def agent_config(
     skip_turn_description: str = "Stay silent this turn. Use after anything the expert says while working, unless it was a direct question to you.",
     dynamic_variables: Optional[Dict[str, str]] = None,
     first_message_translations: Optional[Dict[str, str]] = None,
+    role: str = "apprentice",
+    turn_eagerness: str = "patient",
+    soft_timeout_seconds: float = -1,
 ) -> Dict[str, Any]:
     # Every language the agent can speak, each with its own first message. The pill picks one
     # per conversation (overrides.agent.language); English is the default.
@@ -303,6 +401,11 @@ def agent_config(
         for code in languages.LANGUAGES
         if code != "en"
     }
+    # APPRENTICE_*, TUTOR_* or GUIDE_* env vars override one role's settings; APPRENTICE_LLM and
+    # APPRENTICE_TTS_MODEL also apply to the others, as before.
+    prefix = role.upper()
+    tts_model = os.getenv(f"{prefix}_TTS_MODEL") or os.getenv("APPRENTICE_TTS_MODEL", DEFAULT_TTS)
+    soft_timeout = _env_float(f"{prefix}_SOFT_TIMEOUT", soft_timeout_seconds)
     return {
         "name": name,
         "tags": ["ai-apprentice"],
@@ -316,22 +419,32 @@ def agent_config(
         },
         "conversation_config": {
             "language_presets": language_presets,
-            # Scribe realtime listens; turn_v3 with patient eagerness waits for the expert to finish.
+            # Scribe realtime listens; turn_v3 decides when the person has finished. The apprentice
+            # stays patient so it never cuts in while the expert works; the tutor and the guide
+            # are in a conversation and answer sooner.
             "asr": {"provider": "scribe_realtime", "quality": "high"},
             "turn": {
                 "mode": "turn",
                 "turn_model": "turn_v3",
-                "turn_eagerness": "patient",
-                # The expert works in silence for minutes: -1 never re-engages them, and they are
+                "turn_eagerness": os.getenv(f"{prefix}_TURN_EAGERNESS", turn_eagerness),
+                # Start the reply during the silence, before the turn is certain: less waiting.
+                "speculative_turn": os.getenv("AGENT_SPECULATIVE_TURN", "1") != "0",
+                # People work in silence for minutes: -1 never re-engages them, and they are
                 # never hung up on. Pauses come from the pill instead ([PAUSE]).
                 "turn_timeout": -1,
                 "silence_end_call_timeout": -1,
-                "soft_timeout_config": {"timeout_seconds": -1},
+                # A short filler, in the conversation's language, when the LLM is slow. Off (-1)
+                # for the apprentice, which must not speak over the expert.
+                "soft_timeout_config": {
+                    "timeout_seconds": soft_timeout,
+                    **({"use_llm_generated_message": True} if soft_timeout > 0 else {}),
+                },
             },
             "tts": {
-                "model_id": os.getenv("APPRENTICE_TTS_MODEL", "eleven_v3_conversational"),
+                "model_id": tts_model,
                 "voice_id": os.getenv("ELEVENLABS_VOICE_ID", "cgSgspJ2msm6clMCkdW9"),
-                "expressive_mode": True,
+                # Only v3 models do expressive mode; ElevenLabs turns it off for the others anyway.
+                "expressive_mode": tts_model.startswith("eleven_v3"),
                 "stability": 0.5,
                 "speed": 1.0,
             },
@@ -354,7 +467,7 @@ def agent_config(
                 "dynamic_variables": {"dynamic_variable_placeholders": dynamic_variables or {}},
                 "prompt": {
                     "prompt": prompt,
-                    "llm": os.getenv("APPRENTICE_LLM", "gpt-4.1"),
+                    "llm": os.getenv(f"{prefix}_LLM") or os.getenv("APPRENTICE_LLM", DEFAULT_LLM),
                     "temperature": 0.3,
                     "tool_ids": tool_ids,
                     "built_in_tools": {
@@ -416,12 +529,12 @@ def _call(path: str, method: str = "GET", body: Optional[Dict[str, Any]] = None)
         raise ElevenLabsError(f"{method} {path} failed: {e.reason}") from e
 
 
-ROLES = {"apprentice": AGENT_NAME, "tutor": TUTOR_NAME}
+ROLES = {"apprentice": AGENT_NAME, "tutor": TUTOR_NAME, "guide": GUIDE_NAME}
 _agent_ids: Dict[str, str] = {}
 
 
 def find_agent_id(role: str = "apprentice") -> Optional[str]:
-    """The id of the workspace agent for a role (apprentice or tutor), looked up by name."""
+    """The id of the workspace agent for a role (apprentice, tutor or guide), looked up by name."""
     if role in _agent_ids:
         return _agent_ids[role]
     name = ROLES[role]
@@ -452,6 +565,7 @@ def _sync_tools(tools: List[Dict[str, Any]], existing: Dict[str, str]) -> List[s
             logger.info(f"Updated tool {tool['name']} ({tool_id})")
         else:
             tool_id = _call("/v1/convai/tools", "POST", {"tool_config": tool})["id"]
+            existing[tool["name"]] = tool_id  # a tool two agents share is created once
             logger.info(f"Created tool {tool['name']} ({tool_id})")
         tool_ids.append(tool_id)
     return tool_ids
@@ -469,30 +583,52 @@ def _sync_agent(role: str, config: Dict[str, Any]) -> str:
     return agent_id
 
 
-def sync() -> Dict[str, str]:
-    """Create or update both agents and their client tools so they match this file."""
-    existing = {
-        t.get("tool_config", {}).get("name"): t["id"]
-        for t in _call("/v1/convai/tools").get("tools", [])
-    }
-    greetings = languages.first_messages({"apprentice": FIRST_MESSAGE, "tutor": TUTOR_FIRST_MESSAGE})
-    apprentice = _sync_agent(
-        "apprentice",
-        agent_config(_sync_tools(CLIENT_TOOLS, existing), first_message_translations=greetings["apprentice"]),
-    )
-    tutor = _sync_agent(
-        "tutor",
-        agent_config(
-            _sync_tools(TUTOR_TOOLS, existing),
+def configs(tool_ids: Dict[str, List[str]], greetings: Dict[str, Dict[str, str]]) -> Dict[str, Dict[str, Any]]:
+    """What sync() sends for each role, given each role's tool ids and first-message translations."""
+    return {
+        "apprentice": agent_config(tool_ids["apprentice"], first_message_translations=greetings["apprentice"]),
+        "tutor": agent_config(
+            tool_ids["tutor"],
             name=TUTOR_NAME,
             prompt=TUTOR_PROMPT,
             first_message=TUTOR_FIRST_MESSAGE,
             skip_turn_description="Stay silent this turn. Use while the new hire works or thinks aloud, unless they asked you something or a cue asks you to speak.",
             dynamic_variables={"task": "the task", "work_map": "(no Work Map loaded)"},
             first_message_translations=greetings["tutor"],
+            role="tutor",
+            turn_eagerness="normal",
+            soft_timeout_seconds=3,
         ),
+        "guide": agent_config(
+            tool_ids["guide"],
+            name=GUIDE_NAME,
+            prompt=GUIDE_PROMPT,
+            first_message=GUIDE_FIRST_MESSAGE,
+            skip_turn_description="Stay silent this turn. Use while the person thinks aloud or talks to someone else, unless they asked you something or a cue asks you to speak.",
+            dynamic_variables=GUIDE_VARIABLES,
+            first_message_translations=greetings["guide"],
+            role="guide",
+            turn_eagerness="normal",
+            soft_timeout_seconds=3,
+        ),
+    }
+
+
+def sync() -> Dict[str, str]:
+    """Create or update the three agents and their client tools so they match this file."""
+    existing = {
+        t.get("tool_config", {}).get("name"): t["id"]
+        for t in _call("/v1/convai/tools").get("tools", [])
+    }
+    greetings = languages.first_messages(
+        {"apprentice": FIRST_MESSAGE, "tutor": TUTOR_FIRST_MESSAGE, "guide": GUIDE_FIRST_MESSAGE}
     )
-    return {"apprentice": apprentice, "tutor": tutor}
+    tool_ids = {
+        "apprentice": _sync_tools(CLIENT_TOOLS, existing),
+        "tutor": _sync_tools(TUTOR_TOOLS, existing),
+        "guide": _sync_tools(GUIDE_TOOLS, existing),
+    }
+    return {role: _sync_agent(role, config) for role, config in configs(tool_ids, greetings).items()}
 
 
 if __name__ == "__main__":

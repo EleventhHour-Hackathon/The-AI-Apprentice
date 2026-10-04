@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
-import { BACKEND_URL } from "@/lib/backend";
+import { backendFetch } from "@/lib/backend";
 import type { ScreenKind } from "@/lib/floor";
 
 /** How often we look at the screen with the vision model. */
@@ -148,7 +148,7 @@ export function useScreenEvents(
         frameCanvas.height = Math.round(element.videoHeight * (FRAME_WIDTH / element.videoWidth));
         const capturedAt = Date.now();
         frameCtx.drawImage(element, 0, 0, frameCanvas.width, frameCanvas.height);
-        const response = await fetch(`${BACKEND_URL}/api/v1/screen_event`, {
+        const response = await backendFetch("/api/v1/screen_event", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

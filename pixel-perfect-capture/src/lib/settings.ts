@@ -5,7 +5,7 @@
  * The apprentice language lives in lib/languages.ts (tacit:language:<role>), not here.
  */
 import { useCallback, useEffect, useState } from "react";
-import { BACKEND_URL } from "./backend";
+import { ACCESS_KEY_MESSAGE, backendHeaders, backendPath, backendUrl } from "./backend";
 
 const KEY = "tacit:settings";
 
@@ -175,14 +175,15 @@ async function get(fetchFn: typeof fetch, path: string, timeoutMs: number): Prom
   });
   const request = (async (): Promise<Answer> => {
     try {
-      const r = await fetchFn(`${BACKEND_URL}${path}`, {
+      const r = await fetchFn(backendPath(path), {
         signal: controller.signal,
         cache: "no-store",
+        headers: backendHeaders(),
       });
       const body: unknown = await r.json().catch(() => null);
       return { status: r.status, body };
     } catch {
-      return { error: `Can't reach ${BACKEND_URL.replace(/^https?:\/\//, "")}` };
+      return { error: `Can't reach ${backendUrl().replace(/^https?:\/\//, "")}` };
     }
   })();
   try {
@@ -198,6 +199,7 @@ const field = (body: unknown, key: string): unknown =>
 /** Why a request failed, in a few words: the backend's own detail when it gives one. */
 function failure(a: Answer): string {
   if ("error" in a) return a.error;
+  if (a.status === 401) return ACCESS_KEY_MESSAGE;
   const detail = field(a.body, "detail");
   return typeof detail === "string" && detail ? detail : `The backend answered ${a.status}`;
 }
@@ -238,7 +240,7 @@ export async function runDiagnostics(
     label: "Backend",
     ok: up,
     detail: up
-      ? [BACKEND_URL.replace(/^https?:\/\//, ""), typeof version === "string" && `v${version}`]
+      ? [backendUrl().replace(/^https?:\/\//, ""), typeof version === "string" && `v${version}`]
           .filter(Boolean)
           .join(" · ")
       : failure(health),

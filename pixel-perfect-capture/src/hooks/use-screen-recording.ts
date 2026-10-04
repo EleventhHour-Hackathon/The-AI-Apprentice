@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { BACKEND_URL } from "@/lib/backend";
+import { backendFetch } from "@/lib/backend";
 
 /** Enough for text on a shared screen to stay readable at 10 fps. */
 const BITS_PER_SECOND = 1_500_000;
@@ -12,7 +12,7 @@ function upload(sessionId: string, start: number, end: number, chunks: Blob[]) {
   if (!chunks.length || end - start < 1) return;
   const body = new Blob(chunks, { type: "video/webm" });
   const query = `start=${start.toFixed(2)}&end=${end.toFixed(2)}`;
-  void fetch(`${BACKEND_URL}/api/v1/sessions/${sessionId}/recordings?${query}`, {
+  void backendFetch(`/api/v1/sessions/${sessionId}/recordings?${query}`, {
     method: "POST",
     headers: { "Content-Type": "video/webm" },
     body,

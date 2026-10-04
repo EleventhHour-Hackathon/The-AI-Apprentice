@@ -46,7 +46,9 @@ def work_map_text(work_map: Dict[str, Any]) -> str:
         if s.get("quote") and not narration:
             line += f'\n   Expert\'s words: "{s["quote"]}"{_in_english(s)}'
         elif s.get("reason"):
-            line += f"\n   Reason: {s['reason']}"
+            # A reason the merge assumed (work_map_merge), not one the expert gave.
+            label = "Assumed reason" if s.get("reason_source") == "inferred" else "Reason"
+            line += f"\n   {label}: {s['reason']}"
         if s.get("quote") and narration:
             # What they said while doing it: context, not a reason to teach.
             line += f'\n   Said while doing it (not a reason): "{s["quote"]}"{_in_english(s)}'

@@ -1,4 +1,4 @@
-import { BACKEND_URL } from "@/lib/backend";
+import { AccessKeyError, backendFetch, backendPath, mediaUrl } from "@/lib/backend";
 
 // Saved by the backend (core/backend/src/services/work_map_merge.py). Maps from before the
 // merge existed have fewer fields; normalizeMap fills them in so both open the same way.
@@ -88,7 +88,8 @@ export type WorkMap = Omit<WorkMapRecord, "steps" | "guardrails" | "transcript">
 
 const text = (v: unknown) => (typeof v === "string" ? v : "");
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
-const clipUrl = (v: unknown) => (text(v) ? `${BACKEND_URL}${text(v)}` : null);
+// A <video> can't send the access key header, so clip URLs carry it as ?key= (lib/backend.ts).
+const clipUrl = (v: unknown) => (text(v) ? mediaUrl(text(v)) : null);
 const source = (v: unknown): Source => (v === "live" || v === "debrief" ? v : "none");
 // Maps merged before quote_kind existed only kept reasons.
 const quoteKind = (v: unknown, quote: string): QuoteKind =>
@@ -189,8 +190,9 @@ export type WorkMapSummary = {
 async function send(url: string, init?: RequestInit): Promise<Response> {
   let response: Response;
   try {
-    response = await fetch(url, init);
-  } catch {
+    response = await backendFetch(url, init);
+  } catch (e) {
+    if (e instanceof AccessKeyError) throw e;
     throw new Error("Couldn’t reach the apprentice backend.");
   }
   if (response.status === 404) throw new Error("This Work Map doesn’t exist.");
@@ -200,7 +202,7 @@ async function send(url: string, init?: RequestInit): Promise<Response> {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  return (await (await send(`${BACKEND_URL}/api/v1${path}`, init)).json()) as T;
+  return (await (await send(`/api/v1${path}`, init)).json()) as T;
 }
 
 export const fetchWorkMaps = () => request<WorkMapSummary[]>("/work_maps");
@@ -210,7 +212,7 @@ export const deleteWorkMap = (id: string) =>
   request<{ deleted: string }>(`/work_maps/${encodeURIComponent(id)}`, { method: "DELETE" });
 /** The Work Map as instructions another agent can load: a Markdown system prompt, or JSON. */
 export const agentExportUrl = (id: string, format: "md" | "json") =>
-  `${BACKEND_URL}/api/v1/work_maps/${encodeURIComponent(id)}/agent.${format}`;
+  backendPath(`/api/v1/work_maps/${encodeURIComponent(id)}/agent.${format}`);
 /** The agent instructions as a Markdown file, ready to download. */
 export const fetchAgentInstructions = async (id: string) =>
   (await send(agentExportUrl(id, "md"))).blob();
@@ -295,8 +297,9 @@ export async function fetchWorkMapDiff(
   if (limit !== undefined) params.set("limit", String(limit));
   let response: Response;
   try {
-    response = await fetch(`${BACKEND_URL}/api/v1/work_map_diff?${params}`, init);
+    response = await backendFetch(`/api/v1/work_map_diff?${params}`, init);
   } catch (e) {
+    if (e instanceof AccessKeyError) throw e;
     if (e instanceof DOMException && e.name === "AbortError") throw e;
     throw new Error("Couldn’t reach the apprentice backend.");
   }
@@ -335,11 +338,12 @@ export function followUpError(status: number, detail: unknown): string {
 }
 
 async function followUpRequest<T>(id: string, query: string, init?: RequestInit): Promise<T> {
-  const url = `${BACKEND_URL}/api/v1/work_maps/${encodeURIComponent(id)}/follow_up_questions${query}`;
+  const url = `/api/v1/work_maps/${encodeURIComponent(id)}/follow_up_questions${query}`;
   let response: Response;
   try {
-    response = await fetch(url, init);
+    response = await backendFetch(url, init);
   } catch (e) {
+    if (e instanceof AccessKeyError) throw e;
     if (e instanceof DOMException && e.name === "AbortError") throw e;
     throw new Error("Couldn’t reach the apprentice backend.");
   }

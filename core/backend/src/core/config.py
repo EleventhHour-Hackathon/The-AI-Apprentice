@@ -96,23 +96,9 @@ class Config:
     LLM_MODEL = os.getenv("LLM_MODEL", LLMModels.GPT_4_1)
 
     # CORS Configuration
-    CORS_ORIGINS = [
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "http://localhost:8010",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:8010",
-        "http://127.0.0.1:3001",
-        "http://localhost:8080",
-        "http://127.0.0.1:8080",
-        "http://localhost:8081",
-        "http://127.0.0.1:8081",
-        # The UI served to a second laptop on the network (DEV.md, USE.md).
-        "http://mithras-mbp.lan:8081",
-        "https://recruiter.sivera.io",
-        "https://api.sivera.io",
-        "https://app.sivera.io",
-    ]  # Allow all origins in development
+    # Any origin: the desktop app (file:// or app://) and dev servers all call the backend, and
+    # access is checked with the X-Tacit-Key header (src/core/access.py), not cookies.
+    CORS_ORIGINS = ["*"]
 
     # Chat and Document Processing
     CHUNK_SIZE = 512

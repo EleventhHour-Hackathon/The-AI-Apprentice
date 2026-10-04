@@ -5,6 +5,7 @@ const {
   BrowserWindow,
   desktopCapturer,
   ipcMain,
+  protocol,
   screen,
   session,
   systemPreferences,
@@ -14,11 +15,37 @@ const path = require("node:path");
 
 app.setName("Tacit");
 
-// The UI is served by the Vite dev server (`bun run desktop` starts both).
-const APP_URL = (process.env.APP_URL || "http://localhost:8081").replace(/\/+$/, "");
-// Chromium only allows the mic and screen capture on https or localhost. Treat APP_URL as
-// secure too, so the app works when its UI is served from another laptop over plain http.
-app.commandLine.appendSwitch("unsafely-treat-insecure-origin-as-secure", APP_URL);
+// In development the UI is served by the Vite dev server (`npm run desktop` starts both).
+// The installed app ships the static UI build (`npm run build:desktop`, in dist-desktop/client)
+// and serves it itself from app://tacit: no server, and one fixed origin, so what the UI keeps in
+// localStorage (the backend URL, the access key, the settings) survives restarts.
+// TACIT_STATIC=1 serves the static build in development too, to try it without packaging.
+const STATIC_DIR = path.join(__dirname, "..", "dist-desktop", "client");
+const useStatic = !process.env.APP_URL && (app.isPackaged || process.env.TACIT_STATIC === "1");
+const APP_URL = useStatic
+  ? "app://tacit"
+  : (process.env.APP_URL || "http://localhost:8081").replace(/\/+$/, "");
+if (useStatic) {
+  // A standard, secure scheme: a real origin with localStorage, fetch and CORS, and allowed to
+  // use the microphone and screen capture like https.
+  protocol.registerSchemesAsPrivileged([
+    {
+      scheme: "app",
+      privileges: {
+        standard: true,
+        secure: true,
+        supportFetchAPI: true,
+        corsEnabled: true,
+        stream: true,
+        codeCache: true,
+      },
+    },
+  ]);
+} else {
+  // Chromium only allows the mic and screen capture on https or localhost. Treat APP_URL as
+  // secure too, so the app works when its UI is served from another laptop over plain http.
+  app.commandLine.appendSwitch("unsafely-treat-insecure-origin-as-secure", APP_URL);
+}
 const PILL_WIDTH = 480;
 const PILL_MIN_HEIGHT = 96;
 const BOTTOM_GAP = 12;
@@ -119,10 +146,59 @@ function createMain() {
     webPreferences: { preload },
   });
   mainWindow.loadURL(`${APP_URL}/`);
+  mainWindow.webContents.on("did-finish-load", () =>
+    console.log(`[tacit] app window loaded ${mainWindow?.webContents.getURL()}`),
+  );
+  mainWindow.webContents.on("did-fail-load", (_event, code, description, url) =>
+    console.error(`[tacit] app window failed to load ${url}: ${description} (${code})`),
+  );
   mainWindow.on("closed", () => {
     mainWindow = null;
     app.quit();
   });
+}
+
+const MIME = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".ico": "image/x-icon",
+  ".webp": "image/webp",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".wasm": "application/wasm",
+  ".txt": "text/plain; charset=utf-8",
+  ".map": "application/json",
+};
+
+/** app://tacit/<path>: a file of the static build, or the app's page for any route (/pill, /work-maps/<id>). */
+async function serveStatic(request) {
+  const { pathname } = new URL(request.url);
+  const rel = path.normalize(decodeURIComponent(pathname)).replace(/^[/\\]+/, "");
+  let file = path.join(STATIC_DIR, rel);
+  if (file !== STATIC_DIR && !file.startsWith(STATIC_DIR + path.sep)) {
+    return new Response("Not found", { status: 404 });
+  }
+  const isFile = (f) => {
+    try {
+      return fs.statSync(f).isFile();
+    } catch {
+      return false;
+    }
+  };
+  if (!isFile(file)) {
+    // A missing asset is a 404; anything else is a route the router draws in the page.
+    if (path.extname(rel)) return new Response("Not found", { status: 404 });
+    file = path.join(STATIC_DIR, "index.html");
+  }
+  const body = await fs.promises.readFile(file);
+  const type = MIME[path.extname(file).toLowerCase()] || "application/octet-stream";
+  return new Response(body, { headers: { "content-type": type } });
 }
 
 /** Run a pill command as if it came from a click, so screen capture and audio are allowed. */
@@ -200,6 +276,7 @@ function showMain() {
 }
 
 app.whenReady().then(async () => {
+  if (useStatic) protocol.handle("app", serveStatic);
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
     callback(permission === "media" || permission === "display-capture");
   });
