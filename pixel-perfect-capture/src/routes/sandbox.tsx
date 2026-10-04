@@ -12,6 +12,15 @@ import {
   type Invoice,
   type Status,
 } from "@/lib/sandbox";
+import {
+  NO_SIGNALS,
+  applyMessage,
+  decideConfirm,
+  isHeld,
+  subscribeHold,
+  type HoldMessage,
+  type TutorSignals,
+} from "@/lib/tutor-hold";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/sandbox")({
@@ -47,6 +56,11 @@ function Sandbox() {
   const [data, setData] = useState<Saved>(() => fresh("expert"));
   const [selected, setSelected] = useState("");
   const [dialog, setDialog] = useState<Dialog>(null);
+  // When the dialog opened, and since when a pressed confirm waits for the tutor's check.
+  const [openedAt, setOpenedAt] = useState(0);
+  const [waitingSince, setWaitingSince] = useState<number | null>(null);
+  const tutor = useTutorSignals(waitingSince !== null);
+  const hold = tutor.hold;
 
   // ?set=newhire opens the new hire's practice set; work is kept per set across reloads.
   useEffect(() => {
@@ -80,8 +94,34 @@ function Sandbox() {
     setSelected(next.invoices[0]?.id ?? "");
   };
 
+  // The tutor reacts to the screen a few seconds late, so while a lesson is live a confirm waits
+  // for its check of the dialog's screen (or a hold) before saving; see decideConfirm.
+  const decide = (confirmedAt: number) =>
+    decideConfirm({
+      now: Date.now(),
+      openedAt,
+      confirmedAt,
+      last: tutor.last,
+      watchingAt: tutor.watchingAt,
+      checkedSeen: tutor.checkedSeen,
+    });
   const confirm = () => {
-    if (!invoice || !dialog) return;
+    if (!invoice || !dialog || hold || waitingSince !== null) return;
+    const now = Date.now();
+    const next = decide(now);
+    if (next === "save") commit();
+    else if (next === "wait") setWaitingSince(now);
+  };
+  useEffect(() => {
+    if (waitingSince === null) return;
+    const next = decide(waitingSince);
+    if (next === "wait") return;
+    setWaitingSince(null);
+    if (next === "save") commit();
+  });
+
+  const commit = () => {
+    if (!invoice || !dialog || isHeld(tutor.last, Date.now())) return;
     const cc = COST_CENTERS.find((c) => c.code === invoice.costCenter);
     if (dialog.kind === "post")
       update(
@@ -162,14 +202,16 @@ function Sandbox() {
           <main className="min-w-0 flex-1 overflow-y-auto p-6">
             <InvoiceView
               invoice={invoice}
+              hold={hold}
               onChange={(patch) => update(patch)}
-              onAction={(kind) =>
+              onAction={(kind) => {
+                setOpenedAt(Date.now());
                 setDialog({
                   kind,
                   choice:
                     kind === "hold" ? HOLD_REASONS[0]! : kind === "approval" ? APPROVERS[0]! : "",
-                })
-              }
+                });
+              }}
             />
             <section className="mt-6 max-w-4xl">
               <h3 className="mb-2 text-[12px] font-medium uppercase tracking-wide text-slate-500">
@@ -200,12 +242,50 @@ function Sandbox() {
         <ConfirmDialog
           dialog={dialog}
           invoice={invoice}
+          hold={hold}
+          checking={waitingSince !== null}
           onChoice={(choice) => setDialog({ ...dialog, choice })}
-          onCancel={() => setDialog(null)}
+          onCancel={() => {
+            setWaitingSince(null);
+            setDialog(null);
+          }}
           onConfirm={confirm}
         />
       )}
     </div>
+  );
+}
+
+/**
+ * What the tutor's pill (another window of this app) says: whether a lesson is live, the newest
+ * frame it has checked, and its open flags while it has stepped in on a wrong decision.
+ * Ticks while a hold is open (so it lapses once the pill stops refreshing it) or while a confirm
+ * waits for the tutor.
+ */
+function useTutorSignals(waiting: boolean) {
+  const [signals, setSignals] = useState<TutorSignals>(NO_SIGNALS);
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => subscribeHold((m) => setSignals((s) => applyMessage(s, m))), []);
+  const ticking = waiting || !!signals.last?.flags.length;
+  useEffect(() => {
+    if (!ticking) return;
+    setClock(Date.now());
+    const timer = window.setInterval(() => setClock(Date.now()), 250);
+    return () => clearInterval(timer);
+  }, [ticking]);
+  return { ...signals, hold: isHeld(signals.last, clock) ? signals.last : null };
+}
+
+/** Why the save buttons are locked. */
+function HoldNote({ hold }: { hold: HoldMessage }) {
+  const what = hold.flags[hold.flags.length - 1]?.what_happened ?? "";
+  return (
+    <p
+      role="status"
+      className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900"
+    >
+      The tutor wants a word first{what && what.length <= 120 ? `: ${what}` : "."}
+    </p>
   );
 }
 
@@ -220,10 +300,12 @@ function StatusChip({ status }: { status: Status }) {
 
 function InvoiceView({
   invoice,
+  hold,
   onChange,
   onAction,
 }: {
   invoice: Invoice;
+  hold: HoldMessage | null;
   onChange: (patch: Partial<Invoice>) => void;
   onAction: (kind: "post" | "hold" | "approval") => void;
 }) {
@@ -357,23 +439,31 @@ function InvoiceView({
         )}
       </Card>
 
+      {editable && hold && (
+        <div className="mt-5">
+          <HoldNote hold={hold} />
+        </div>
+      )}
       {editable && (
         <div className="mt-5 flex gap-2">
           <button
             onClick={() => onAction("post")}
-            className="rounded bg-sky-700 px-4 py-2 font-medium text-white hover:bg-sky-800"
+            disabled={!!hold}
+            className="rounded bg-sky-700 px-4 py-2 font-medium text-white hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-sky-700"
           >
             Post invoice
           </button>
           <button
             onClick={() => onAction("hold")}
-            className="rounded border bg-white px-4 py-2 font-medium hover:bg-slate-50"
+            disabled={!!hold}
+            className="rounded border bg-white px-4 py-2 font-medium hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-white"
           >
             Hold…
           </button>
           <button
             onClick={() => onAction("approval")}
-            className="rounded border bg-white px-4 py-2 font-medium hover:bg-slate-50"
+            disabled={!!hold}
+            className="rounded border bg-white px-4 py-2 font-medium hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-white"
           >
             Send for approval…
           </button>
@@ -415,12 +505,17 @@ function Field({ label, value }: { label: string; value: string }) {
 function ConfirmDialog({
   dialog,
   invoice,
+  hold,
+  checking,
   onChoice,
   onCancel,
   onConfirm,
 }: {
   dialog: NonNullable<Dialog>;
   invoice: Invoice;
+  hold: HoldMessage | null;
+  /** Confirm was pressed and waits for the tutor's check. */
+  checking: boolean;
   onChoice: (choice: string) => void;
   onCancel: () => void;
   onConfirm: () => void;
@@ -468,13 +563,25 @@ function ConfirmDialog({
             ))}
           </select>
         )}
+        {hold ? (
+          <div className="mt-4">
+            <HoldNote hold={hold} />
+          </div>
+        ) : (
+          checking && (
+            <p role="status" className="mt-4 text-slate-500">
+              Checking with the tutor…
+            </p>
+          )
+        )}
         <div className="mt-5 flex justify-end gap-2">
           <button onClick={onCancel} className="rounded border px-4 py-2 hover:bg-slate-50">
             Cancel
           </button>
           <button
             onClick={onConfirm}
-            className="rounded bg-sky-700 px-4 py-2 font-medium text-white hover:bg-sky-800"
+            disabled={!!hold || checking}
+            className="rounded bg-sky-700 px-4 py-2 font-medium text-white hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-sky-700"
           >
             {dialog.kind === "post" ? "Post" : dialog.kind === "hold" ? "Hold" : "Send"}
           </button>

@@ -25,7 +25,12 @@ const DIFF_THRESHOLD = 2.0;
 const ACTIVITY_PIXELS = 3;
 const ACTIVITY_DELTA = 28;
 
-export type ScreenEvent = { event: string; kind: ScreenKind };
+export type ScreenEvent = {
+  event: string;
+  kind: ScreenKind;
+  /** Date.now() when the frame was grabbed, before the vision call. */
+  capturedAt?: number;
+};
 type VisionResult = {
   description: string;
   event: string | null;
@@ -141,6 +146,7 @@ export function useScreenEvents(
         const t = session?.clock() ?? 0;
         frameCanvas.width = FRAME_WIDTH;
         frameCanvas.height = Math.round(element.videoHeight * (FRAME_WIDTH / element.videoWidth));
+        const capturedAt = Date.now();
         frameCtx.drawImage(element, 0, 0, frameCanvas.width, frameCanvas.height);
         const response = await fetch(`${BACKEND_URL}/api/v1/screen_event`, {
           method: "POST",
@@ -162,7 +168,7 @@ export function useScreenEvents(
             : `[screen] sees: ${result.description}`,
         );
         if (cancelled || !latest.current.enabled || !result.changed || !result.event) return;
-        latest.current.onEvent({ event: result.event, kind: result.kind ?? "action" });
+        latest.current.onEvent({ event: result.event, kind: result.kind ?? "action", capturedAt });
       } catch {
         // A dropped frame is not worth interrupting the session over.
       } finally {
