@@ -26,7 +26,9 @@ done
 say() { printf '\033[1m▸ %s\033[0m\n' "$*"; }
 need() { command -v "$1" >/dev/null || { echo "Missing $1. $2" >&2; exit 1; }; }
 up() { curl --fail --silent --max-time 2 -o /dev/null "$1"; }
-ui_up() { curl --fail --silent --max-time 2 http://localhost:8081/ | grep '<title>Studio · Tacit</title>' >/dev/null; }
+# The dev page carries NUL bytes (TanStack's match ids), which macOS grep won't match in a UTF-8
+# locale, so match bytes in the C locale as text.
+ui_up() { curl --fail --silent --max-time 2 http://localhost:8081/ | LC_ALL=C grep -aq '<title>Studio · Tacit</title>'; }
 
 need uv "Install it: curl -LsSf https://astral.sh/uv/install.sh | sh"
 need node "Install Node 20+ (e.g. nvm install 24)."
