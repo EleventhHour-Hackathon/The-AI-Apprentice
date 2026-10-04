@@ -43,9 +43,22 @@ _STOP = {
 }
 
 
+def _stem(word: str) -> str:
+    """Crude suffix stripping, so "downloading PDFs" matches "download a PDF".
+
+    An expert names the same task differently every time; exact words would
+    make the apprentice forget a task it watched last week.
+    """
+    for suffix in ("ing", "ed", "es", "s"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 4:
+            return word[: -len(suffix)]
+    return word
+
+
 def _words(task: Optional[str]) -> set:
     """The meaningful words of a task name, for comparing one task with another."""
-    return {w for w in re.findall(r"[a-z0-9]+", (task or "").lower()) if w not in _STOP and len(w) > 2}
+    found = re.findall(r"[a-z0-9]+", (task or "").lower())
+    return {_stem(w) for w in found if w not in _STOP and len(w) > 2}
 
 
 def _overlap(a: set, b: set) -> float:
