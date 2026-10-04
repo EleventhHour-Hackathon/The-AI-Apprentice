@@ -9,7 +9,8 @@ from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 
 from src.services import agent_export, apprentice_agent, recordings, tutor
 from src.services.screen_vision import get_backend as get_vision_backend, log_frame
-from src.services import follow_ups, live_questions, work_map_edit, work_map_links
+from src.services import follow_ups, live_questions, living_map, work_map_edit, work_map_links
+from src.services import work_map_update
 from src.services.privacy import redact, redact_deep
 from src.services.work_map_merge import brief_for_agent, merge
 from src.utils.logger import logger
@@ -168,8 +169,16 @@ def set_task(session_id: str, payload: dict = Body(...)):
 @router.post("/sessions/{session_id}/capture")
 def add_capture(session_id: str, payload: dict = Body(...)):
     """Something the agent recorded live through a client tool (record_step, record_guardrail, ...)."""
-    # Follow-up questions have their own endpoints, so a client tool can't forge them.
-    reserved = (follow_ups.QUESTION, follow_ups.WITHDRAWN, follow_ups.DELIVERED, follow_ups.PARENT)
+    # Follow-up questions and living updates have their own endpoints, so a client tool can't
+    # forge them.
+    reserved = (
+        follow_ups.QUESTION,
+        follow_ups.WITHDRAWN,
+        follow_ups.DELIVERED,
+        follow_ups.PARENT,
+        follow_ups.LIVING_UPDATE,
+        follow_ups.LIVING_APPLIED,
+    )
     if payload.get("kind") in reserved:
         raise HTTPException(status_code=422, detail="That kind of capture can't be recorded here")
     try:
@@ -248,6 +257,7 @@ async def merge_session(session_id: str, payload: dict = Body(...)):
     # Recorded again from another Work Map ("Record again"): the questions kept there for this
     # expert lead the debrief, and are marked delivered there once the new map is confirmed.
     parent_id = follow_ups.parent_of(session.get("captures") or [])
+    parent: Optional[Dict[str, Any]] = None
     pending: List[Dict[str, Any]] = []
     if parent_id:
         # Either way the session still merges and saves, just without the kept questions.
@@ -305,7 +315,18 @@ async def merge_session(session_id: str, payload: dict = Body(...)):
             "said": redact(confirmation["said"]),
             "t": round(float(confirmation["t"]), 2),
         }
-    if pending and not final:
+    # Recorded again from a confirmed map: what would change on it, so the debrief asks only
+    # about that, and the confirmed result is kept for someone to apply to that map.
+    living: Optional[Dict[str, Any]] = None
+    if parent is not None and parent.get("status") == "confirmed":
+        try:
+            living = work_map_update.update(parent, work_map)
+        except Exception as e:
+            logger.warning(f"Couldn't update Work Map {parent_id} from session {session_id}: {e}")
+    if living is not None and not final:
+        # Kept questions first, then what changed, then the draft's own gaps.
+        work_map["open_questions"] = follow_ups.lead_with(pending, living["map"]["open_questions"])
+    elif pending and not final:
         work_map["open_questions"] = follow_ups.lead_with(pending, work_map["open_questions"])
     try:
         work_map_store.save_map(session_id, work_map, "confirmed" if final else "draft")
@@ -321,7 +342,24 @@ async def merge_session(session_id: str, payload: dict = Body(...)):
         except Exception as e:
             # The new map is saved; the questions are asked again next time at worst.
             logger.error(f"Couldn't mark follow-up questions delivered on {parent_id}: {e}")
-    return {**work_map, "brief": brief_for_agent(work_map), "summary": work_map_edit.summary_for_agent(work_map)}
+    if living is not None and final:
+        now = datetime.now(timezone.utc)
+        try:
+            kept = living_map.capture(parent_id, parent, living, now)
+            if not work_map_store.add_capture(session_id, kept):
+                raise LookupError("the session is gone")
+        except Exception as e:
+            # The session's own map is saved; there is just no update to apply.
+            logger.error(f"Couldn't keep the update for Work Map {parent_id} on {session_id}: {e}")
+            living = None
+    response = {
+        **work_map,
+        "brief": brief_for_agent(work_map),
+        "summary": work_map_edit.summary_for_agent(work_map),
+    }
+    if living is not None:
+        response["living_update"] = {"parent_work_map_id": parent_id, "changes": living["changes"]}
+    return response
 
 
 def _saved_map(session_id: str) -> Dict[str, Any]:
@@ -448,6 +486,9 @@ def _with_moments(
     windows = recordings.item_windows(work_map)
     for item in [*(work_map.get("steps") or []), *(work_map.get("guardrails") or [])]:
         if not isinstance(item, dict):
+            continue
+        if item.get("from_session"):
+            # Applied from a repeat session: its "at" is a moment of that recording, not this one.
             continue
         moment = by_time.get(item.get("at"))
         if moment:

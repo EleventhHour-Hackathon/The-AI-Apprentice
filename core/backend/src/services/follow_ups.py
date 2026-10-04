@@ -2,7 +2,9 @@
 
 A question from the compare page ("Ask the expert of Session A ...") is appended to that expert's
 Work Map as a capture. Withdrawing or delivering it appends another capture; the list is never
-rewritten. `pending` and `for_merge` are the only readers.
+rewritten. `pending` and `for_merge` are the only readers. A repeat session's living update
+(LIVING_UPDATE, on the session) and its application (LIVING_APPLIED, on the parent) are captures
+too, and the merge never sees them either.
 """
 
 from datetime import datetime
@@ -12,9 +14,13 @@ QUESTION = "follow_up_question"
 WITHDRAWN = "follow_up_withdrawn"
 DELIVERED = "follow_up_delivered"
 PARENT = "parent"
+LIVING_UPDATE = "living_update"
+LIVING_APPLIED = "living_applied"
 
 # Captures that aren't what the apprentice learned: the merge never sees them.
-NOT_FOR_MERGE = frozenset({"live_question", QUESTION, WITHDRAWN, DELIVERED, PARENT})
+NOT_FOR_MERGE = frozenset(
+    {"live_question", QUESTION, WITHDRAWN, DELIVERED, PARENT, LIVING_UPDATE, LIVING_APPLIED}
+)
 
 
 def _at(now: datetime) -> str:
