@@ -14,7 +14,7 @@ Hack-Nation × ElevenLabs · 7th Global AI Hackathon · Challenge 01: *The AI Ap
 | ⬇️ **Download the app** | [macOS (Apple silicon)](https://github.com/GsnMithra/tacit-app/releases/latest/download/Tacit-mac-arm64.dmg) · [macOS (Intel)](https://github.com/GsnMithra/tacit-app/releases/latest/download/Tacit-mac-x64.dmg) · [Windows](https://github.com/GsnMithra/tacit-app/releases/latest/download/Tacit-win-x64.exe) · [Linux](https://github.com/GsnMithra/tacit-app/releases/latest/download/Tacit-linux-x86_64.AppImage) |
 | 📘 **Install guide** | https://gsnmithra.github.io/tacit-app/install.html |
 
-The installers connect to our hosted backend on their own. They are unsigned, so on first open use right-click → Open (macOS) or More info → Run anyway (Windows); see the install guide.
+The installers connect to our hosted backend on their own. They are unsigned, so the first time: on macOS click Done at "Tacit Not Opened", then System Settings → Privacy & Security → **Open Anyway**; on Windows, More info → Run anyway. Details in the install guide.
 
 ---
 

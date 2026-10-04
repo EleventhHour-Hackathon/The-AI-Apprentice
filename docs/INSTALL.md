@@ -45,12 +45,14 @@ expected; after the first time it opens normally.
 ### macOS
 
 1. Open the downloaded `.dmg` and drag **Tacit** into **Applications**.
-2. In Applications, **right-click** (or Control-click) Tacit and choose **Open**, then **Open**
-   again in the dialog.
-3. If you only see "Move to Trash" and no Open button: open **System Settings**, go to
-   **Privacy & Security**, scroll down to the message about Tacit and click **Open Anyway**.
-   Confirm with your password, then open Tacit again.
-4. When asked, allow **Microphone** access. The first time you share your screen, macOS asks
+2. Open Tacit. macOS says **"Tacit" Not Opened** (Apple could not verify it, because this build
+   isn't signed yet). Click **Done**.
+3. Open **System Settings → Privacy & Security**, scroll down to **Security**, and next to
+   *"Tacit" was blocked* click **Open Anyway**. Confirm with your password or Touch ID.
+4. Open Tacit again and click **Open**. You only do this once.
+
+   Prefer Terminal? Run `xattr -dr com.apple.quarantine /Applications/Tacit.app`, then open Tacit.
+5. When asked, allow **Microphone** access. The first time you share your screen, macOS asks
    for **Screen Recording** permission: allow it in System Settings, Privacy & Security,
    Screen & System Audio Recording, then quit and reopen Tacit.
 
@@ -154,6 +156,6 @@ whether the key was changed.
 
 **macOS says Tacit "is damaged and can't be opened"**
 This can happen with unsigned apps downloaded from the internet. Open Terminal and run
-`xattr -cr /Applications/Tacit.app`, then open Tacit again.
+`xattr -dr com.apple.quarantine /Applications/Tacit.app`, then open Tacit again.
 
 Still stuck? Reply to the person who sent you Tacit with what you see (a screenshot helps).

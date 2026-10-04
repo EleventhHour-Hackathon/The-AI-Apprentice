@@ -123,8 +123,9 @@
         <h3 id="macos">macOS</h3>
         <ol>
           <li>Open the downloaded <code>.dmg</code> and drag <strong>Tacit</strong> into <strong>Applications</strong>.</li>
-          <li>In Applications, <strong>right-click</strong> (or Control-click) Tacit and choose <strong>Open</strong>, then <strong>Open</strong> again in the dialog.</li>
-          <li>If you only see "Move to Trash" and no Open button: open <strong>System Settings</strong>, go to <strong>Privacy &amp; Security</strong>, scroll down to the message about Tacit and click <strong>Open Anyway</strong>. Confirm with your password, then open Tacit again.</li>
+          <li>Open Tacit. macOS says <strong>"Tacit" Not Opened</strong> (Apple could not verify it, because this build isn't signed yet). Click <strong>Done</strong>.</li>
+          <li>Open <strong>System Settings → Privacy &amp; Security</strong>, scroll down to <strong>Security</strong>, and next to <em>"Tacit" was blocked</em> click <strong>Open Anyway</strong>. Confirm with your password or Touch ID.</li>
+          <li>Open Tacit again and click <strong>Open</strong>. You only do this once. Prefer Terminal? Run <code>xattr -dr com.apple.quarantine /Applications/Tacit.app</code>, then open Tacit.</li>
           <li>When asked, allow <strong>Microphone</strong> access. The first time you share your screen, macOS asks for <strong>Screen Recording</strong> permission: allow it in System Settings, Privacy &amp; Security, Screen &amp; System Audio Recording, then quit and reopen Tacit.</li>
         </ol>
 
@@ -217,7 +218,7 @@
         <h3>macOS says Tacit "is damaged and can't be opened"</h3>
         <p>
           This can happen with unsigned apps downloaded from the internet. Open Terminal and run
-          <code>xattr -cr /Applications/Tacit.app</code>, then open Tacit again.
+          <code>xattr -dr com.apple.quarantine /Applications/Tacit.app</code>, then open Tacit again.
         </p>
 
         <p>Still stuck? Reply to the person who sent you Tacit with what you see (a screenshot helps).</p>
