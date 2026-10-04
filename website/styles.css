@@ -401,6 +401,26 @@ kbd {
   color: var(--muted-foreground);
 }
 
+.demo-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1.1rem;
+  font-size: 0.85rem;
+  color: var(--muted-foreground);
+}
+
+.demo-row > span {
+  flex-basis: 100%;
+}
+
+.demo-row .btn svg {
+  width: 0.85em;
+  height: 0.85em;
+  opacity: 0.6;
+}
+
 .other-platforms {
   margin-top: 0.6rem;
   font-size: 0.875rem;
@@ -1189,88 +1209,6 @@ kbd {
   font-size: 0.75rem;
   color: var(--muted-foreground);
   word-break: break-all;
-}
-
-/* ---------- Try it (embedded apps) ---------- */
-
-.embed-tabs {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 0.25rem;
-  padding: 0.25rem;
-  margin-bottom: 1rem;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--card);
-}
-
-.embed-tab {
-  min-height: 2.25rem;
-  padding: 0.35rem 1rem;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--muted-foreground);
-  font: inherit;
-  font-size: 0.875rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background-color 160ms ease, color 160ms ease;
-}
-
-.embed-tab:hover {
-  color: var(--foreground);
-}
-
-.embed-tab[aria-selected="true"] {
-  background: var(--pill);
-  color: var(--pill-foreground);
-}
-
-.embed-tab:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
-}
-
-.embed-panel {
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--card);
-  box-shadow: 0 12px 40px oklch(0 0 0 / 8%);
-}
-
-.embed-panel[hidden] {
-  display: none;
-}
-
-.embed-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.5rem 0.5rem 0.5rem 1rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--muted);
-}
-
-.embed-url {
-  min-width: 0;
-  overflow: hidden;
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-  color: var(--muted-foreground);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.embed-frame {
-  display: block;
-  width: 100%;
-  height: min(80vh, 52rem);
-  min-height: 32rem;
-  border: 0;
-  background: var(--background);
 }
 
 /* ---------- FAQ ---------- */
