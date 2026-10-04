@@ -20,7 +20,8 @@ fail() { printf '  \033[31mFAIL\033[0m %s\n' "$*"; FAIL=1; }
 cd "$ROOT"
 CHANGED=$( { git diff --name-only "$BASE" --diff-filter=ACMR; git ls-files --others --exclude-standard; } | sort -u)
 
-# Worktrees have no node_modules; borrow the main checkout's.
+# Worktrees have no node_modules or .env; borrow the main checkout's node_modules, and give the
+# import check placeholder keys (it only needs them to be set, nothing is called).
 if [ ! -d "$UI/node_modules" ]; then
   MAIN="$(cd "$(git rev-parse --git-common-dir)/.." && pwd)"
   if [ -d "$MAIN/pixel-perfect-capture/node_modules" ]; then
@@ -69,7 +70,7 @@ for f in $PY; do
   fi
 done
 if [ -n "$PY" ]; then
-  (cd "$BACKEND" && uv run python -c "import main" >/tmp/check-be-import.log 2>&1) && pass "backend imports" || { fail "backend imports (see /tmp/check-be-import.log)"; tail -20 /tmp/check-be-import.log; }
+  (cd "$BACKEND" && OPENAI_API_KEY="${OPENAI_API_KEY:-check}" ELEVENLABS_API_KEY="${ELEVENLABS_API_KEY:-check}" SUPABASE_DB_URL="${SUPABASE_DB_URL:-postgresql://check@localhost/check}" uv run python -c "import main" >/tmp/check-be-import.log 2>&1) && pass "backend imports" || { fail "backend imports (see /tmp/check-be-import.log)"; tail -20 /tmp/check-be-import.log; }
 fi
 if [ -d "$BACKEND/tests" ]; then
   (cd "$BACKEND" && uv run --with pytest --with pytest-asyncio pytest -q >/tmp/check-be-test.log 2>&1) && pass "backend tests" || { fail "backend tests (see /tmp/check-be-test.log)"; tail -30 /tmp/check-be-test.log; }
