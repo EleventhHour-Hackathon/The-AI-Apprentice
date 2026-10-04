@@ -112,3 +112,15 @@ def test_pieces_of_different_sizes_join_into_one_clip_at_full_resolution(tmp_pat
     asyncio.run(recordings._cut([(first, 1.0, 3.0), (second, 0.0, 4.0)], out))
     assert _probe(out, "stream=width,height") == "1920,1200"
     assert abs(float(_probe(out, "format=duration")) - 7.0) < 0.3
+
+
+def test_files_left_on_another_machine_are_summed_up_in_one_warning(monkeypatch, tmp_path):
+    monkeypatch.setattr(recordings, "CACHE", tmp_path)
+    monkeypatch.setattr(recordings.media, "configured", lambda: True)
+    rows = [{"object_path": f"clips/s/{i}.mp4", "content_type": "video/mp4"} for i in range(5)]
+    monkeypatch.setattr(recordings.media, "pending", lambda: rows)
+    said = []
+    monkeypatch.setattr(recordings.logger, "warning", said.append)
+    assert recordings.push_pending() == 0
+    assert len(said) == 1
+    assert said[0].startswith("[recordings] 5 recordings and clips are waiting")

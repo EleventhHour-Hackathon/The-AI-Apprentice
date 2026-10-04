@@ -357,12 +357,20 @@ def push_pending() -> int:
     if not media.configured():
         return 0
     pushed = 0
+    elsewhere: List[str] = []
     for row in media.pending():
         path = row["object_path"]
         if not _local(path).exists():
-            logger.warning(f"[recordings] {path} is in the database but on no disk")
+            elsewhere.append(path)
             continue
         pushed += _push(path, row["content_type"])
+    if elsewhere:
+        # Saved by a backend that couldn't reach Storage (often a local one sharing the database):
+        # only that machine can upload them, by running push_pending there.
+        logger.warning(
+            f"[recordings] {len(elsewhere)} recordings and clips are waiting on another machine's "
+            f"disk, e.g. {elsewhere[0]}"
+        )
     return pushed
 
 
