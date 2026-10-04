@@ -1,6 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { Sia } from "@/components/Sia";
+import { Tutor } from "@/components/Tutor";
 import { desktop } from "@/lib/desktop";
 
 const PILL = 'section[aria-label="Voice assistant"]';
@@ -14,6 +15,9 @@ export const Route = createFileRoute("/pill")({
 });
 
 function Pill() {
+  // A Work Map id while a new hire is being taught; otherwise the pill is the apprentice.
+  const [lesson, setLesson] = useState<string | null>(null);
+
   useEffect(() => {
     const bridge = desktop();
     const section = document.querySelector<HTMLElement>(PILL);
@@ -49,12 +53,21 @@ function Pill() {
       document.removeEventListener("mousemove", onMove);
       document.documentElement.removeEventListener("mouseleave", onLeave);
     };
-  }, []);
+    // The apprentice and the tutor render their own pill; watch whichever is showing.
+  }, [lesson]);
 
   return (
     <>
       <style>{"html, body { background: transparent !important; overflow: hidden; }"}</style>
-      <Sia onOpenApp={() => desktop()?.pill("app")} />
+      {lesson ? (
+        <Tutor
+          workMapId={lesson}
+          onClose={() => setLesson(null)}
+          onOpenApp={() => desktop()?.pill("app")}
+        />
+      ) : (
+        <Sia onOpenApp={() => desktop()?.pill("app")} onLesson={setLesson} />
+      )}
     </>
   );
 }

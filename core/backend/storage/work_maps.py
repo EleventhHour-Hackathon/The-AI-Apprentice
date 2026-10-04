@@ -1,10 +1,14 @@
-"""Work Maps in Supabase Postgres (table created by migrations/001_work_maps.sql).
+"""Work Maps and their screen moments in Supabase Postgres (see migrations/).
+
+A session's row is created when it starts (status 'recording'), collects
+screen events and live captures while the expert works, gets a merged draft
+at the start of the debrief ('draft') and the final map once the expert
+confirms the teach-back ('confirmed').
 
 The backend talks to the database directly with SUPABASE_DB_URL, so the
-table stays closed to the public Data API.
+tables stay closed to the public Data API.
 """
 
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import psycopg
@@ -39,48 +43,90 @@ def _row(row: Dict[str, Any]) -> Dict[str, Any]:
     return row
 
 
-def _recorded_at(value: Any) -> datetime:
-    """Sessions record local time without an offset; pin it to this machine's timezone."""
-    when = datetime.fromisoformat(value) if isinstance(value, str) else value or datetime.now()
-    return when if when.tzinfo else when.astimezone()
-
-
-def save(work_map: Dict[str, Any]) -> None:
-    """Insert or replace the Work Map for a session."""
-    values = {field: Jsonb(work_map.get(field) or []) for field in _JSON_FIELDS}
+def start_session(session_id: str, conversation_id: Optional[str]) -> None:
     with _connect() as conn:
         conn.execute(
             """
-            insert into work_maps (id, task, recorded_at, confirmed, steps, guardrails,
-                                   open_questions, corrections, transcript)
-            values (%(id)s, %(task)s, %(recorded_at)s, %(confirmed)s, %(steps)s, %(guardrails)s,
-                    %(open_questions)s, %(corrections)s, %(transcript)s)
-            on conflict (id) do update set
-                task = excluded.task, recorded_at = excluded.recorded_at,
-                confirmed = excluded.confirmed, steps = excluded.steps,
-                guardrails = excluded.guardrails, open_questions = excluded.open_questions,
-                corrections = excluded.corrections, transcript = excluded.transcript
+            insert into work_maps (id, conversation_id, status) values (%s, %s, 'recording')
+            on conflict (id) do update set conversation_id = excluded.conversation_id
+            """,
+            (session_id, conversation_id),
+        )
+
+
+def set_task(session_id: str, task: str) -> None:
+    with _connect() as conn:
+        conn.execute("update work_maps set task = %s where id = %s", (task, session_id))
+
+
+def add_capture(session_id: str, capture: Dict[str, Any]) -> bool:
+    """Append something the agent recorded live. False if the session doesn't exist."""
+    with _connect() as conn:
+        return (
+            conn.execute(
+                "update work_maps set captures = captures || %s where id = %s",
+                (Jsonb([capture]), session_id),
+            ).rowcount
+            > 0
+        )
+
+
+def add_screen_event(session_id: str, event: Dict[str, Any]) -> None:
+    with _connect() as conn:
+        conn.execute(
+            """
+            insert into screen_events (session_id, t, event, description, kind, thumb)
+            values (%(session_id)s, %(t)s, %(event)s, %(description)s, %(kind)s, %(thumb)s)
+            """,
+            {"session_id": session_id, **event},
+        )
+
+
+def screen_events(session_id: str, with_thumbs: bool = False) -> List[Dict[str, Any]]:
+    columns = "t, event, description, kind" + (", thumb" if with_thumbs else "")
+    with _connect() as conn:
+        return conn.execute(
+            f"select {columns} from screen_events where session_id = %s order by t",
+            (session_id,),
+        ).fetchall()
+
+
+def save_map(session_id: str, work_map: Dict[str, Any], status: str) -> None:
+    """Store a merged Work Map (draft or confirmed) over the session's row."""
+    with _connect() as conn:
+        conn.execute(
+            """
+            update work_maps set
+                task = coalesce(%(task)s, task), status = %(status)s, confirmed = %(confirmed)s,
+                duration = %(duration)s, steps = %(steps)s, guardrails = %(guardrails)s,
+                open_questions = %(open_questions)s, corrections = %(corrections)s,
+                transcript = %(transcript)s
+            where id = %(id)s
             """,
             {
-                "id": work_map["session_id"],
+                "id": session_id,
                 "task": work_map.get("task"),
-                "recorded_at": _recorded_at(work_map.get("recorded_at")),
-                "confirmed": bool(work_map.get("confirmed")),
-                **values,
+                "status": status,
+                "confirmed": status == "confirmed",
+                "duration": work_map.get("duration"),
+                **{field: Jsonb(work_map.get(field) or []) for field in _JSON_FIELDS},
             },
         )
 
 
 def list_summaries() -> List[Dict[str, Any]]:
-    """Every Work Map, newest first, with counts instead of contents."""
+    """Every Work Map, newest first, with counts instead of contents.
+
+    Sessions still recording, or abandoned before anything was merged, are not Work Maps yet.
+    """
     with _connect() as conn:
         rows = conn.execute(
             """
-            select id, task, recorded_at, confirmed,
+            select id, task, recorded_at, confirmed, status,
                    jsonb_array_length(steps) as steps,
                    jsonb_array_length(guardrails) as guardrails,
                    jsonb_array_length(open_questions) as open_questions
-            from work_maps order by recorded_at desc
+            from work_maps where status <> 'recording' order by recorded_at desc
             """
         ).fetchall()
     return [_row(r) for r in rows]
@@ -93,6 +139,6 @@ def get(work_map_id: str) -> Optional[Dict[str, Any]]:
 
 
 def delete(work_map_id: str) -> bool:
-    """Delete a Work Map. Returns False if there was none with that id."""
+    """Delete a Work Map and its screen moments. Returns False if there was none with that id."""
     with _connect() as conn:
         return conn.execute("delete from work_maps where id = %s", (work_map_id,)).rowcount > 0

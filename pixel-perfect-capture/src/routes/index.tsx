@@ -3,6 +3,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { BookOpen, Eye, EyeOff, Mic, PictureInPicture2, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sia } from "@/components/Sia";
+import { Tutor } from "@/components/Tutor";
 import { desktop } from "@/lib/desktop";
 
 export const Route = createFileRoute("/")({
@@ -31,7 +32,16 @@ function Index() {
   const [shell, setShell] = useState<"unknown" | "desktop" | "web">("unknown");
   const [pillShown, setPillShown] = useState(true);
   const [notice, setNotice] = useState("");
-  useEffect(() => setShell(desktop() ? "desktop" : "web"), []);
+  // In a browser the tutor runs on this page: /?lesson=<work map id>.
+  const [lesson, setLesson] = useState<string | null>(null);
+  useEffect(() => {
+    setShell(desktop() ? "desktop" : "web");
+    setLesson(new URLSearchParams(window.location.search).get("lesson"));
+  }, []);
+  const endLesson = () => {
+    setLesson(null);
+    window.history.replaceState(null, "", "/");
+  };
 
   const start = () => {
     if (shell === "desktop") desktop()?.pill("start");
@@ -88,7 +98,8 @@ function Index() {
           {notice && <p className="mt-4 text-xs text-muted-foreground">{notice}</p>}
         </div>
       </div>
-      {shell === "web" && <Sia />}
+      {shell === "web" &&
+        (lesson ? <Tutor workMapId={lesson} onClose={endLesson} /> : <Sia onLesson={setLesson} />)}
     </main>
   );
 }

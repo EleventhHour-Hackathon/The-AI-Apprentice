@@ -1,50 +1,16 @@
-from contextlib import asynccontextmanager
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 from src.core.config import Config
-from src.lib.manager import ConnectionManager
 from src.router.path_router import router
 from src.utils.logger import intercept_standard_logging, logger
-from storage.db_manager import DatabaseManager
 
 intercept_standard_logging()
 
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    logger.info("Starting application initialization")
-
-    manager = ConnectionManager()
-    db_manager = DatabaseManager()
-
-    try:
-        logger.info("Cleaning up existing Daily.co rooms before initialization")
-        await manager.cleanup_daily_rooms()
-    except Exception as e:
-        logger.error(f"Failed to clean up existing Daily.co rooms: {e}")
-        logger.warning("Continuing without initial room cleanup")
-
-    app.state.manager = manager
-    app.state.db_manager = db_manager
-
-    logger.info("Application initialized successfully")
-    yield
-
-    logger.info("Application shutting down, cleaning up resources...")
-
-    try:
-        await manager.cleanup()
-        db_manager.close()
-        logger.info("All connections and resources terminated")
-    except Exception as e:
-        logger.error(f"Error during application shutdown cleanup: {e}")
-        logger.error("Some resources may not have been properly cleaned up")
-
-
-app = FastAPI(title="Flow AI", version="1.0.2", lifespan=lifespan)
+# The voice agent runs on ElevenLabs (src/services/apprentice_agent.py); this server
+# only hands out conversation tokens, reads the screen and keeps the Work Maps.
+app = FastAPI(title="AI Apprentice", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -57,7 +23,7 @@ app.add_middleware(
 
 @app.get("/health")
 async def root():
-    return {"message": "Server is healthy", "version": "1.0.2"}
+    return {"message": "Server is healthy", "version": "2.0.0"}
 
 
 app.include_router(router)

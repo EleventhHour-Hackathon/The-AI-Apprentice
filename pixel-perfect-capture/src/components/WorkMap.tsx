@@ -11,71 +11,101 @@ import {
   applyNodeChanges,
 } from "@xyflow/react";
 import "@xyflow/react/dist/base.css";
-import { ArrowLeft, CheckCheck, Clock, Download, MessageSquareText, Trash2, X } from "lucide-react";
+import {
+  ArrowLeft,
+  CheckCheck,
+  Clock,
+  Download,
+  GraduationCap,
+  MessageSquareText,
+  Trash2,
+  X,
+} from "lucide-react";
+import { desktop } from "@/lib/desktop";
 import { DeleteWorkMap } from "@/components/DeleteWorkMap";
 import { Button } from "@/components/ui/button";
 import {
   count,
+  guardLabel,
+  mmss,
+  normalizeMap,
   recordedAt,
   taskTitle,
+  type WorkMap as MapData,
   type WorkMapGuardrail,
   type WorkMapRecord,
   type WorkMapStep,
 } from "@/lib/work-maps";
 
-const COL = 280;
-const NOTE_COL = 270;
+const COL = 290;
+const GUARD_GAP = 96;
 const hidden = { opacity: 0, width: 1, height: 1, minWidth: 0, minHeight: 0, border: 0 };
 // Fixed height, so step connectors stay straight whatever each card's height.
 const stepHandle = { ...hidden, top: 24 };
 
-type NoteKind = "Guardrail" | "Stop and ask" | "Open question" | "Correction";
 type StepData = { step: WorkMapStep; n: number; selected: boolean };
-type NoteData = { kind: NoteKind; text: string; selected: boolean };
+type NoteData = {
+  label: string;
+  text: string;
+  tone: "warm" | "plain" | "open";
+  selected: boolean;
+};
 type LaneData = { label: string };
-/** What the side panel shows: a step, a guardrail, or the transcript. */
+/** What the side panel shows. */
 type Selection = { type: "step" | "guardrail"; index: number } | { type: "transcript" } | null;
-
-const guardKind = (g: WorkMapGuardrail): NoteKind =>
-  g.stop_and_ask ? "Stop and ask" : "Guardrail";
 
 function StepNode({ data }: NodeProps<Node<StepData>>) {
   const s = data.step;
   return (
     <div
-      className={`wm-node w-[220px] rounded-2xl border bg-card px-3.5 py-3 text-card-foreground ${data.selected ? "wm-node-selected" : ""}`}
+      className={`wm-node w-[250px] overflow-hidden rounded-2xl border bg-card text-card-foreground ${data.selected ? "wm-node-selected" : ""}`}
     >
       <Handle type="target" position={Position.Left} style={stepHandle} />
-      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-        <span className="font-mono">{String(data.n).padStart(2, "0")}</span>
+      {s.thumb && (
+        <img
+          src={s.thumb}
+          alt={`Screen at ${mmss(s.at)}`}
+          className="h-[132px] w-full border-b object-cover object-top"
+        />
+      )}
+      <div className="px-3.5 py-3">
+        <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+          <span className="font-mono">{String(data.n).padStart(2, "0")}</span>
+          {s.judgment && (
+            <>
+              <span className="h-1.5 w-1.5 rounded-full bg-voice-listening" />
+              <span className="text-foreground/70">Judgment call</span>
+            </>
+          )}
+          {s.at !== null && <span className="ml-auto font-mono">{mmss(s.at)}</span>}
+        </div>
+        <p className="mt-1.5 line-clamp-3 text-[13px] font-medium leading-snug">{s.title}</p>
         {s.decision && (
-          <>
-            <span className="h-1.5 w-1.5 rounded-full bg-voice-listening" />
-            <span className="text-foreground/70">Decision</span>
-          </>
+          <p className="mt-1 line-clamp-2 text-[11.5px] leading-snug text-foreground/70">
+            {s.decision}
+          </p>
+        )}
+        {s.quote && (
+          <p className="mt-1.5 line-clamp-2 text-[11px] italic leading-snug text-foreground/60">
+            “{s.quote}”
+          </p>
         )}
       </div>
-      <p className="mt-1.5 line-clamp-3 text-[13px] font-medium leading-snug">{s.step}</p>
-      {s.decision && (
-        <p className="mt-1.5 line-clamp-2 text-[11.5px] leading-snug text-foreground/70">
-          {s.decision}
-        </p>
-      )}
       <Handle type="source" position={Position.Right} style={stepHandle} />
+      <Handle id="g" type="source" position={Position.Bottom} style={hidden} />
     </div>
   );
 }
 
 function NoteNode({ data }: NodeProps<Node<NoteData>>) {
-  const warm = data.kind === "Stop and ask";
-  const open = data.kind === "Open question";
   return (
     <div
-      className={`wm-node w-[250px] rounded-2xl border px-3.5 py-2.5 ${warm ? "wm-guard-warm" : "bg-card text-card-foreground"} ${data.selected ? "wm-node-selected" : ""}`}
+      className={`wm-node w-[250px] rounded-2xl border px-3.5 py-2.5 ${data.tone === "warm" ? "wm-guard-warm" : "bg-card text-card-foreground"} ${data.selected ? "wm-node-selected" : ""}`}
     >
+      <Handle type="target" position={Position.Top} style={hidden} />
       <span className="flex items-center gap-1 text-[10px] font-medium opacity-75">
-        {open && <Clock size={10} />}
-        {data.kind}
+        {data.tone === "open" && <Clock size={10} />}
+        {data.label}
       </span>
       <p className="mt-1 line-clamp-3 text-[12px] leading-snug">{data.text}</p>
     </div>
@@ -101,82 +131,110 @@ export function WorkMap(props: Props) {
   );
 }
 
-function Canvas({ map, onClose }: Props) {
-  const [selected, setSelected] = useState<Selection>(null);
-  const transcript = map.transcript ?? [];
-  const empty = map.steps.length + map.guardrails.length + map.open_questions.length === 0;
+/** Lay the map out: steps left to right, each step's guardrails under it, then the rest. */
+function layoutMap(map: MapData, selected: Selection) {
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  const lane = (label: string, y: number) =>
+    nodes.push({
+      id: `lane-${label}`,
+      type: "lane",
+      position: { x: -150, y: y + 4 },
+      data: { label } satisfies LaneData,
+      selectable: false,
+    });
+  const isSelected = (type: "step" | "guardrail", index: number) =>
+    selected?.type === type && selected.index === index;
+  const guardNode = (g: WorkMapGuardrail, index: number, x: number, y: number) => ({
+    id: `guardrail-${index}`,
+    type: "note",
+    position: { x, y },
+    data: {
+      label: guardLabel[g.kind] + (g.ask_whom ? ` · ${g.ask_whom}` : ""),
+      text: g.rule,
+      tone: g.kind === "stop_and_ask" ? "warm" : "plain",
+      selected: isSelected("guardrail", index),
+    } satisfies NoteData,
+  });
 
-  // Steps run left to right. Guardrails, open questions and corrections were not recorded
-  // against a particular step, so each gets its own lane below rather than an implied link.
-  const layout = useMemo(() => {
-    const nodes: Node[] = [];
-    const edges: Edge[] = [];
-    let y = 0;
-    const lane = (label: string) =>
+  const stepsHeight = map.steps.some((s) => s.thumb) ? 330 : 190;
+  const stepIndex = new Map(map.steps.map((s, i) => [s.id, i]));
+  let y = 0;
+  if (map.steps.length) {
+    lane("Steps", y);
+    map.steps.forEach((step, i) => {
+      const id = `step-${i}`;
       nodes.push({
-        id: `lane-${label}`,
-        type: "lane",
-        position: { x: -150, y: y + 4 },
-        data: { label } satisfies LaneData,
-        selectable: false,
+        id,
+        type: "step",
+        position: { x: i * COL, y },
+        data: { step, n: i + 1, selected: isSelected("step", i) } satisfies StepData,
       });
+      if (i > 0) edges.push({ id: `step-${i - 1}-${id}`, source: `step-${i - 1}`, target: id });
+    });
+    y += stepsHeight;
+  }
 
-    if (map.steps.length) {
-      lane("Steps");
-      map.steps.forEach((step, i) => {
-        const id = `step-${i}`;
-        nodes.push({
-          id,
-          type: "step",
-          position: { x: i * COL, y },
-          data: {
-            step,
-            n: i + 1,
-            selected: selected?.type === "step" && selected.index === i,
-          } satisfies StepData,
-        });
-        if (i > 0) edges.push({ id: `step-${i - 1}-${id}`, source: `step-${i - 1}`, target: id });
-      });
-      y += 190;
+  // Guardrails tied to a step hang under it; the rest get a lane of their own.
+  const stacked = new Map<number, number>();
+  const loose: number[] = [];
+  map.guardrails.forEach((g, gi) => {
+    const si = stepIndex.get(g.step);
+    if (si === undefined) {
+      loose.push(gi);
+      return;
     }
-    const notes = (
-      label: string,
-      items: { kind: NoteKind; text: string; selected?: boolean }[],
-    ) => {
-      if (!items.length) return;
-      lane(label);
-      items.forEach((item, i) =>
-        nodes.push({
-          id: `${label}-${i}`,
-          type: "note",
-          position: { x: i * NOTE_COL, y },
-          data: {
-            kind: item.kind,
-            text: item.text,
-            selected: Boolean(item.selected),
-          } satisfies NoteData,
-        }),
-      );
-      y += 130;
-    };
-    notes(
-      "Guardrails",
-      map.guardrails.map((g, i) => ({
-        kind: guardKind(g),
-        text: g.rule,
-        selected: selected?.type === "guardrail" && selected.index === i,
-      })),
+    const depth = stacked.get(si) ?? 0;
+    stacked.set(si, depth + 1);
+    nodes.push(guardNode(g, gi, si * COL, y + depth * GUARD_GAP));
+    edges.push({
+      id: `step-${si}-guardrail-${gi}`,
+      source: `step-${si}`,
+      sourceHandle: "g",
+      target: `guardrail-${gi}`,
+      className: "wm-edge-guard",
+    });
+  });
+  if (stacked.size) {
+    lane("Guardrails", y);
+    y += Math.max(...stacked.values()) * GUARD_GAP + 40;
+  }
+  if (loose.length) {
+    lane(stacked.size ? "Other guardrails" : "Guardrails", y);
+    loose.forEach((gi, i) => nodes.push(guardNode(map.guardrails[gi]!, gi, i * COL, y)));
+    y += 130;
+  }
+
+  const notes = (label: string, items: string[], tone: NoteData["tone"], kind: string) => {
+    if (!items.length) return;
+    lane(label, y);
+    items.forEach((text, i) =>
+      nodes.push({
+        id: `${kind}-${i}`,
+        type: "note",
+        position: { x: i * COL, y },
+        data: {
+          label: kind === "open" ? "Open question" : "Correction",
+          text,
+          tone,
+          selected: false,
+        } satisfies NoteData,
+      }),
     );
-    notes(
-      "Open questions",
-      map.open_questions.map((text) => ({ kind: "Open question" as const, text })),
-    );
-    notes(
-      "Corrections",
-      (map.corrections ?? []).map((text) => ({ kind: "Correction" as const, text })),
-    );
-    return { nodes, edges };
-  }, [map, selected]);
+    y += 130;
+  };
+  notes("Open questions", map.open_questions, "open", "open");
+  notes("Corrections", map.corrections ?? [], "plain", "correction");
+  return { nodes, edges };
+}
+
+function Canvas({ map: record, onClose }: Props) {
+  const map = useMemo(() => normalizeMap(record), [record]);
+  const [selected, setSelected] = useState<Selection>(null);
+  const empty = map.steps.length + map.guardrails.length + map.open_questions.length === 0;
+  const judgments = map.steps.filter((s) => s.judgment).length;
+
+  const layout = useMemo(() => layoutMap(map, selected), [map, selected]);
   // React Flow reports node sizes through onNodesChange; keep them so the minimap can draw.
   const [nodes, setNodes] = useState<Node[]>([]);
   useEffect(
@@ -189,7 +247,6 @@ function Canvas({ map, onClose }: Props) {
       ),
     [layout],
   );
-  const edges = layout.edges;
 
   const pick = (id: string): Selection => {
     const [kind, index] = [
@@ -197,12 +254,12 @@ function Canvas({ map, onClose }: Props) {
       Number(id.slice(id.lastIndexOf("-") + 1)),
     ];
     if (kind === "step") return { type: "step", index };
-    if (kind === "Guardrails") return { type: "guardrail", index };
+    if (kind === "guardrail") return { type: "guardrail", index };
     return null;
   };
 
   const exportMap = () => {
-    const blob = new Blob([JSON.stringify(map, null, 2)], { type: "application/json" });
+    const blob = new Blob([JSON.stringify(record, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
     const slug = (map.task ?? "work-map")
@@ -245,6 +302,7 @@ function Canvas({ map, onClose }: Props) {
 
   const step = selected?.type === "step" ? map.steps[selected.index] : undefined;
   const guard = selected?.type === "guardrail" ? map.guardrails[selected.index] : undefined;
+  const stepGuards = step ? map.guardrails.filter((g) => g.step === step.id) : [];
 
   return (
     <div className="workmap-fade flex min-h-0 flex-1 flex-col">
@@ -263,7 +321,7 @@ function Canvas({ map, onClose }: Props) {
           <h1 className="truncate text-base font-medium">{taskTitle(map.task)} · Work Map</h1>
           <p className="mt-0.5 text-xs text-muted-foreground">
             {recordedAt(map.recorded_at)} · {count(map.steps.length, "step")} ·{" "}
-            {count(map.guardrails.length, "guardrail")}
+            {count(judgments, "judgment call")} · {count(map.guardrails.length, "guardrail")}
             {map.open_questions.length > 0 && ` · ${map.open_questions.length} open`}
           </p>
         </div>
@@ -280,7 +338,18 @@ function Canvas({ map, onClose }: Props) {
           )}
         </span>
         <div className="ml-auto flex items-center gap-2">
-          {transcript.length > 0 && (
+          {map.steps.length > 0 && (
+            <Button
+              variant="outline"
+              className="h-8 rounded-full text-xs"
+              title="A new hire works a case while the tutor watches"
+              onClick={() => teach(map.id)}
+            >
+              <GraduationCap size={13} />
+              Teach a new hire
+            </Button>
+          )}
+          {map.transcript.length > 0 && (
             <Button
               variant="outline"
               className="h-8 rounded-full text-xs"
@@ -315,7 +384,7 @@ function Canvas({ map, onClose }: Props) {
               <p className="text-sm font-medium">Nothing was captured in this session.</p>
               <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
                 The apprentice records steps and guardrails once it learns the reason behind them.
-                {transcript.length > 0 && " The transcript is still available."}
+                {map.transcript.length > 0 && " The transcript is still available."}
               </p>
             </div>
           </div>
@@ -323,7 +392,7 @@ function Canvas({ map, onClose }: Props) {
           <>
             <ReactFlow
               nodes={nodes}
-              edges={edges}
+              edges={layout.edges}
               nodeTypes={nodeTypes}
               onNodesChange={(changes) => setNodes((ns) => applyNodeChanges(changes, ns))}
               fitView
@@ -355,17 +424,18 @@ function Canvas({ map, onClose }: Props) {
         {selected && (
           <aside
             aria-label="Details"
-            className="sia-fade absolute bottom-4 right-4 top-4 z-10 flex w-[380px] max-w-[calc(100vw-32px)] flex-col overflow-y-auto rounded-3xl border border-pill-border bg-pill p-5 text-pill-foreground"
+            className="sia-fade absolute bottom-4 right-4 top-4 z-10 flex w-[400px] max-w-[calc(100vw-32px)] flex-col overflow-y-auto rounded-3xl border border-pill-border bg-pill p-5 text-pill-foreground"
             style={{ boxShadow: "var(--voice-shadow)" }}
           >
             <div className="flex items-center gap-2 text-[11px] text-pill-muted">
               <span className="font-mono">
                 {step &&
                   selected.type === "step" &&
-                  `STEP ${String(selected.index + 1).padStart(2, "0")}`}
-                {guard && guardKind(guard).toUpperCase()}
+                  `STEP ${String(selected.index + 1).padStart(2, "0")} OF ${String(map.steps.length).padStart(2, "0")}`}
+                {guard && guardLabel[guard.kind].toUpperCase()}
                 {selected.type === "transcript" && "TRANSCRIPT"}
               </span>
+              {step?.judgment && <span className="text-voice-listening">· Judgment call</span>}
               <Button
                 variant="ghost"
                 className="voice-icon ml-auto h-7"
@@ -378,58 +448,135 @@ function Canvas({ map, onClose }: Props) {
             </div>
             {step && (
               <>
-                <h2 className="mt-1 text-xl font-medium leading-snug">{step.step}</h2>
-                {step.screen_moment && <Section label="On screen">{step.screen_moment}</Section>}
+                <h2 className="mt-1 text-xl font-medium leading-snug">{step.title}</h2>
+                <ScreenMoment at={step.at} thumb={step.thumb} what={step.screen || step.event} />
                 {step.decision && <Section label="Decision">{step.decision}</Section>}
                 <Section label="Reason">
-                  <blockquote className="border-l-2 border-voice-debrief pl-3 italic">
-                    “{step.reason}”
-                  </blockquote>
+                  {step.reason || step.quote ? (
+                    <Quote
+                      text={step.quote || step.reason}
+                      verbatim={Boolean(step.quote)}
+                      source={step.quote_source}
+                      at={step.quote_at}
+                    />
+                  ) : (
+                    <span className="text-pill-muted">No reason given.</span>
+                  )}
                 </Section>
+                {stepGuards.length > 0 && (
+                  <Section label="Guardrails">
+                    {stepGuards.map((g) => (
+                      <div key={g.id} className="mb-2 rounded-xl bg-pill-raised p-3">
+                        <span
+                          className={`text-[10px] font-medium ${g.kind === "stop_and_ask" ? "text-voice-raised" : "text-pill-muted"}`}
+                        >
+                          {guardLabel[g.kind]}
+                          {g.ask_whom && ` · ask ${g.ask_whom}`}
+                        </span>
+                        <p className="mt-1">{g.rule}</p>
+                      </div>
+                    ))}
+                  </Section>
+                )}
               </>
             )}
             {guard && (
               <>
                 <h2 className="mt-1 text-xl font-medium leading-snug">{guard.rule}</h2>
+                <ScreenMoment at={guard.at} thumb={guard.thumb} what={guard.event} />
                 {guard.applies_when && <Section label="Applies when">{guard.applies_when}</Section>}
-                {guard.stop_and_ask && (
+                {guard.ask_whom && (
                   <Section label="Stop and ask">
-                    <span className="text-voice-raised">{guard.stop_and_ask}</span>
+                    <span className="text-voice-raised">{guard.ask_whom}</span>
+                  </Section>
+                )}
+                {guard.quote && (
+                  <Section label="In the expert's words">
+                    <Quote
+                      text={guard.quote}
+                      verbatim
+                      source={guard.quote_source}
+                      at={guard.quote_at}
+                    />
                   </Section>
                 )}
               </>
             )}
             {selected.type === "transcript" && (
               <ol className="mt-3 space-y-3">
-                {transcript
-                  .filter((m) => m.content.trim())
-                  .map((m, i) => {
-                    const screen = m.content.startsWith("[SCREEN]");
-                    return (
-                      <li key={i} className="text-[12.5px] leading-relaxed">
-                        <span className="block font-mono text-[10px] text-pill-muted">
-                          {screen ? "SCREEN" : m.role === "assistant" ? "APPRENTICE" : "EXPERT"}
-                        </span>
-                        <span
-                          className={
-                            screen
-                              ? "text-pill-muted"
-                              : m.role === "user"
-                                ? ""
-                                : "text-pill-foreground/80"
-                          }
-                        >
-                          {screen ? m.content.replace(/^\[SCREEN\]\s*/, "") : m.content}
-                        </span>
-                      </li>
-                    );
-                  })}
+                {map.transcript.map((line, i) => (
+                  <li key={i} className="text-[12.5px] leading-relaxed">
+                    <span className="block font-mono text-[10px] text-pill-muted">
+                      {line.who === "expert" ? "EXPERT" : "APPRENTICE"}
+                      {line.t !== null && ` · ${mmss(line.t)}`}
+                    </span>
+                    <span className={line.who === "expert" ? "" : "text-pill-foreground/80"}>
+                      {line.text}
+                    </span>
+                  </li>
+                ))}
               </ol>
             )}
           </aside>
         )}
       </div>
     </div>
+  );
+}
+
+/** Start a lesson from this map: in the desktop pill, or on the home page in a browser. */
+function teach(workMapId: string) {
+  const bridge = desktop();
+  if (bridge) bridge.pill(`lesson:${workMapId}`);
+  else window.location.assign(`/?lesson=${encodeURIComponent(workMapId)}`);
+}
+
+function ScreenMoment({
+  at,
+  thumb,
+  what,
+}: {
+  at: number | null;
+  thumb?: string | null;
+  what?: string | null;
+}) {
+  if (!thumb && !what) return null;
+  return (
+    <Section label={`Screen moment${at !== null ? ` · ${mmss(at)}` : ""}`}>
+      {thumb && (
+        <img
+          src={thumb}
+          alt={what ?? "Screen moment"}
+          className="w-full rounded-lg border border-pill-border object-cover object-top"
+        />
+      )}
+      {what && <p className="mt-1.5 text-[12px] text-pill-muted">{what}</p>}
+    </Section>
+  );
+}
+
+function Quote({
+  text,
+  verbatim,
+  source,
+  at,
+}: {
+  text: string;
+  verbatim: boolean;
+  source: string;
+  at: number | null;
+}) {
+  return (
+    <blockquote className="border-l-2 border-voice-debrief pl-3">
+      <p className={verbatim ? "italic" : ""}>{verbatim ? `“${text}”` : text}</p>
+      <span
+        className={`mt-1.5 block font-mono text-[10px] ${source === "live" ? "text-voice-listening" : "text-voice-debrief"}`}
+      >
+        {verbatim
+          ? `Expert, ${source === "debrief" ? "in the debrief" : "while working"}${at !== null ? ` at ${mmss(at)}` : ""}`
+          : "Paraphrased by the apprentice"}
+      </span>
+    </blockquote>
   );
 }
 

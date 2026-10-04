@@ -111,7 +111,11 @@ ipcMain.on("pill:command", (_event, command) => {
   } else if (command === "hide") pillWindow?.hide();
   else if (command === "start") commandPill("start");
   else if (command === "app") showMain();
-  else if (command === "pill-only") {
+  else if (typeof command === "string" && command.startsWith("lesson:")) {
+    // A new hire works their own screen: get the app window out of the way.
+    commandPill(command);
+    mainWindow?.minimize();
+  } else if (command === "pill-only") {
     if (!pillWindow) createPill();
     else pillWindow.showInactive();
     mainWindow?.minimize();

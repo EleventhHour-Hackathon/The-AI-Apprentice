@@ -3,20 +3,22 @@ import { AppWindow, ArrowRight, Check, CheckCheck, Clock, Hand, Mic, MicOff, Min
 import { Button } from "@/components/ui/button";
 import { VoiceWave } from "./VoiceWave";
 import { useApprentice, type Capture, type FlowNode } from "@/hooks/use-apprentice";
-import { useMicrophoneMeter } from "@/hooks/use-microphone-meter";
 import { useScreenEvents } from "@/hooks/use-screen-events";
+import type { Floor } from "@/lib/floor";
 import { count } from "@/lib/work-maps";
 
 export type SiaState = "idle" | "connecting" | "watching" | "raised" | "gotit" | "debriefing" | "debrief";
 const fmt = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 const colors = { idle: "text-pill-muted", connecting: "text-pill-muted", watching: "text-voice-listening", raised: "text-voice-raised", gotit: "text-voice-listening", debriefing: "text-voice-debrief", debrief: "text-voice-debrief" };
 const labels = { idle: "Idle", connecting: "Connecting", watching: "Learning", raised: "Raised", gotit: "Answer captured", debriefing: "Debrief", debrief: "Debrief" };
+/** While watching, why the apprentice is quiet (lib/floor.ts). */
+const floorLabels: Record<Floor, string> = { talking: "Listening", busy: "Watching", reading: "Reading along", waiting: "Learning", quiet: "Learning", ask: "Learning" };
 const stages: Partial<Record<FlowNode, string>> = { debrief: "DEBRIEF", teach_back: "TEACH-BACK", end: "WRAPPING UP" };
 const kinds = { step: "Step", guardrail: "Rule", open_question: "Open question", correction: "Correction" };
 const isWork = (node: FlowNode) => node === "session_start" || node === "observing";
 
-/** `onOpenApp` adds a button that brings the app window forward (desktop pill only). */
-export function Sia({ onOpenApp }: { onOpenApp?: () => void } = {}) {
+/** `onOpenApp` adds a button that brings the app window forward (desktop pill only); `onLesson` hands a "lesson:<work map id>" command to the tutor. */
+export function Sia({ onOpenApp, onLesson }: { onOpenApp?: () => void; onLesson?: (workMapId: string) => void } = {}) {
   const [seconds, setSeconds] = useState(0);
   const [paused, setPaused] = useState(false);
   const [offRecord, setOffRecord] = useState(false);
@@ -35,9 +37,9 @@ export function Sia({ onOpenApp }: { onOpenApp?: () => void } = {}) {
     onCapture: (capture, node) => { if (isWork(node) && capture.kind !== "open_question") setGotit(capture); },
   });
   const work = voice.status === "connected" && isWork(voice.node);
-  const screenEvents = useScreenEvents(screen, { enabled: work && !paused && !offRecord, onEvent: voice.reportScreen });
+  const screenEvents = useScreenEvents(screen, { enabled: work && !paused && !offRecord, session: voice.session, onEvent: voice.reportScreen, onActivity: voice.reportActivity });
   snapshot.current = screenEvents.snapshot;
-  const level = useMicrophoneMeter(paused || offRecord ? null : voice.micStream);
+  const level = paused || offRecord ? 0 : voice.level;
 
   const current = voice.exchanges.at(-1);
   const currentIndex = voice.exchanges.length - 1;
@@ -81,6 +83,7 @@ export function Sia({ onOpenApp }: { onOpenApp?: () => void } = {}) {
   const toggleOffRecord = () => setOffRecord(o => !o);
 
   useEffect(() => { voice.setMicEnabled(!paused && !offRecord); }, [paused, offRecord, voice.status, voice.setMicEnabled]);
+  useEffect(() => { voice.setOffRecord(offRecord); }, [offRecord, voice.status, voice.setOffRecord]);
   // A question stays open while either side is talking, and folds away after eight quiet seconds.
   useEffect(() => {
     if (voice.botSpeaking || voice.userSpeaking) { setQuiet(false); return; }
@@ -101,12 +104,18 @@ export function Sia({ onOpenApp }: { onOpenApp?: () => void } = {}) {
   }, [work, paused]);
   useEffect(() => () => { setScreen(previous => { previous?.getTracks().forEach(track => track.stop()); return null; }); }, []);
 
+  const lessonRef = useRef(onLesson);
+  lessonRef.current = onLesson;
   const actions = useRef({ startSession, endWork, endSession, close, later, skip, toggleMute, toggleOffRecord, continueWork: () => setGotit(null), state, node: voice.node });
   actions.current = { startSession, endWork, endSession, close, later, skip, toggleMute, toggleOffRecord, continueWork: () => setGotit(null), state, node: voice.node };
   // The desktop shell starts sessions from the app window through this hook (electron/main.cjs).
   useEffect(() => {
     const w = window as Window & { __apprenticeCommand?: (command: string) => void };
-    w.__apprenticeCommand = command => { if (command === "start" && actions.current.state === "idle") void actions.current.startSession(); };
+    w.__apprenticeCommand = command => {
+      if (actions.current.state !== "idle") return;
+      if (command === "start") void actions.current.startSession();
+      else if (command.startsWith("lesson:")) lessonRef.current?.(command.slice("lesson:".length));
+    };
     return () => { delete w.__apprenticeCommand; };
   }, []);
   useEffect(() => {
@@ -133,7 +142,7 @@ export function Sia({ onOpenApp }: { onOpenApp?: () => void } = {}) {
   const expanded = state === "raised" || state === "gotit" || state === "debriefing" || state === "debrief";
   const width = state === "idle" ? 310 : expanded ? 440 : 380;
   const color = offRecord || paused ? "text-pill-muted" : colors[state];
-  const statusLabel = offRecord ? "Off the record" : paused ? "Paused" : state === "raised" && voice.node === "session_start" ? "Getting started" : labels[state];
+  const statusLabel = offRecord ? "Off the record" : paused ? "Paused" : state === "raised" && voice.node === "session_start" ? "Getting started" : state === "watching" ? floorLabels[voice.floor] : labels[state];
   const answer = (current?.answer ? `${current.answer} ${voice.partial}` : voice.partial).trim();
   const speechLabel = offRecord ? "Off the record" : paused ? "Paused" : current?.captured && !voice.botSpeaking ? "Answer captured" : voice.botSpeaking ? "Asking" : level > .08 ? "Listening to you" : "Ready for your voice";
   const error = voice.error ?? screenError;
@@ -141,7 +150,6 @@ export function Sia({ onOpenApp }: { onOpenApp?: () => void } = {}) {
   useEffect(() => { if (state === "raised" || state === "debriefing" || state === "debrief" || error) setMinimized(false); }, [state, error]);
 
   return <>
-    <audio ref={voice.audioRef} autoPlay playsInline className="hidden" />
     <div className="pointer-events-none fixed inset-x-0 bottom-6 z-50 flex justify-center px-4">
       <section aria-label="Voice assistant" className={`voice-shell pointer-events-auto ${expanded && !minimized ? "voice-shell-expanded" : ""} ${state === "raised" ? "voice-shell-raised" : ""}`} style={{ "--voice-width": `${minimized ? 64 : width}px` } as CSSProperties}>
         {minimized ? <button type="button" className={`${color} flex h-12 w-full items-center justify-center`} title={`${statusLabel} · Expand`} aria-label={`${statusLabel}. Expand`} onClick={() => setMinimized(false)}>{state === "watching" && !paused && !offRecord ? <VoiceWave level={level} active /> : <span className="h-2 w-2 rounded-full bg-current" />}</button> : <>
@@ -180,19 +188,17 @@ export function Sia({ onOpenApp }: { onOpenApp?: () => void } = {}) {
         {state === "debriefing" && <div className="border-t border-pill-border px-5 pb-4 pt-4 sia-fade">
           <div className="flex items-center justify-between text-[11px] text-pill-muted"><span>{stages[voice.node] ?? "DEBRIEF"}</span><span>{count(steps, "step")} · {count(rules, "rule")}</span></div>
           {current?.thumb && <div className="mt-3"><ScreenMoment thumb={current.thumb} time={current.time} label="Screen when this was asked" /></div>}
-          <h2 className="mt-3 min-h-16 text-[18px] font-medium leading-snug">{current?.question || "One moment…"}</h2>
+          <h2 className="mt-3 min-h-16 text-[18px] font-medium leading-snug">{voice.merging ? "Looking back over what I saw…" : current?.question || "One moment…"}</h2>
           {voice.node === "teach_back" && <p className="mt-2 text-xs leading-relaxed text-pill-muted">Say if that’s right, or correct anything I got wrong.</p>}
           <div className="mt-4 border-t border-pill-border pt-3">
             <div className={`flex items-center gap-2 text-xs ${current?.captured ? "text-voice-listening" : "text-voice-debrief"}`} role="status">{current?.captured && !voice.botSpeaking ? <Check size={17} /> : <VoiceWave level={level} active={!offRecord && !paused} />}{speechLabel}</div>
             <p className="voice-caption mt-2 text-[13px] leading-relaxed text-pill-foreground/85">{answer || "Take your time. I’m listening."}</p>
           </div>
-          {voice.playbackBlocked && <Button className="voice-cta mt-2" onClick={() => void voice.play()}><Play size={13} />Play voice</Button>}
           <div className="mt-4 flex items-center justify-between border-t border-pill-border pt-3">
             <Button variant="ghost" className="h-8 rounded-full px-2 text-xs text-pill-muted" title="End debrief (Esc)" onClick={endSession}>End<Kbd>Esc</Kbd></Button>
             {voice.node === "debrief" && <Button variant="ghost" className="h-8 rounded-full px-2 text-xs text-pill-foreground" title="Skip (→)" onClick={skip}>Skip<ArrowRight size={13} /><Kbd>→</Kbd></Button>}
           </div>
         </div>}
-        {voice.playbackBlocked && state !== "debriefing" && recording && <div className="px-4 pb-3"><Button className="voice-cta" onClick={() => void voice.play()}><Play size={13} />Play voice</Button></div>}
         {error && <div role="alert" className="border-t border-pill-border px-4 py-3 text-xs leading-relaxed text-voice-raised">{error}{(state === "idle" || state === "debrief") && <Button variant="ghost" className="mt-1 h-7 px-0 text-xs text-pill-foreground" onClick={() => { close(); void startSession(); }}>Start again</Button>}</div>}
         </>}
       </section>
@@ -200,8 +206,8 @@ export function Sia({ onOpenApp }: { onOpenApp?: () => void } = {}) {
   </>;
 }
 
-function Kbd({ children }: { children: ReactNode }) { return <kbd className="rounded border border-current/20 px-1 font-mono text-[9px] opacity-60">{children}</kbd>; }
+export function Kbd({ children }: { children: ReactNode }) { return <kbd className="rounded border border-current/20 px-1 font-mono text-[9px] opacity-60">{children}</kbd>; }
 /** Shortcut hints live in the tooltip (`title`), keeping the pill compact. */
-function Icon({ title, pressed, onClick, children }: { title: string; pressed?: boolean; onClick: () => void; children: ReactNode }) { return <Button variant="ghost" size="icon" className="voice-icon" aria-label={title} aria-pressed={pressed} title={title} onClick={onClick}>{children}</Button>; }
+export function Icon({ title, pressed, onClick, children }: { title: string; pressed?: boolean; onClick: () => void; children: ReactNode }) { return <Button variant="ghost" size="icon" className="voice-icon" aria-label={title} aria-pressed={pressed} title={title} onClick={onClick}>{children}</Button>; }
 
 function ScreenMoment({ thumb, time, label }: { thumb: string | null; time: number; label: string }) { if (!thumb) return null; return <figure className="w-20 shrink-0"><img src={thumb} alt={label} className="h-12 w-20 rounded border border-pill-border object-cover object-top" /><figcaption className="mt-1 font-mono text-[10px] text-pill-muted">{fmt(time)}</figcaption></figure>; }

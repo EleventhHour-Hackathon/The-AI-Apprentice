@@ -67,7 +67,8 @@ Return STRICT JSON:
 {
   "description": "<one sentence describing the current screen>",
   "event": "<what changed since the previous description, or null if nothing meaningful changed>",
-  "changed": <true|false>
+  "changed": <true|false>,
+  "kind": "<action|navigation|null>"
 }
 
 Rules:
@@ -86,7 +87,12 @@ Rules:
   example values from these instructions into your answer.
 - Never guess at text you cannot actually read in the frame.
 - "changed" must be true if and only if "event" is a non-null string.
-- Keep "event" under 20 words."""
+- Keep "event" under 20 words.
+- "kind" is "action" when the expert did something to the work: a value was
+  entered or changed, something was saved, approved, held, rejected, sent or
+  deleted. It is "navigation" when they only moved to something new to look
+  at: a document, record, tab or page opened or switched. null when there is
+  no event."""
 
 
 def _normalize(result: dict) -> dict:
@@ -100,10 +106,13 @@ def _normalize(result: dict) -> dict:
         event = None
     if isinstance(event, str) and event.strip().lower() in {"null", "none", "no change"}:
         event = None
+    kind = result.get("kind") if result.get("kind") in ("action", "navigation") else None
     return {
         "description": result.get("description") or "",
         "event": event,
         "changed": event is not None,
+        # An event the model didn't classify is treated as an action: worth a question.
+        "kind": (kind or "action") if event is not None else None,
     }
 
 
@@ -112,7 +121,7 @@ class VisionBackend(ABC):
 
     @abstractmethod
     async def describe(self, image_b64: str, previous: str | None) -> dict:
-        """Return {"description": str, "event": str|None, "changed": bool}."""
+        """Return {"description": str, "event": str|None, "changed": bool, "kind": str|None}."""
 
 
 class OpenAIVision(VisionBackend):

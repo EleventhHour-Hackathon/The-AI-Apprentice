@@ -2,7 +2,7 @@
 type DesktopBridge = {
   resizePill: (height: number) => void;
   setPillInteractive: (interactive: boolean) => void;
-  pill: (command: "show" | "hide" | "start" | "app" | "pill-only") => void;
+  pill: (command: "show" | "hide" | "start" | "app" | "pill-only" | `lesson:${string}`) => void;
 };
 
 export const desktop = (): DesktopBridge | undefined =>

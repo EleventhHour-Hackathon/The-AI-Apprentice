@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { PipecatClient } from "@pipecat-ai/client-js";
-import { DailyTransport } from "@pipecat-ai/daily-transport";
+import { VoiceConversation } from "@elevenlabs/client";
 import { BACKEND_URL } from "@/lib/backend";
+import { decideFloor, type Floor, type ScreenKind } from "@/lib/floor";
+import type { ScreenEvent } from "@/hooks/use-screen-events";
 
-/** Nodes of the apprentice flow (core/backend/src/services/flows/apprentice.json). */
+/** Phases of a session. The agent moves between them by calling client tools. */
 export type FlowNode = "session_start" | "observing" | "debrief" | "teach_back" | "end";
 /** Where in the work session something happened, and what the screen looked like. */
 export type Moment = { time: number; thumb: string | null };
@@ -14,12 +15,14 @@ export type Exchange = Moment & {
   answer: string;
   captured: boolean;
 };
-/** Something the backend recorded into the Work Map. */
+/** Something the agent recorded into the Work Map. */
 export type Capture = Moment & {
   kind: "step" | "guardrail" | "open_question" | "correction";
   title: string;
   detail: string;
 };
+/** One line of what was said, as the Work Map merge reads it. */
+type Line = { role: "expert" | "apprentice"; text: string; t: number; phase: "live" | "debrief" };
 
 type ApprenticeState = {
   status: "idle" | "connecting" | "connected" | "closed";
@@ -27,11 +30,14 @@ type ApprenticeState = {
   node: FlowNode;
   botSpeaking: boolean;
   userSpeaking: boolean;
-  /** The expert's words so far in a turn the transcriber has not finalised. */
+  /** The expert's words so far in a turn not yet transcribed. Not provided by ElevenLabs; kept for the UI. */
   partial: string;
   task: string | null;
   confirmed: boolean;
-  playbackBlocked: boolean;
+  /** The Work Map is being merged (start of the debrief, or after the teach-back). */
+  merging: boolean;
+  /** Why the apprentice is or isn't asking right now (see lib/floor.ts). */
+  floor: Floor;
   exchanges: Exchange[];
   captures: Capture[];
 };
@@ -45,47 +51,68 @@ const initialState: ApprenticeState = {
   partial: "",
   task: null,
   confirmed: false,
-  playbackBlocked: false,
+  merging: false,
+  floor: "quiet",
   exchanges: [],
   captures: [],
 };
 
-const text = (value: unknown) => (typeof value === "string" ? value : "");
+/** After [PAUSE], how long the agent has to start asking before the floor closes again. */
+const PAUSE_GRANT_MS = 15_000;
+/** After a granted question, room for the expert's answer and a short acknowledgement. */
+const ANSWER_WINDOW_MS = 45_000;
+/** A direct question from the expert may be answered for this long. */
+const DIRECT_QUESTION_MS = 12_000;
+/** VAD score above which the expert counts as talking. */
+const VAD_SPEECH = 0.6;
+/** Typing keeps the agent from starting to speak; ElevenLabs holds it about 2s per signal. */
+const USER_ACTIVITY_EVERY_MS = 1000;
 
-/** Turn a server message from the backend handlers into a Work Map capture. */
-function toCapture(message: Record<string, unknown>): Omit<Capture, keyof Moment> | null {
-  const data = (key: string) =>
-    message[key] && typeof message[key] === "object"
-      ? (message[key] as Record<string, unknown>)
-      : {};
-  switch (message["type"]) {
-    case "work_map.step": {
-      const step = data("step");
-      return { kind: "step", title: text(step["step"]), detail: text(step["reason"]) };
-    }
-    case "work_map.guardrail": {
-      const rule = data("guardrail");
+const mmss = (s: number) =>
+  `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+const str = (value: unknown) => (typeof value === "string" ? value.trim() : "");
+const live = (node: FlowNode) => node === "session_start" || node === "observing";
+
+async function post<T = unknown>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(`${BACKEND_URL}/api/v1${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(`${path} answered ${response.status}`);
+  return (await response.json()) as T;
+}
+
+/** Turn a client tool call from the agent into a Work Map capture for the pill. */
+function toCapture(kind: Capture["kind"], p: Record<string, unknown>): Omit<Capture, keyof Moment> {
+  switch (kind) {
+    case "step":
       return {
-        kind: "guardrail",
-        title: text(rule["rule"]),
-        detail: [text(rule["applies_when"]), text(rule["stop_and_ask"])]
-          .filter(Boolean)
-          .join(" · "),
+        kind,
+        title: str(p["step"]),
+        detail: [str(p["decision"]), str(p["reason"])].filter(Boolean).join(" · "),
+      };
+    case "guardrail": {
+      const ask = str(p["ask_whom"]);
+      return {
+        kind,
+        title: str(p["rule"]),
+        detail: [str(p["applies_when"]), ask && `ask ${ask}`].filter(Boolean).join(" · "),
       };
     }
-    case "work_map.open_question":
-      return { kind: "open_question", title: text(message["question"]), detail: "" };
-    case "work_map.correction":
-      return { kind: "correction", title: text(message["correction"]), detail: "" };
-    default:
-      return null;
+    case "open_question":
+      return { kind, title: str(p["question"]), detail: "" };
+    case "correction":
+      return { kind, title: str(p["correction"]), detail: "" };
   }
 }
 
 /**
- * One voice session with the apprentice bot: connects over Pipecat/Daily,
- * plays its voice, and turns its events into exchanges and Work Map captures.
- * The flow itself (when to ask, debrief, teach-back) lives in the backend.
+ * One voice session with the AI Apprentice agent on ElevenLabs (ElevenAgents).
+ *
+ * ElevenLabs listens (Scribe), speaks and runs the conversation; this hook
+ * decides when the agent may speak while the expert works, feeds it what
+ * happens on screen, and turns its client tool calls into the Work Map.
  */
 export function useApprentice(options: {
   moment: () => Moment;
@@ -93,245 +120,447 @@ export function useApprentice(options: {
 }) {
   const latest = useRef(options);
   latest.current = options;
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const client = useRef<PipecatClient | null>(null);
-  const node = useRef<FlowNode>("session_start");
-  const utteranceDone = useRef(true);
-  /** When and where the apprentice's latest question started, for tying captures to it. */
-  const lastMoment = useRef<Moment | null>(null);
+  const conv = useRef<VoiceConversation | null>(null);
   const [state, setState] = useState(initialState);
-  const [micStream, setMicStream] = useState<MediaStream | null>(null);
+  const [level, setLevel] = useState(0);
+  const [session, setSession] = useState<{ id: string; clock: () => number } | null>(null);
 
-  const release = useCallback((pc: PipecatClient, error?: string) => {
-    if (client.current !== pc) return;
-    client.current = null;
-    void pc.disconnect().catch(() => undefined);
-    const audio = audioRef.current;
-    if (audio) {
-      audio.pause();
-      audio.srcObject = null;
+  // Everything the floor and the tools need, outside React state so callbacks see it immediately.
+  const s = useRef({
+    sessionId: "",
+    startedAt: 0,
+    node: "session_start" as FlowNode,
+    transcript: [] as Line[],
+    offRecord: false,
+    observingSince: 0,
+    lastSpeechAt: -Infinity,
+    lastActivityAt: -Infinity,
+    lastUserActivitySent: -Infinity,
+    pending: [] as { at: number; kind: ScreenKind; text: string; t: number }[],
+    questionTimes: [] as number[],
+    lastPauseAt: -Infinity,
+    /** Until when the agent may speak while the expert works, and why. */
+    floorOpenUntil: -Infinity,
+    grant: null as "start" | "pause" | "answer" | null,
+    lastDirectQuestionAt: -Infinity,
+    /** The agent's current utterance is muted because it didn't have the floor. */
+    muted: false,
+    /** The current utterance has been checked against the floor. */
+    gated: false,
+    agentSpeaking: false,
+    /** [TASK DONE] was sent; End can fire more than once (button, shortcut, pill). */
+    taskDone: false,
+  });
+  const clock = useCallback(
+    () => (s.current.startedAt ? (performance.now() - s.current.startedAt) / 1000 : 0),
+    [],
+  );
+
+  const setNode = useCallback((node: FlowNode) => {
+    s.current.node = node;
+    setState((st) => ({ ...st, node }));
+  }, []);
+
+  /** May the agent speak now? Checked once per utterance; mutes it if not. */
+  const gate = useCallback(() => {
+    const x = s.current;
+    if (x.gated) return !x.muted;
+    x.gated = true;
+    const now = performance.now();
+    const allowed =
+      x.node !== "observing" ||
+      now < x.floorOpenUntil ||
+      now - x.lastDirectQuestionAt < DIRECT_QUESTION_MS;
+    if (!allowed) {
+      x.muted = true;
+      conv.current?.setVolume({ volume: 0 });
+      console.log("[floor] muted a reply: the expert has the floor");
+      return false;
     }
-    setMicStream(null);
-    setState((s) => ({
-      ...s,
+    if (x.node === "observing" && x.grant === "pause") {
+      // A live question at a pause: it counts against the budget, and the answer gets a window.
+      x.questionTimes.push(now);
+      x.grant = "answer";
+      x.floorOpenUntil = now + ANSWER_WINDOW_MS;
+    }
+    return true;
+  }, []);
+
+  const endUtterance = useCallback(() => {
+    const x = s.current;
+    if (x.muted) {
+      conv.current?.setVolume({ volume: 1 });
+      conv.current?.sendContextualUpdate(
+        "[NOT HEARD] Your last reply was muted because the expert was busy. Do not repeat it now; ask at the next [PAUSE] if it still matters.",
+      );
+    }
+    x.muted = false;
+    x.gated = false;
+  }, []);
+
+  const capture = useCallback(
+    (kind: Capture["kind"], params: Record<string, unknown>) => {
+      const x = s.current;
+      const phase = live(x.node) ? "live" : "debrief";
+      void post(`/sessions/${x.sessionId}/capture`, { kind, ...params, t: clock(), phase }).catch(
+        (e) => console.warn("[apprentice] capture not saved", e),
+      );
+      const found = toCapture(kind, params);
+      if (!found.title) return "Nothing to record.";
+      const item: Capture = { ...found, ...latest.current.moment() };
+      latest.current.onCapture?.(item, x.node);
+      setState((st) => {
+        const last = st.exchanges.at(-1);
+        const exchanges =
+          last && kind !== "open_question"
+            ? [...st.exchanges.slice(0, -1), { ...last, captured: true }]
+            : st.exchanges;
+        return { ...st, exchanges, captures: [...st.captures, item] };
+      });
+      return "Recorded.";
+    },
+    [clock],
+  );
+
+  const merge = useCallback(
+    async (final: boolean) => {
+      const x = s.current;
+      setState((st) => ({ ...st, merging: true }));
+      try {
+        return await post<{ brief: string }>(`/sessions/${x.sessionId}/merge`, {
+          final,
+          transcript: x.transcript,
+          duration: clock(),
+        });
+      } finally {
+        setState((st) => ({ ...st, merging: false }));
+      }
+    },
+    [clock],
+  );
+
+  // Built once: everything the tools use is a ref or a stable callback.
+  const clientTools = useRef({
+    begin_observation: (p: Record<string, unknown>) => {
+      const x = s.current;
+      const task = str(p["task"]);
+      const now = performance.now();
+      x.observingSince = now;
+      x.floorOpenUntil = now + 10_000; // for "Go ahead."
+      x.grant = "start";
+      setNode("observing");
+      setState((st) => ({ ...st, task: task || null }));
+      if (task) void post(`/sessions/${x.sessionId}/task`, { task }).catch(() => undefined);
+      return "Watching now. Say 'Go ahead.' and then stay quiet until a [PAUSE].";
+    },
+    record_step: (p: Record<string, unknown>) => capture("step", p),
+    record_guardrail: (p: Record<string, unknown>) => capture("guardrail", p),
+    note_open_question: (p: Record<string, unknown>) => capture("open_question", p),
+    record_correction: (p: Record<string, unknown>) => capture("correction", p),
+    start_debrief: async () => {
+      setNode("debrief");
+      try {
+        const result = await merge(false);
+        return result.brief;
+      } catch (e) {
+        console.warn("[apprentice] draft merge failed", e);
+        return "The draft Work Map could not be built. Ask about the exceptions, limits and the moments to stop and ask that you noticed.";
+      }
+    },
+    start_teach_back: () => {
+      setNode("teach_back");
+      return "Explain it back now.";
+    },
+    confirm_work_map: async () => {
+      try {
+        await merge(true);
+        setState((st) => ({ ...st, confirmed: true }));
+        setNode("end");
+        return "Saved. Thank them in one sentence, then call end_call.";
+      } catch (e) {
+        console.warn("[apprentice] final merge failed", e);
+        return "Saving failed. Tell the expert the Work Map could not be saved, then call end_call.";
+      }
+    },
+  });
+
+  const release = useCallback((error?: string) => {
+    const c = conv.current;
+    conv.current = null;
+    if (c?.isOpen()) void c.endSession().catch(() => undefined);
+    setLevel(0);
+    setState((st) => ({
+      ...st,
       status: "closed",
       botSpeaking: false,
       userSpeaking: false,
-      partial: "",
-      playbackBlocked: false,
-      error: error ?? s.error,
+      merging: false,
+      error: error ?? st.error,
     }));
   }, []);
 
-  const play = useCallback(async () => {
-    try {
-      await audioRef.current?.play();
-      setState((s) => ({ ...s, playbackBlocked: false }));
-    } catch {
-      setState((s) => ({ ...s, playbackBlocked: true }));
-    }
-  }, []);
-
   const start = useCallback(async () => {
-    if (client.current) return;
-    node.current = "session_start";
-    utteranceDone.current = true;
-    lastMoment.current = null;
-    const pc: PipecatClient = new PipecatClient({
-      transport: new DailyTransport(),
-      enableMic: true,
-      enableCam: false,
-      callbacks: {
-        onTrackStarted(track, participant) {
-          if (client.current !== pc || track.kind !== "audio") return;
-          if (participant?.local) {
-            setMicStream(new MediaStream([track]));
-            return;
-          }
-          const audio = audioRef.current;
-          if (!audio) return;
-          audio.srcObject = new MediaStream([track]);
-          void play();
-        },
-        onBotReady() {
-          if (client.current === pc) setState((s) => ({ ...s, status: "connected" }));
-        },
-        onBotStartedSpeaking() {
-          if (client.current === pc) setState((s) => ({ ...s, botSpeaking: true }));
-        },
-        onBotStoppedSpeaking() {
-          if (client.current !== pc) return;
-          utteranceDone.current = true;
-          setState((s) => ({ ...s, botSpeaking: false }));
-        },
-        onBotTtsText({ text: words }) {
-          if (client.current !== pc || !words.trim()) return;
-          const moment =
-            utteranceDone.current || !lastMoment.current ? latest.current.moment() : null;
-          utteranceDone.current = false;
-          if (moment) lastMoment.current = moment;
-          setState((s) => {
-            const last = s.exchanges.at(-1);
-            if (moment || !last) {
-              const exchange: Exchange = {
-                ...(moment ?? lastMoment.current ?? { time: 0, thumb: null }),
-                node: node.current,
-                question: words.trim(),
-                answer: "",
-                captured: false,
-              };
-              return { ...s, partial: "", exchanges: [...s.exchanges, exchange] };
-            }
-            return {
-              ...s,
-              exchanges: [
-                ...s.exchanges.slice(0, -1),
-                { ...last, question: `${last.question} ${words.trim()}` },
-              ],
-            };
-          });
-        },
-        onUserStartedSpeaking() {
-          if (client.current === pc) setState((s) => ({ ...s, userSpeaking: true }));
-        },
-        onUserStoppedSpeaking() {
-          if (client.current === pc) setState((s) => ({ ...s, userSpeaking: false }));
-        },
-        onUserTranscript({ text: words, final }) {
-          if (client.current !== pc) return;
-          if (!final) {
-            setState((s) => ({ ...s, partial: words }));
-            return;
-          }
-          setState((s) => {
-            const last = s.exchanges.at(-1);
-            if (!last) return { ...s, partial: "" };
-            const answer = last.answer ? `${last.answer} ${words.trim()}` : words.trim();
-            return {
-              ...s,
-              partial: "",
-              exchanges: [...s.exchanges.slice(0, -1), { ...last, answer }],
-            };
-          });
-        },
-        onServerMessage(message: unknown) {
-          if (client.current !== pc || !message || typeof message !== "object") return;
-          const data = message as Record<string, unknown>;
-          if (data["type"] === "flow.node" && typeof data["node"] === "string") {
-            node.current = data["node"] as FlowNode;
-            setState((s) => ({ ...s, node: node.current }));
-          } else if (data["type"] === "work_map.task") {
-            setState((s) => ({ ...s, task: text(data["task"]) || null }));
-          } else if (data["type"] === "work_map.confirmed") {
-            setState((s) => ({ ...s, confirmed: true }));
-          } else {
-            const found = toCapture(data);
-            if (!found?.title) return;
-            const recorded = found.kind !== "open_question";
-            const capture: Capture = {
-              ...found,
-              ...(lastMoment.current ?? latest.current.moment()),
-            };
-            latest.current.onCapture?.(capture, node.current);
-            setState((s) => {
-              const last = s.exchanges.at(-1);
-              const exchanges =
-                last && recorded
-                  ? [...s.exchanges.slice(0, -1), { ...last, captured: true }]
-                  : s.exchanges;
-              return { ...s, exchanges, captures: [...s.captures, capture] };
-            });
-          }
-        },
-        onBotDisconnected() {
-          // After the teach-back the bot ends the call itself; anything earlier is a dropped session.
-          release(
-            pc,
-            node.current === "end"
-              ? undefined
-              : "The apprentice left the call. Start a new session to retry.",
-          );
-        },
-        onDisconnected() {
-          release(pc);
-        },
-        onError(message) {
-          const data = message.data as { message?: unknown; error?: unknown } | undefined;
-          const error = text(data?.message) || text(data?.error) || "Voice connection failed.";
-          if (client.current === pc) setState((s) => ({ ...s, error }));
-        },
-      },
-    });
-    client.current = pc;
-    setMicStream(null);
+    if (conv.current) return;
+    const sessionId = crypto.randomUUID();
+    s.current = {
+      ...s.current,
+      sessionId,
+      startedAt: 0,
+      node: "session_start",
+      transcript: [],
+      offRecord: false,
+      lastSpeechAt: -Infinity,
+      lastActivityAt: -Infinity,
+      pending: [],
+      questionTimes: [],
+      lastPauseAt: -Infinity,
+      floorOpenUntil: -Infinity,
+      grant: null,
+      lastDirectQuestionAt: -Infinity,
+      muted: false,
+      gated: false,
+      agentSpeaking: false,
+      taskDone: false,
+    };
     setState({ ...initialState, status: "connecting" });
     try {
-      await pc.startBotAndConnect({ endpoint: `${BACKEND_URL}/api/v1/connect`, requestData: {} });
-      if (client.current === pc) setState((s) => ({ ...s, status: "connected" }));
+      const { token } = await fetch(`${BACKEND_URL}/api/v1/agent/token`).then((r) => {
+        if (!r.ok) throw new Error(`token request answered ${r.status}`);
+        return r.json() as Promise<{ token: string }>;
+      });
+      await post(`/sessions/${sessionId}/start`, {});
+      const c = await VoiceConversation.startSession({
+        conversationToken: token,
+        connectionType: "webrtc",
+        clientTools: clientTools.current,
+        onConnect({ conversationId }) {
+          s.current.startedAt = performance.now();
+          setSession({ id: sessionId, clock });
+          setState((st) => ({ ...st, status: "connected" }));
+          void post(`/sessions/${sessionId}/start`, { conversation_id: conversationId }).catch(
+            () => undefined,
+          );
+        },
+        onModeChange({ mode }) {
+          const x = s.current;
+          if (mode === "speaking") {
+            x.agentSpeaking = true;
+            gate();
+          } else {
+            x.agentSpeaking = false;
+            endUtterance();
+          }
+          setState((st) => ({ ...st, botSpeaking: mode === "speaking" && !x.muted }));
+        },
+        onMessage({ message, role }) {
+          const x = s.current;
+          const text = message.trim();
+          if (!text) return;
+          const phase = live(x.node) ? "live" : "debrief";
+          if (role === "agent") {
+            if (!gate()) return; // muted: the expert never heard it, so it is not part of the record
+            x.transcript.push({ role: "apprentice", text, t: clock(), phase });
+            if (x.grant === "start") return; // "Go ahead." is not a question
+            const moment = latest.current.moment();
+            setState((st) => ({
+              ...st,
+              exchanges: [
+                ...st.exchanges,
+                { ...moment, node: x.node, question: text, answer: "", captured: false },
+              ],
+            }));
+            return;
+          }
+          // Messages the pill sent on the expert's behalf ([PAUSE], [SKIP], ...) are not their words.
+          if (text.startsWith("[")) return;
+          x.transcript.push({ role: "expert", text, t: clock(), phase });
+          if (x.node === "observing" && text.endsWith("?"))
+            x.lastDirectQuestionAt = performance.now();
+          setState((st) => {
+            const last = st.exchanges.at(-1);
+            if (!last) return st;
+            const answer = last.answer ? `${last.answer} ${text}` : text;
+            return { ...st, exchanges: [...st.exchanges.slice(0, -1), { ...last, answer }] };
+          });
+        },
+        onVadScore({ vadScore }) {
+          if (vadScore >= VAD_SPEECH) s.current.lastSpeechAt = performance.now();
+        },
+        onDisconnect(details) {
+          if (conv.current !== c) return;
+          const error =
+            details.reason === "error"
+              ? `The voice connection dropped: ${details.message}`
+              : details.reason === "agent" && s.current.node !== "end"
+                ? "The apprentice ended the call early. Start a new session to retry."
+                : undefined;
+          release(error);
+        },
+        onError(message) {
+          setState((st) => ({ ...st, error: message || "Voice connection failed." }));
+        },
+      });
+      conv.current = c;
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
-      release(
-        pc,
-        `Could not reach the apprentice at ${BACKEND_URL}.${message ? ` ${message}` : ""}`,
-      );
+      release(`Could not start the apprentice.${message ? ` ${message}` : ""}`);
     }
-  }, [play, release]);
+  }, [clock, endUtterance, gate, release]);
 
+  /** End the session. Unless the map was confirmed, what was captured is still saved as a draft. */
   const stop = useCallback(() => {
-    if (client.current) release(client.current);
-  }, [release]);
+    const x = s.current;
+    if (conv.current && x.node !== "end" && x.transcript.some((l) => l.role === "expert"))
+      void merge(false).catch(() => undefined);
+    release();
+  }, [merge, release]);
 
   const reset = useCallback(() => {
     stop();
+    setSession(null);
     setState(initialState);
   }, [stop]);
 
   const setMicEnabled = useCallback((enabled: boolean) => {
-    try {
-      client.current?.enableMic(enabled);
-    } catch {
-      /* not connected yet */
+    conv.current?.setMicMuted(!enabled);
+  }, []);
+
+  /** Off the record: the agent is told to disregard what happens until the expert is back. */
+  const setOffRecord = useCallback(
+    (off: boolean) => {
+      const x = s.current;
+      if (x.offRecord === off) return;
+      x.offRecord = off;
+      x.pending = [];
+      conv.current?.sendContextualUpdate(
+        off
+          ? `[OFF THE RECORD ${mmss(clock())}] The expert went off the record. Ignore what happens until they are back, and never ask about it.`
+          : `[BACK ON THE RECORD ${mmss(clock())}] The expert is back on the record.`,
+      );
+    },
+    [clock],
+  );
+
+  /** One of the pill's controls. */
+  const send = useCallback(
+    (type: "work.end" | "question.later" | "debrief.skip", data: Record<string, unknown> = {}) => {
+      const c = conv.current;
+      const x = s.current;
+      if (!c) return;
+      if (type === "work.end" && live(x.node)) {
+        if (x.taskDone) return;
+        x.taskDone = true;
+        c.sendUserMessage(
+          "[TASK DONE] The expert pressed End: the task is finished. Call start_debrief now.",
+        );
+      } else if (type === "question.later" && x.node === "observing") {
+        if (x.agentSpeaking) {
+          x.muted = true;
+          c.setVolume({ volume: 0 });
+        }
+        x.floorOpenUntil = -Infinity;
+        c.sendContextualUpdate(
+          "[NOT NOW] The expert is busy. Keep that question for the debrief and stay quiet.",
+        );
+        const question = str(data["question"]);
+        if (question) capture("open_question", { question, screen_time: mmss(clock()) });
+      } else if (type === "debrief.skip" && x.node === "debrief") {
+        c.sendUserMessage("[SKIP] Skip that question and ask your next one.");
+      }
+    },
+    [capture, clock],
+  );
+
+  /** Something changed on screen: tell the agent silently, and note it as a step to maybe ask about. */
+  const reportScreen = useCallback(
+    (event: ScreenEvent) => {
+      const x = s.current;
+      if (!conv.current || x.offRecord) return;
+      const t = clock();
+      conv.current.sendContextualUpdate(`[SCREEN ${mmss(t)}] ${event.event}`);
+      if (x.node === "observing")
+        x.pending.push({ at: performance.now(), kind: event.kind, text: event.event, t });
+    },
+    [clock],
+  );
+
+  /** The screen is moving (typing, scrolling): keep the agent from starting to speak. */
+  const reportActivity = useCallback(() => {
+    const x = s.current;
+    const now = performance.now();
+    x.lastActivityAt = now;
+    if (conv.current && now - x.lastUserActivitySent > USER_ACTIVITY_EVERY_MS) {
+      x.lastUserActivitySent = now;
+      conv.current.sendUserActivity();
     }
   }, []);
 
-  /** Send one of the pill's controls to the backend flow (see InterviewFlow._handle_client_message). */
-  const send = useCallback(
-    (type: "work.end" | "question.later" | "debrief.skip", data: Record<string, unknown> = {}) => {
-      try {
-        client.current?.sendClientMessage(type, data);
-      } catch {
-        /* not connected yet */
-      }
-    },
-    [],
-  );
+  // The floor: while the expert works, offer the agent a question only at a natural pause.
+  useEffect(() => {
+    if (state.status !== "connected") return;
+    const timer = window.setInterval(() => {
+      const x = s.current;
+      const c = conv.current;
+      const now = performance.now();
+      const speaking = now - x.lastSpeechAt < 400;
+      setState((st) => (st.userSpeaking === speaking ? st : { ...st, userSpeaking: speaking }));
+      if (!c || x.node !== "observing" || x.offRecord) return;
+      const floor = decideFloor({
+        now,
+        observingSince: x.observingSince,
+        speaking,
+        lastSpeechAt: x.lastSpeechAt,
+        lastActivityAt: x.lastActivityAt,
+        agentSpeaking: x.agentSpeaking,
+        pending: x.pending,
+        questionTimes: x.questionTimes,
+        lastPauseAt: x.lastPauseAt,
+      });
+      setState((st) => (st.floor === floor ? st : { ...st, floor }));
+      if (floor !== "ask") return;
+      const steps = x.pending
+        .slice(-5)
+        .map((e) => `[${mmss(e.t)}] ${e.text}`)
+        .join("; ");
+      x.pending = [];
+      x.lastPauseAt = now;
+      x.floorOpenUntil = now + PAUSE_GRANT_MS;
+      x.grant = "pause";
+      console.log(`[floor] pause after: ${steps}`);
+      c.sendUserMessage(
+        `[PAUSE] The expert has stopped after: ${steps}. If one of these hides a reason, a limit or a moment to stop and ask, ask one short question about it now. Otherwise call skip_turn.`,
+      );
+    }, 400);
+    return () => clearInterval(timer);
+  }, [state.status]);
 
-  /** Tell the apprentice what changed on screen, without making it speak. */
-  const reportScreen = useCallback((event: string) => {
-    void client.current
-      ?.appendToContext({ role: "user", content: `[SCREEN] ${event}`, run_immediately: false })
-      .catch(() => undefined);
-  }, []);
+  // Microphone level for the waveform.
+  useEffect(() => {
+    if (state.status !== "connected") return;
+    const timer = window.setInterval(() => setLevel(conv.current?.getInputVolume() ?? 0), 80);
+    return () => clearInterval(timer);
+  }, [state.status]);
 
   useEffect(
     () => () => {
-      const pc = client.current;
-      client.current = null;
-      void pc?.disconnect().catch(() => undefined);
+      const c = conv.current;
+      conv.current = null;
+      if (c?.isOpen()) void c.endSession().catch(() => undefined);
     },
     [],
   );
 
   return {
     ...state,
-    audioRef,
-    micStream,
+    level,
+    session,
     start,
     stop,
     reset,
-    play,
     setMicEnabled,
+    setOffRecord,
     send,
     reportScreen,
+    reportActivity,
   };
 }

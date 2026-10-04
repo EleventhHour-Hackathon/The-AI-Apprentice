@@ -179,6 +179,7 @@
 .wm-node-selected { border-color: var(--voice-debrief); box-shadow: 0 0 0 3px color-mix(in oklch, var(--voice-debrief) 30%, transparent); }
 .wm-guard-warm { background: color-mix(in oklch, var(--voice-raised) 14%, var(--card)); border-color: color-mix(in oklch, var(--voice-raised) 45%, var(--card)); color: color-mix(in oklch, var(--voice-raised) 60%, black); }
 .workmap-flow .react-flow__edge-path { stroke: color-mix(in oklch, var(--foreground) 35%, transparent); stroke-width: 1.4; }
+.workmap-flow .wm-edge-guard .react-flow__edge-path { stroke-dasharray: 3 4; }
 .wm-minimap { background: var(--card); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
 .workmap-fade { animation: workmap-fade 700ms ease both; }
 @keyframes workmap-fade { from { opacity: 0; } to { opacity: 1; } }
