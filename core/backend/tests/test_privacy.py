@@ -5,6 +5,8 @@ skips unless the privacy extra (and its model) is installed.
 """
 
 import sys
+import threading
+import time
 from types import SimpleNamespace
 from typing import Any, List, Optional
 
@@ -183,6 +185,31 @@ def test_missing_presidio_means_regex(monkeypatch):
     monkeypatch.setitem(sys.modules, "presidio_analyzer", None)
     assert privacy.status() == {"names": False, "engine": "regex"}
     assert privacy._presidio_tried is True
+
+
+def test_concurrent_callers_wait_for_the_load(monkeypatch):
+    # /health and a transcript can both ask while spaCy is still loading. Neither may get None.
+    monkeypatch.setattr(privacy, "_presidio", None)
+    monkeypatch.setattr(privacy, "_presidio_tried", False)
+    sentinel = FakeAnalyzer([])
+    loads: List[int] = []
+
+    def slow_load():
+        loads.append(1)
+        time.sleep(0.2)
+        return sentinel
+
+    monkeypatch.setattr(privacy, "_load", slow_load)
+    results: List[Any] = []
+    threads = [
+        threading.Thread(target=lambda: results.append(privacy._analyzer())) for _ in range(2)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5)
+    assert results == [sentinel, sentinel]
+    assert loads == [1]
 
 
 def test_real_presidio(monkeypatch):

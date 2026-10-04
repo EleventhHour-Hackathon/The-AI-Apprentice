@@ -36,6 +36,11 @@ If the dev laptop ever gets a different name, change it in `CORS_ORIGINS`.
    cd ~/.builds/tacit/core/backend && uv run main.py
    ```
 
+   To redact people's names in transcripts too (Presidio), run `uv sync --extra privacy` once
+   first. `uv run` keeps it, but a plain `uv sync` removes it again. When it's on, `/health`
+   shows `"privacy": {"names": true, "engine": "presidio"}`. `./start.sh` installs it by default;
+   `--no-privacy` skips it.
+
 2. Start the UI, pointing it at this laptop's backend by name. The default (`localhost:8000`)
    would make the test laptop look for a backend on itself:
 

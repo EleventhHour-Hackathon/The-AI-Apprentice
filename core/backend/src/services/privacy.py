@@ -17,6 +17,7 @@ spaCy model. Places are kept: "the Czech subsidiary" is a rule, not personal dat
 
 import os
 import re
+import threading
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from src.utils.logger import logger
@@ -58,36 +59,45 @@ MODEL = os.getenv("PRIVACY_SPACY_MODEL", "en_core_web_sm")
 
 _presidio: Optional[Any] = None
 _presidio_tried = False
+# Loading spaCy takes seconds. Whoever calls meanwhile waits for it rather than getting None
+# and letting names through.
+_presidio_lock = threading.Lock()
+
+
+def _load() -> Optional[Any]:
+    """Presidio with the spaCy model, or None (logged) if it isn't installed or won't start."""
+    try:
+        from presidio_analyzer import AnalyzerEngine  # type: ignore
+        from presidio_analyzer.nlp_engine import NlpEngineProvider  # type: ignore
+        import spacy.util  # type: ignore
+
+        # Presidio downloads a missing model; a server shouldn't, so say so instead.
+        if not spacy.util.is_package(MODEL) and not os.path.isdir(MODEL):
+            raise RuntimeError(f"spaCy model {MODEL} isn't installed")
+        nlp = NlpEngineProvider(
+            nlp_configuration={
+                "nlp_engine_name": "spacy",
+                "models": [{"lang_code": "en", "model_name": MODEL}],
+            }
+        ).create_engine()
+        analyzer = AnalyzerEngine(nlp_engine=nlp, supported_languages=["en"])
+        logger.info(f"[privacy] Presidio with {MODEL}: names are redacted too")
+        return analyzer
+    except ImportError:
+        logger.info("[privacy] Presidio isn't installed, names are kept (uv sync --extra privacy)")
+    except Exception as e:
+        logger.warning(f"[privacy] Presidio couldn't start, names are kept: {e}")
+    return None
 
 
 def _analyzer() -> Optional[Any]:
     global _presidio, _presidio_tried
     if not _presidio_tried:
-        _presidio_tried = True
-        try:
-            from presidio_analyzer import AnalyzerEngine  # type: ignore
-            from presidio_analyzer.nlp_engine import NlpEngineProvider  # type: ignore
-            import spacy.util  # type: ignore
-
-            # Presidio downloads a missing model; a server shouldn't, so say so instead.
-            if not spacy.util.is_package(MODEL) and not os.path.isdir(MODEL):
-                raise RuntimeError(f"spaCy model {MODEL} isn't installed")
-            nlp = NlpEngineProvider(
-                nlp_configuration={
-                    "nlp_engine_name": "spacy",
-                    "models": [{"lang_code": "en", "model_name": MODEL}],
-                }
-            ).create_engine()
-            _presidio = AnalyzerEngine(nlp_engine=nlp, supported_languages=["en"])
-            logger.info(f"[privacy] Presidio with {MODEL}: names are redacted too")
-        except ImportError:
-            _presidio = None
-            logger.info(
-                "[privacy] Presidio isn't installed, names are kept (uv sync --extra privacy)"
-            )
-        except Exception as e:
-            _presidio = None
-            logger.warning(f"[privacy] Presidio couldn't start, names are kept: {e}")
+        with _presidio_lock:
+            # Another thread may have finished loading while this one waited.
+            if not _presidio_tried:
+                _presidio = _load()
+                _presidio_tried = True
     return _presidio
 
 
