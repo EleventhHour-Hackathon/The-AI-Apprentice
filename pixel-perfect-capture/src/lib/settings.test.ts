@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BACKEND_URL } from "./backend";
+import { DEFAULT_BACKEND_URL as BACKEND_URL } from "./backend";
 import {
   DIAGNOSTIC_TIMEOUT_MS,
   defaultSettings,

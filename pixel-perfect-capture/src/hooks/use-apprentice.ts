@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { VoiceConversation } from "@elevenlabs/client";
-import { BACKEND_URL } from "@/lib/backend";
+import { backendFetch } from "@/lib/backend";
 import {
   debriefStatus,
   decideFloor,
@@ -133,7 +133,7 @@ const questionsMet = (x: Tally) => liveQuestionsMet(counted(x), guardrailAsked(x
 const live = (node: FlowNode) => node === "session_start" || node === "observing";
 
 async function post<T = unknown>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`${BACKEND_URL}/api/v1${path}`, {
+  const response = await backendFetch(`/api/v1${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -375,7 +375,7 @@ export function useApprentice(options: {
     if (!x.transcript.some((l) => l.role === "expert")) {
       // Nothing to keep: drop the session, its screen moments and its recording from the database.
       setState((st) => ({ ...st, saved: "empty" }));
-      void fetch(`${BACKEND_URL}/api/v1/sessions/${x.sessionId}`, { method: "DELETE" }).catch((e) =>
+      void backendFetch(`/api/v1/sessions/${x.sessionId}`, { method: "DELETE" }).catch((e) =>
         console.warn("[apprentice] empty session not discarded", e),
       );
       return;
@@ -510,7 +510,7 @@ export function useApprentice(options: {
     },
     edit_work_map: async (p: Record<string, unknown>) => {
       const x = s.current;
-      const response = await fetch(`${BACKEND_URL}/api/v1/sessions/${x.sessionId}/edit`, {
+      const response = await backendFetch(`/api/v1/sessions/${x.sessionId}/edit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...p, said: spoken(str(p["said"])), t: clock() }),
@@ -540,7 +540,7 @@ export function useApprentice(options: {
     },
     read_work_map: async () => {
       const x = s.current;
-      const response = await fetch(`${BACKEND_URL}/api/v1/sessions/${x.sessionId}/summary`).catch(
+      const response = await backendFetch(`/api/v1/sessions/${x.sessionId}/summary`).catch(
         () => null,
       );
       if (!response?.ok)
@@ -611,7 +611,7 @@ export function useApprentice(options: {
       };
       setState({ ...initialState, status: "connecting", minDebrief: policy.minDebrief });
       try {
-        const { token } = await fetch(`${BACKEND_URL}/api/v1/agent/token`).then((r) => {
+        const { token } = await backendFetch("/api/v1/agent/token").then((r) => {
           if (!r.ok) throw new Error(`token request answered ${r.status}`);
           return r.json() as Promise<{ token: string }>;
         });

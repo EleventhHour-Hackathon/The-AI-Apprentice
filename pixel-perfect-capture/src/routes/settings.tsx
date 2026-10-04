@@ -3,6 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import {
   AppWindow,
   Bot,
+  Cable,
   Download,
   GraduationCap,
   Keyboard,
@@ -18,6 +19,7 @@ import {
   X,
 } from "lucide-react";
 import { AppHeader } from "@/components/AppHeader";
+import { ConnectionForm } from "@/components/ConnectionForm";
 import { Badge, badgeVariants } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -52,6 +54,7 @@ const SECTIONS = [
   { id: "pill", label: "Pill & app", icon: AppWindow },
   { id: "shortcuts", label: "Shortcuts", icon: Keyboard },
   { id: "integrations", label: "Integrations", icon: Plug },
+  { id: "connection", label: "Connection", icon: Cable },
   { id: "diagnostics", label: "Diagnostics", icon: Stethoscope },
 ] as const;
 
@@ -639,6 +642,14 @@ function Settings() {
             >
               <SoonBadge />
             </Row>
+          </Section>
+
+          <Section
+            id="connection"
+            title="Connection"
+            description="The Tacit server this app works with, and its access key."
+          >
+            <ConnectionForm submitLabel="Test and save" className="px-5 py-4" />
           </Section>
 
           <Section
